@@ -1,7 +1,8 @@
 name: Validate
 
 # Reusable workflow for building, linting, and verifying the codebase.
-# Lints workflows/actions (actionlint + zizmor) and Dockerfile (hadolint), runs check
+# Lints workflows/actions (actionlint + zizmor), Dockerfile (hadolint), and Kubernetes manifests
+# (kustomize + kubeconform + kube-linter), runs check
 # (Detekt, unit tests, Kover verification & XML report), builds the shadow JAR,
 # and checks Kover changed-line coverage (80% minimum on PR source changes).
 on:
@@ -34,6 +35,9 @@ jobs:
 
       - name: Lint Dockerfile
         uses: hononeko/actions/lint-docker@v1
+
+      - name: Lint Kubernetes manifests
+        uses: hononeko/actions/lint-k8s@v1
 
       - name: Run build, Detekt, unit tests, Kover report, and shadow JAR
         run: ./gradlew check shadowJar --no-daemon

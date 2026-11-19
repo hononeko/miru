@@ -60,8 +60,7 @@ jobs:
           push: ${{ inputs.push && 'true' || 'false' }}
           tags: smoke-miru:${{ matrix.arch }}
           build-args: VERSION=${{ inputs.version || 'dev' }}
-          cache-from: type=gha,scope=miru-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=miru-${{ matrix.arch }}
+          cache-scope: miru-${{ matrix.arch }}
           digest-artifact: digests-${{ matrix.arch }}
 
       - name: Smoke test /healthz

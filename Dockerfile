@@ -9,9 +9,13 @@ COPY gradlew settings.gradle.kts build.gradle.kts gradle.properties .java-versio
 COPY gradle/ gradle/
 RUN ./gradlew --no-daemon --quiet dependencies --configuration runtimeClasspath > /dev/null
 
-COPY config/ config/
-COPY src/ src/
-RUN ./gradlew --no-daemon shadowJar
+# Only main sources: test and detekt config changes keep this layer and the build cached
+COPY src/main/ src/main/
+# Keep only the jar: deleting the build output and the Gradle caches it filled in the same RUN keeps them out of the
+# layer, which the GitHub Actions layer cache exports on every source change
+RUN ./gradlew --no-daemon shadowJar \
+    && mv build/libs/miru-all.jar /miru-all.jar \
+    && rm -rf build /root/.gradle
 
 FROM eclipse-temurin:25.0.5_8-jre-noble
 ARG VERSION=dev
@@ -26,7 +30,7 @@ RUN groupadd --system --gid 10001 miru \
     && mkdir -p /data /opt/miru \
     && chown -R 10001:10001 /data /opt/miru
 
-COPY --from=build --chown=10001:10001 /src/build/libs/miru-all.jar /opt/miru/miru-all.jar
+COPY --from=build --chown=10001:10001 /miru-all.jar /opt/miru/miru-all.jar
 
 ENV MIRU_JAVA_OPTS="-XX:MaxRAMPercentage=75.0 -XX:+ExitOnOutOfMemoryError" \
     SQLITE_PATH="/data/miru.db"

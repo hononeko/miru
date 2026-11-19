@@ -9,6 +9,12 @@ logstash-logback = "9.0"
 slf4j = "2.0.20"
 kotest = "6.2.7"
 mockk = "1.14.12"
+hikaricp = "7.1.0"
+sqlite-jdbc = "3.54.1.0"
+postgresql = "42.7.14"
+flyway = "13.12.2"
+exposed = "1.6.1"
+testcontainers = "2.0.5"
 shadow = "9.6.1"
 detekt = "2.0.0-alpha.6"
 kover = "0.9.11"
@@ -48,12 +54,23 @@ jul-to-slf4j = { module = "org.slf4j:jul-to-slf4j", version.ref = "slf4j" }
 logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
 logstash-logback-encoder = { module = "net.logstash.logback:logstash-logback-encoder", version.ref = "logstash-logback" }
 
-# Testing (Kotest + Arrow assertions)
+# Persistence & Migrations
+hikaricp = { module = "com.zaxxer:HikariCP", version.ref = "hikaricp" }
+sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version.ref = "sqlite-jdbc" }
+postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
+flyway-core = { module = "org.flywaydb:flyway-core", version.ref = "flyway" }
+flyway-database-postgresql = { module = "org.flywaydb:flyway-database-postgresql", version.ref = "flyway" }
+exposed-core = { module = "org.jetbrains.exposed:exposed-core", version.ref = "exposed" }
+exposed-jdbc = { module = "org.jetbrains.exposed:exposed-jdbc", version.ref = "exposed" }
+
+# Testing (Kotest + Arrow assertions + Testcontainers)
 kotest-runner-junit5 = { module = "io.kotest:kotest-runner-junit5", version.ref = "kotest" }
 kotest-assertions-core = { module = "io.kotest:kotest-assertions-core", version.ref = "kotest" }
 kotest-assertions-arrow = { module = "io.kotest:kotest-assertions-arrow", version.ref = "kotest" }
 kotest-property = { module = "io.kotest:kotest-property", version.ref = "kotest" }
 mockk = { module = "io.mockk:mockk", version.ref = "mockk" }
+testcontainers = { module = "org.testcontainers:testcontainers", version.ref = "testcontainers" }
+testcontainers-postgresql = { module = "org.testcontainers:testcontainers-postgresql", version.ref = "testcontainers" }
 
 [bundles]
 ktor-server = [
@@ -78,6 +95,15 @@ logging = [
     "logback-classic",
     "logstash-logback-encoder",
     "kotlinx-coroutines-slf4j",
+]
+persistence = [
+    "hikaricp",
+    "sqlite-jdbc",
+    "postgresql",
+    "flyway-core",
+    "flyway-database-postgresql",
+    "exposed-core",
+    "exposed-jdbc",
 ]
 kotest = [
     "kotest-runner-junit5",

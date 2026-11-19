@@ -30,12 +30,17 @@ dependencies {
     // Structured Logging
     implementation(libs.bundles.logging)
 
+    // Persistence & Migrations
+    implementation(libs.bundles.persistence)
+
     // Testing
     testImplementation(libs.bundles.kotest)
     testImplementation(libs.mockk)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.ktor.server.test.host)
     testImplementation(libs.ktor.client.mock)
+    testImplementation(libs.testcontainers)
+    testImplementation(libs.testcontainers.postgresql)
 }
 
 application {

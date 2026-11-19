@@ -1,0 +1,81 @@
+name: Image
+
+# Builds multi-arch images (amd64 & arm64), smoke-tests /healthz via hononeko/actions/smoke-test@v1,
+# and with `push`, pushes per-arch images by digest to GHCR and uploads digest artifacts for publish-image@v1.
+on:
+  workflow_call:
+    inputs:
+      push:
+        description: Push each architecture's image to GHCR by digest and upload digest artifacts
+        type: boolean
+        default: false
+      ref:
+        description: Commit ref to check out
+        type: string
+        default: ""
+      version:
+        description: Version baked into image labels; "dev" when empty
+        type: string
+        default: ""
+
+jobs:
+  build:
+    name: Image (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref || '' }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Log in to GitHub Container Registry (GHCR)
+        if: inputs.push
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build container image
+        id: build
+        uses: hononeko/actions/build-image@v1
+        with:
+          image: ghcr.io/${{ github.repository_owner }}/miru
+          platforms: linux/${{ matrix.arch }}
+          push: ${{ inputs.push && 'true' || 'false' }}
+          tags: smoke-miru:${{ matrix.arch }}
+          build-args: VERSION=${{ inputs.version || 'dev' }}
+          cache-from: type=gha,scope=miru-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=miru-${{ matrix.arch }}
+          digest-artifact: digests-${{ matrix.arch }}
+
+      - name: Smoke test /healthz
+        uses: hononeko/actions/smoke-test@v1
+        with:
+          image: ${{ inputs.push && format('ghcr.io/{0}/miru@{1}', github.repository_owner, steps.build.outputs.digest) || format('smoke-miru:{0}', matrix.arch) }}
+          port: "8080"
+          path: /healthz
+          status: "200"
+          timeout: "20"
+          max-memory-mib: "384"
+          env: |
+            PLEX_URL=http://plex.local:32400
+            PLEX_TOKEN=smoke-token
+            AUTH_MODE=none
+            DB_ENGINE=sqlite
+            SQLITE_PATH=/data/miru.db

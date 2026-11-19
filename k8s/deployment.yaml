@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: miru
+  labels:
+    app: miru
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: miru
+  template:
+    metadata:
+      labels:
+        app: miru
+        networking/expose-web-ui: "true"
+        # Add networking/oidc-client: "true" once MRU-20 (OIDC) lands.
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: miru
+          image: ghcr.io/hononeko/miru
+          envFrom:
+            - configMapRef:
+                name: miru-config
+            - secretRef:
+                name: miru-secrets
+          ports:
+            - name: web-ui
+              containerPort: 8080
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "192Mi"
+            limits:
+              cpu: "500m"
+              memory: "384Mi"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: web-ui
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: web-ui
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: miru-data-pvc
+        - name: tmp
+          emptyDir: {}

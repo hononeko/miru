@@ -24,3 +24,19 @@ Copy `.env.example` to `.env` (git-ignored) and export your local settings, then
 - `GET /healthz` — liveness probe
 - `GET /readyz` — readiness probe aggregating registered dependency checks
 - `GET /api/v1/openapi.yaml` — OpenAPI 3.1 specification
+
+## Container & Kubernetes Deployment
+
+Build and smoke-test the container image locally:
+
+```sh
+docker build -t miru:local .
+docker run --rm -p 8080:8080 \
+  -e PLEX_URL=http://host.docker.internal:32400 \
+  -e PLEX_TOKEN=your-plex-token \
+  -e AUTH_MODE=none \
+  miru:local
+```
+
+Ready-to-adapt Kubernetes Kustomize manifests live under [`k8s/`](k8s/README.md).
+

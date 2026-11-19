@@ -1,0 +1,108 @@
+name: PR Snapshot
+
+on:
+  pull_request:
+    branches: ["main"]
+    types: [labeled]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    name: "Snapshot: Plan"
+    if: github.event.label.name == 'snapshot' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.version.outputs.snapshot-tag }}
+      version: ${{ steps.version.outputs.snapshot-version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Version
+        id: version
+        uses: hononeko/actions/version@v1
+        with:
+          pr-number: ${{ github.event.pull_request.number }}
+
+  validate:
+    name: "Snapshot: Build & Code Verification"
+    needs: plan
+    uses: ./.github/workflows/validate.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha }}
+    permissions:
+      contents: read
+
+  integration:
+    name: "Snapshot: Integration Tests"
+    needs: plan
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set up Gradle & JDK
+        uses: hononeko/actions/gradle-setup@v1
+
+      - name: Run Integration Tests
+        run: ./gradlew integrationTest --no-daemon
+
+  image:
+    name: "Snapshot: Image Build & Smoke Test"
+    needs: [plan, validate, integration]
+    uses: ./.github/workflows/image.yml
+    with:
+      push: true
+      ref: ${{ github.event.pull_request.head.sha }}
+      version: ${{ needs.plan.outputs.version }}
+    permissions:
+      contents: read
+      packages: write
+
+  publish:
+    name: "Snapshot: Publish"
+    needs: [plan, image]
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      packages: write
+      pull-requests: write
+      attestations: write
+      id-token: write
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Log in to GitHub Container Registry (GHCR)
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish snapshot image
+        uses: hononeko/actions/publish-image@v1
+        with:
+          image: ghcr.io/${{ github.repository_owner }}/miru
+          tags: |
+            ${{ needs.plan.outputs.tag }}
+            pr-${{ github.event.pull_request.number }}
+          expected-digests: "2"
+          attest: "true"
+          title: Snapshot
+          comment-on-pr: ${{ github.event.pull_request.number }}
+          comment-note: For testing only. Deleted when this pull request closes.

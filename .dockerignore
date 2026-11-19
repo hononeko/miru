@@ -1,0 +1,16 @@
+**/build/
+**/.gradle/
+.git/
+.github/
+.idea/
+.kotlin/
+**/*.iml
+k8s/
+*.md
+.env
+.env.*
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3

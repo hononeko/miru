@@ -1,6 +1,7 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "github>hononeko/renovate-config"
+    "github>hononeko/renovate-config",
+    "github>hononeko/renovate-config:hononeko-actions"
   ]
 }

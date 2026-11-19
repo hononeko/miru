@@ -40,21 +40,29 @@ Versions follow the rules shared by all hononeko repositories in [`hononeko/acti
 .
 ├── .githooks/
 │   └── commit-msg                # Conventional Commits check
+├── .github/
+│   ├── codeql/codeql-config.yml  # CodeQL Actions security config
+│   └── workflows/                # PR, Main, Image, Version, CD & CodeQL CI
 ├── config/detekt/detekt.yml      # Detekt rules
 ├── gradle/libs.versions.toml     # Dependency version catalog
+├── k8s/                          # Kustomize deployment blueprint
 ├── src/
 │   ├── main/
 │   │   ├── kotlin/app/hononeko/miru/
 │   │   │   ├── Application.kt
+│   │   │   ├── adapter/          # MediaServerAdapter contract + Plex HTTP client
 │   │   │   ├── config/           # Typed AppConfig + Arrow validation
 │   │   │   ├── domain/error/     # Sealed MiruError hierarchy
 │   │   │   ├── health/           # Readiness checks & probes
-│   │   │   └── http/             # RFC 7807 ProblemDetails, Either mapper, routes
+│   │   │   ├── http/             # RFC 7807 ProblemDetails, Either mapper, routes
+│   │   │   └── persistence/      # Exposed DSL, Flyway migrations, HikariCP
 │   │   └── resources/
 │   │       ├── application.conf
+│   │       ├── db/migration/     # sqlite & postgres Flyway SQL scripts
 │   │       ├── logback.xml
 │   │       └── openapi/openapi.yaml
 │   └── test/kotlin/app/hononeko/miru/
 ├── AGENTS.md
+├── Dockerfile
 └── README.md
 ```

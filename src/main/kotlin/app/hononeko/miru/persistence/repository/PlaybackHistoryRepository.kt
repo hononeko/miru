@@ -1,21 +1,30 @@
 package app.hononeko.miru.persistence.repository
 
 import app.hononeko.miru.domain.error.MiruError
-import app.hononeko.miru.persistence.DatabaseDialect
 import app.hononeko.miru.persistence.DatabaseHandle
-import app.hononeko.miru.persistence.dbQuery
 import app.hononeko.miru.persistence.escapeLikePattern
-import app.hononeko.miru.persistence.getDialectBoolean
-import app.hononeko.miru.persistence.getNullableString
+import app.hononeko.miru.persistence.exposedQuery
 import app.hononeko.miru.persistence.model.HistoryFilter
 import app.hononeko.miru.persistence.model.HistoryPage
 import app.hononeko.miru.persistence.model.PlaybackHistoryRecord
-import app.hononeko.miru.persistence.setDialectBoolean
-import app.hononeko.miru.persistence.setNullableString
+import app.hononeko.miru.persistence.table.PlaybackHistoryTable
 import arrow.core.Either
-import java.sql.PreparedStatement
-import java.sql.ResultSet
-import javax.sql.DataSource
+import org.jetbrains.exposed.v1.core.LikePattern
+import org.jetbrains.exposed.v1.core.Op
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greaterEq
+import org.jetbrains.exposed.v1.core.lessEq
+import org.jetbrains.exposed.v1.core.like
+import org.jetbrains.exposed.v1.core.lowerCase
+import org.jetbrains.exposed.v1.core.or
+import org.jetbrains.exposed.v1.core.statements.UpdateBuilder
+import org.jetbrains.exposed.v1.jdbc.Database
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.insertIgnore
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.jdbc.update
 
 interface PlaybackHistoryRepository {
     suspend fun insert(record: PlaybackHistoryRecord): Either<MiruError.PersistenceError, PlaybackHistoryRecord>
@@ -36,37 +45,29 @@ interface PlaybackHistoryRepository {
     suspend fun query(filter: HistoryFilter): Either<MiruError.PersistenceError, HistoryPage>
 }
 
-class JdbcPlaybackHistoryRepository(
-    private val dataSource: DataSource,
-    private val dialect: DatabaseDialect,
+class ExposedPlaybackHistoryRepository(
+    private val database: Database,
 ) : PlaybackHistoryRepository {
-    constructor(handle: DatabaseHandle) : this(handle.dataSource, handle.dialect)
+    constructor(handle: DatabaseHandle) : this(handle.database)
 
     override suspend fun insert(record: PlaybackHistoryRecord): Either<MiruError.PersistenceError, PlaybackHistoryRecord> =
-        dataSource.dbQuery("playback_history_insert") { conn ->
-            conn.prepareStatement(INSERT_SQL).use { stmt ->
-                bindInsertStatement(stmt, record)
-                stmt.executeUpdate()
-            }
+        database.exposedQuery("playback_history_insert") {
+            PlaybackHistoryTable.insert { populateInsert(it, record) }
             record
         }
 
     override suspend fun insertIfAbsentByImportKey(record: PlaybackHistoryRecord): Either<MiruError.PersistenceError, Boolean> =
-        dataSource.dbQuery("playback_history_insert_if_absent") { conn ->
-            conn.prepareStatement(INSERT_IF_ABSENT_SQL).use { stmt ->
-                bindInsertStatement(stmt, record)
-                stmt.executeUpdate() > 0
-            }
+        database.exposedQuery("playback_history_insert_if_absent") {
+            PlaybackHistoryTable.insertIgnore { populateInsert(it, record) }.insertedCount > 0
         }
 
     override suspend fun findById(id: String): Either<MiruError.PersistenceError, PlaybackHistoryRecord?> =
-        dataSource.dbQuery("playback_history_find_by_id") { conn ->
-            conn.prepareStatement(SELECT_BY_ID_SQL).use { stmt ->
-                stmt.setString(1, id)
-                stmt.executeQuery().use { rs ->
-                    if (rs.next()) rs.toPlaybackHistoryRecord() else null
-                }
-            }
+        database.exposedQuery("playback_history_find_by_id") {
+            PlaybackHistoryTable
+                .selectAll()
+                .where { PlaybackHistoryTable.id eq id }
+                .singleOrNull()
+                ?.toPlaybackHistoryRecord()
         }
 
     override suspend fun findLatestMergeCandidate(
@@ -75,70 +76,70 @@ class JdbcPlaybackHistoryRepository(
         ratingKey: String,
         minStoppedAtMs: Long,
     ): Either<MiruError.PersistenceError, PlaybackHistoryRecord?> =
-        dataSource.dbQuery("playback_history_find_merge_candidate") { conn ->
-            conn.prepareStatement(SELECT_MERGE_CANDIDATE_SQL).use { stmt ->
-                stmt.setString(1, serverId)
-                stmt.setString(2, userId)
-                stmt.setString(3, ratingKey)
-                stmt.setLong(4, minStoppedAtMs)
-                stmt.executeQuery().use { rs ->
-                    if (rs.next()) rs.toPlaybackHistoryRecord() else null
-                }
-            }
+        database.exposedQuery("playback_history_find_merge_candidate") {
+            PlaybackHistoryTable
+                .selectAll()
+                .where {
+                    (PlaybackHistoryTable.serverId eq serverId) and
+                        (PlaybackHistoryTable.userId eq userId) and
+                        (PlaybackHistoryTable.ratingKey eq ratingKey) and
+                        (PlaybackHistoryTable.stoppedAtMs greaterEq minStoppedAtMs)
+                }.orderBy(PlaybackHistoryTable.stoppedAtMs to SortOrder.DESC, PlaybackHistoryTable.id to SortOrder.ASC)
+                .limit(1)
+                .singleOrNull()
+                ?.toPlaybackHistoryRecord()
         }
 
     override suspend fun updateMergedSession(record: PlaybackHistoryRecord): Either<MiruError.PersistenceError, Boolean> =
-        dataSource.dbQuery("playback_history_update_merged") { conn ->
-            conn.prepareStatement(UPDATE_MERGED_SQL).use { stmt ->
-                var idx = 1
-                stmt.setLong(idx++, record.viewOffsetMs)
-                stmt.setInt(idx++, record.watchedDurationSec)
-                stmt.setInt(idx++, record.pausedDurationSec)
-                stmt.setDouble(idx++, record.completionPercent)
-                stmt.setDialectBoolean(idx++, record.isWatched, dialect)
-                idx = stmt.bindStreamTech(idx, record.streamTech, dialect)
-                idx = stmt.bindPlayer(idx, record.player)
-                stmt.setLong(idx++, record.startedAtMs)
-                stmt.setLong(idx++, record.stoppedAtMs)
-                stmt.setString(idx, record.id)
-                stmt.executeUpdate() > 0
-            }
+        database.exposedQuery("playback_history_update_merged") {
+            PlaybackHistoryTable.update({ PlaybackHistoryTable.id eq record.id }) {
+                it[viewOffsetMs] = record.viewOffsetMs
+                it[watchedDurationSec] = record.watchedDurationSec
+                it[pausedDurationSec] = record.pausedDurationSec
+                it[completionPercent] = record.completionPercent
+                it[isWatched] = record.isWatched
+                it[streamDecision] = record.streamTech.streamDecision
+                it[videoDecision] = record.streamTech.videoDecision
+                it[audioDecision] = record.streamTech.audioDecision
+                it[hwTranscode] = record.streamTech.hwTranscode
+                it[videoCodec] = record.streamTech.videoCodec
+                it[audioCodec] = record.streamTech.audioCodec
+                it[videoResolution] = record.streamTech.videoResolution
+                it[bandwidthKbps] = record.streamTech.bandwidthKbps
+                it[playerName] = record.player.playerName
+                it[playerPlatform] = record.player.playerPlatform
+                it[playerProduct] = record.player.playerProduct
+                it[playerMachineId] = record.player.playerMachineId
+                it[ipAddress] = record.player.ipAddress
+                it[location] = record.player.location
+                it[startedAtMs] = record.startedAtMs
+                it[stoppedAtMs] = record.stoppedAtMs
+            } > 0
         }
 
     override suspend fun query(filter: HistoryFilter): Either<MiruError.PersistenceError, HistoryPage> =
-        dataSource.dbQuery("playback_history_query") { conn ->
+        database.exposedQuery("playback_history_query") {
             val safeLimit = filter.limit.coerceAtLeast(0)
             val safeOffset = filter.offset.coerceAtLeast(0)
-            val (whereClause, binders) = buildWhereClause(filter)
+            val condition = buildFilterCondition(filter)
 
-            val countSql = "SELECT COUNT(*) AS total_count FROM playback_history$whereClause"
             val totalCount =
-                conn.prepareStatement(countSql).use { stmt ->
-                    binders.forEachIndexed { index, bind -> bind(stmt, index + 1) }
-                    stmt.executeQuery().use { rs ->
-                        if (rs.next()) rs.getLong("total_count") else 0L
-                    }
-                }
+                PlaybackHistoryTable
+                    .selectAll()
+                    .where { condition }
+                    .count()
 
             val items =
                 if (safeLimit == 0) {
                     emptyList()
                 } else {
-                    val dataSql =
-                        "SELECT $COLUMNS FROM playback_history$whereClause " +
-                            "ORDER BY stopped_at_ms DESC, id ASC LIMIT ? OFFSET ?"
-                    conn.prepareStatement(dataSql).use { stmt ->
-                        binders.forEachIndexed { index, bind -> bind(stmt, index + 1) }
-                        stmt.setInt(binders.size + 1, safeLimit)
-                        stmt.setInt(binders.size + 2, safeOffset)
-                        stmt.executeQuery().use { rs ->
-                            buildList {
-                                while (rs.next()) {
-                                    add(rs.toPlaybackHistoryRecord())
-                                }
-                            }
-                        }
-                    }
+                    PlaybackHistoryTable
+                        .selectAll()
+                        .where { condition }
+                        .orderBy(PlaybackHistoryTable.stoppedAtMs to SortOrder.DESC, PlaybackHistoryTable.id to SortOrder.ASC)
+                        .limit(safeLimit)
+                        .offset(safeOffset.toLong())
+                        .map { it.toPlaybackHistoryRecord() }
                 }
 
             HistoryPage(
@@ -149,159 +150,69 @@ class JdbcPlaybackHistoryRepository(
             )
         }
 
-    private fun buildWhereClause(filter: HistoryFilter): Pair<String, List<(PreparedStatement, Int) -> Unit>> {
-        val clauses = mutableListOf<String>()
-        val binders = mutableListOf<(PreparedStatement, Int) -> Unit>()
-
-        filter.serverId?.let { value ->
-            clauses += "server_id = ?"
-            binders += { stmt, idx -> stmt.setString(idx, value) }
-        }
-        filter.userId?.let { value ->
-            clauses += "user_id = ?"
-            binders += { stmt, idx -> stmt.setString(idx, value) }
-        }
-        filter.mediaType?.let { value ->
-            clauses += "media_type = ?"
-            binders += { stmt, idx -> stmt.setString(idx, value) }
-        }
-        filter.librarySectionKey?.let { value ->
-            clauses += "library_section_key = ?"
-            binders += { stmt, idx -> stmt.setString(idx, value) }
-        }
-        filter.streamDecision?.let { value ->
-            clauses += "stream_decision = ?"
-            binders += { stmt, idx -> stmt.setString(idx, value) }
-        }
-        filter.fromMs?.let { value ->
-            clauses += "stopped_at_ms >= ?"
-            binders += { stmt, idx -> stmt.setLong(idx, value) }
-        }
-        filter.toMs?.let { value ->
-            clauses += "stopped_at_ms <= ?"
-            binders += { stmt, idx -> stmt.setLong(idx, value) }
-        }
+    private fun buildFilterCondition(filter: HistoryFilter): Op<Boolean> {
+        val predicates = mutableListOf<Op<Boolean>>()
+        filter.serverId?.let { predicates += PlaybackHistoryTable.serverId eq it }
+        filter.userId?.let { predicates += PlaybackHistoryTable.userId eq it }
+        filter.mediaType?.let { predicates += PlaybackHistoryTable.mediaType eq it }
+        filter.librarySectionKey?.let { predicates += PlaybackHistoryTable.librarySectionKey eq it }
+        filter.streamDecision?.let { predicates += PlaybackHistoryTable.streamDecision eq it }
+        filter.fromMs?.let { predicates += PlaybackHistoryTable.stoppedAtMs greaterEq it }
+        filter.toMs?.let { predicates += PlaybackHistoryTable.stoppedAtMs lessEq it }
         filter.q?.trim()?.takeIf { it.isNotEmpty() }?.let { raw ->
-            val pattern = "%${escapeLikePattern(raw.lowercase())}%"
-            clauses +=
-                "(LOWER(title) LIKE ? ESCAPE '\\' OR " +
-                "LOWER(parent_title) LIKE ? ESCAPE '\\' OR " +
-                "LOWER(grandparent_title) LIKE ? ESCAPE '\\')"
-            repeat(3) {
-                binders += { stmt, idx -> stmt.setString(idx, pattern) }
-            }
+            val pattern = LikePattern("%${escapeLikePattern(raw.lowercase())}%", escapeChar = '\\')
+            predicates +=
+                (PlaybackHistoryTable.title.lowerCase() like pattern) or
+                (PlaybackHistoryTable.parentTitle.lowerCase() like pattern) or
+                (PlaybackHistoryTable.grandparentTitle.lowerCase() like pattern)
         }
 
-        val whereClause = if (clauses.isEmpty()) "" else " WHERE ${clauses.joinToString(" AND ")}"
-        return whereClause to binders
+        return if (predicates.isEmpty()) {
+            Op.TRUE
+        } else {
+            predicates.reduce { acc, next -> acc and next }
+        }
     }
 
-    private fun bindInsertStatement(
-        stmt: PreparedStatement,
+    private fun populateInsert(
+        stmt: UpdateBuilder<*>,
         record: PlaybackHistoryRecord,
     ) {
-        var idx = 1
-        stmt.setString(idx++, record.id)
-        stmt.setString(idx++, record.serverId)
-        stmt.setString(idx++, record.userId)
-        stmt.setNullableString(idx++, record.externalImportKey)
-        idx = stmt.bindMediaMetadata(idx, record.media)
-        stmt.setLong(idx++, record.viewOffsetMs)
-        stmt.setInt(idx++, record.watchedDurationSec)
-        stmt.setInt(idx++, record.pausedDurationSec)
-        stmt.setDouble(idx++, record.completionPercent)
-        stmt.setDialectBoolean(idx++, record.isWatched, dialect)
-        idx = stmt.bindStreamTech(idx, record.streamTech, dialect)
-        idx = stmt.bindPlayer(idx, record.player)
-        stmt.setLong(idx++, record.startedAtMs)
-        stmt.setLong(idx, record.stoppedAtMs)
-    }
-
-    private fun ResultSet.toPlaybackHistoryRecord(): PlaybackHistoryRecord =
-        PlaybackHistoryRecord(
-            id = getString("id"),
-            serverId = getString("server_id"),
-            userId = getString("user_id"),
-            externalImportKey = getNullableString("external_import_key"),
-            media = readMediaMetadata(),
-            viewOffsetMs = getLong("view_offset_ms"),
-            watchedDurationSec = getInt("watched_duration_sec"),
-            pausedDurationSec = getInt("paused_duration_sec"),
-            completionPercent = getDouble("completion_percent"),
-            isWatched = getDialectBoolean("is_watched", dialect),
-            streamTech = readStreamTech(dialect),
-            player = readPlayer(),
-            startedAtMs = getLong("started_at_ms"),
-            stoppedAtMs = getLong("stopped_at_ms"),
-        )
-
-    private companion object {
-        const val COLUMNS =
-            "id, server_id, user_id, external_import_key, rating_key, media_type, title, " +
-                "parent_title, grandparent_title, parent_index, media_index, year, thumb_path, " +
-                "library_section_key, duration_ms, view_offset_ms, watched_duration_sec, " +
-                "paused_duration_sec, completion_percent, is_watched, stream_decision, " +
-                "video_decision, audio_decision, hw_transcode, video_codec, audio_codec, " +
-                "video_resolution, bandwidth_kbps, player_name, player_platform, player_product, " +
-                "player_machine_id, ip_address, location, started_at_ms, stopped_at_ms"
-
-        const val INSERT_VALUES_SQL =
-            """
-            INSERT INTO playback_history (
-                id, server_id, user_id, external_import_key, rating_key, media_type, title,
-                parent_title, grandparent_title, parent_index, media_index, year, thumb_path,
-                library_section_key, duration_ms, view_offset_ms, watched_duration_sec,
-                paused_duration_sec, completion_percent, is_watched, stream_decision,
-                video_decision, audio_decision, hw_transcode, video_codec, audio_codec,
-                video_resolution, bandwidth_kbps, player_name, player_platform, player_product,
-                player_machine_id, ip_address, location, started_at_ms, stopped_at_ms
-            )
-            VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-            )
-            """
-
-        const val INSERT_SQL = INSERT_VALUES_SQL
-        const val INSERT_IF_ABSENT_SQL =
-            "$INSERT_VALUES_SQL ON CONFLICT (external_import_key) DO NOTHING"
-
-        const val SELECT_BY_ID_SQL = "SELECT $COLUMNS FROM playback_history WHERE id = ?"
-
-        const val SELECT_MERGE_CANDIDATE_SQL =
-            """
-            SELECT $COLUMNS
-            FROM playback_history
-            WHERE server_id = ? AND user_id = ? AND rating_key = ? AND stopped_at_ms >= ?
-            ORDER BY stopped_at_ms DESC, id ASC
-            LIMIT 1
-            """
-
-        const val UPDATE_MERGED_SQL =
-            """
-            UPDATE playback_history
-            SET view_offset_ms = ?,
-                watched_duration_sec = ?,
-                paused_duration_sec = ?,
-                completion_percent = ?,
-                is_watched = ?,
-                stream_decision = ?,
-                video_decision = ?,
-                audio_decision = ?,
-                hw_transcode = ?,
-                video_codec = ?,
-                audio_codec = ?,
-                video_resolution = ?,
-                bandwidth_kbps = ?,
-                player_name = ?,
-                player_platform = ?,
-                player_product = ?,
-                player_machine_id = ?,
-                ip_address = ?,
-                location = ?,
-                started_at_ms = ?,
-                stopped_at_ms = ?
-            WHERE id = ?
-            """
+        stmt[PlaybackHistoryTable.id] = record.id
+        stmt[PlaybackHistoryTable.serverId] = record.serverId
+        stmt[PlaybackHistoryTable.userId] = record.userId
+        stmt[PlaybackHistoryTable.externalImportKey] = record.externalImportKey
+        stmt[PlaybackHistoryTable.ratingKey] = record.media.ratingKey
+        stmt[PlaybackHistoryTable.mediaType] = record.media.mediaType
+        stmt[PlaybackHistoryTable.title] = record.media.title
+        stmt[PlaybackHistoryTable.parentTitle] = record.media.parentTitle
+        stmt[PlaybackHistoryTable.grandparentTitle] = record.media.grandparentTitle
+        stmt[PlaybackHistoryTable.parentIndex] = record.media.parentIndex
+        stmt[PlaybackHistoryTable.mediaIndex] = record.media.mediaIndex
+        stmt[PlaybackHistoryTable.year] = record.media.year
+        stmt[PlaybackHistoryTable.thumbPath] = record.media.thumbPath
+        stmt[PlaybackHistoryTable.librarySectionKey] = record.media.librarySectionKey
+        stmt[PlaybackHistoryTable.durationMs] = record.media.durationMs
+        stmt[PlaybackHistoryTable.viewOffsetMs] = record.viewOffsetMs
+        stmt[PlaybackHistoryTable.watchedDurationSec] = record.watchedDurationSec
+        stmt[PlaybackHistoryTable.pausedDurationSec] = record.pausedDurationSec
+        stmt[PlaybackHistoryTable.completionPercent] = record.completionPercent
+        stmt[PlaybackHistoryTable.isWatched] = record.isWatched
+        stmt[PlaybackHistoryTable.streamDecision] = record.streamTech.streamDecision
+        stmt[PlaybackHistoryTable.videoDecision] = record.streamTech.videoDecision
+        stmt[PlaybackHistoryTable.audioDecision] = record.streamTech.audioDecision
+        stmt[PlaybackHistoryTable.hwTranscode] = record.streamTech.hwTranscode
+        stmt[PlaybackHistoryTable.videoCodec] = record.streamTech.videoCodec
+        stmt[PlaybackHistoryTable.audioCodec] = record.streamTech.audioCodec
+        stmt[PlaybackHistoryTable.videoResolution] = record.streamTech.videoResolution
+        stmt[PlaybackHistoryTable.bandwidthKbps] = record.streamTech.bandwidthKbps
+        stmt[PlaybackHistoryTable.playerName] = record.player.playerName
+        stmt[PlaybackHistoryTable.playerPlatform] = record.player.playerPlatform
+        stmt[PlaybackHistoryTable.playerProduct] = record.player.playerProduct
+        stmt[PlaybackHistoryTable.playerMachineId] = record.player.playerMachineId
+        stmt[PlaybackHistoryTable.ipAddress] = record.player.ipAddress
+        stmt[PlaybackHistoryTable.location] = record.player.location
+        stmt[PlaybackHistoryTable.startedAtMs] = record.startedAtMs
+        stmt[PlaybackHistoryTable.stoppedAtMs] = record.stoppedAtMs
     }
 }

@@ -6,6 +6,7 @@ import arrow.core.Either
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
 import org.flywaydb.core.Flyway
+import org.jetbrains.exposed.v1.jdbc.Database
 import org.slf4j.LoggerFactory
 import java.nio.file.Files
 import java.nio.file.Path
@@ -17,6 +18,7 @@ enum class DatabaseDialect {
 
 class DatabaseHandle(
     val dataSource: HikariDataSource,
+    val database: Database,
     val dialect: DatabaseDialect,
 ) : AutoCloseable {
     override fun close() {
@@ -58,13 +60,21 @@ object DatabaseFactory {
                     .load()
                     .migrate()
 
+            val database = Database.connect(datasource = dataSource)
+
             logger.info(
                 "Database initialized (dialect={}, migrationsExecuted={})",
                 dialect,
                 result.migrationsExecuted,
             )
 
-            Either.Right(DatabaseHandle(dataSource = dataSource, dialect = dialect))
+            Either.Right(
+                DatabaseHandle(
+                    dataSource = dataSource,
+                    database = database,
+                    dialect = dialect,
+                ),
+            )
         } catch (ex: Exception) {
             runCatching { dataSource?.close() }
             val secretToRedact = (config as? DatabaseConfig.Postgres)?.password

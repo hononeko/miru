@@ -1,17 +1,20 @@
 package app.hononeko.miru.persistence.repository
 
 import app.hononeko.miru.domain.error.MiruError
-import app.hononeko.miru.persistence.DatabaseDialect
 import app.hononeko.miru.persistence.DatabaseHandle
-import app.hononeko.miru.persistence.dbQuery
-import app.hononeko.miru.persistence.dbTransaction
-import app.hononeko.miru.persistence.getNullableString
+import app.hononeko.miru.persistence.exposedQuery
 import app.hononeko.miru.persistence.model.ActiveSessionKey
 import app.hononeko.miru.persistence.model.ActiveSessionRecord
-import app.hononeko.miru.persistence.setNullableString
+import app.hononeko.miru.persistence.table.ActiveSessionsTable
 import arrow.core.Either
-import java.sql.ResultSet
-import javax.sql.DataSource
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.Database
+import org.jetbrains.exposed.v1.jdbc.deleteWhere
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.jdbc.upsert
 
 interface ActiveSessionRepository {
     suspend fun upsert(session: ActiveSessionRecord): Either<MiruError.PersistenceError, Unit>
@@ -30,220 +33,134 @@ interface ActiveSessionRepository {
     ): Either<MiruError.PersistenceError, Int>
 }
 
-class JdbcActiveSessionRepository(
-    private val dataSource: DataSource,
-    private val dialect: DatabaseDialect,
+class ExposedActiveSessionRepository(
+    private val database: Database,
 ) : ActiveSessionRepository {
-    constructor(handle: DatabaseHandle) : this(handle.dataSource, handle.dialect)
+    constructor(handle: DatabaseHandle) : this(handle.database)
 
     override suspend fun upsert(session: ActiveSessionRecord): Either<MiruError.PersistenceError, Unit> =
-        dataSource.dbQuery("active_session_upsert") { conn ->
-            conn.prepareStatement(UPSERT_SQL).use { stmt ->
-                var idx = 1
-                stmt.setString(idx++, session.serverId)
-                stmt.setString(idx++, session.sessionKey)
-                stmt.setNullableString(idx++, session.sessionId)
-                stmt.setString(idx++, session.userId)
-                idx = stmt.bindMediaMetadata(idx, session.media)
-                stmt.setLong(idx++, session.viewOffsetMs)
-                stmt.setString(idx++, session.state)
-                idx = stmt.bindStreamTech(idx, session.streamTech, dialect)
-                idx = stmt.bindPlayer(idx, session.player)
-                stmt.setLong(idx++, session.startedAtMs)
-                stmt.setLong(idx++, session.lastSeenAtMs)
-                stmt.setInt(idx++, session.pausedDurationSec)
-                stmt.setInt(idx, session.missedPolls)
-                stmt.executeUpdate()
-                return@use
-            }
-        }
+        database
+            .exposedQuery("active_session_upsert") {
+                ActiveSessionsTable.upsert(
+                    ActiveSessionsTable.serverId,
+                    ActiveSessionsTable.sessionKey,
+                    ActiveSessionsTable.ratingKey,
+                ) {
+                    it[serverId] = session.serverId
+                    it[sessionKey] = session.sessionKey
+                    it[ratingKey] = session.media.ratingKey
+                    it[sessionId] = session.sessionId
+                    it[userId] = session.userId
+                    it[mediaType] = session.media.mediaType
+                    it[title] = session.media.title
+                    it[parentTitle] = session.media.parentTitle
+                    it[grandparentTitle] = session.media.grandparentTitle
+                    it[parentIndex] = session.media.parentIndex
+                    it[mediaIndex] = session.media.mediaIndex
+                    it[year] = session.media.year
+                    it[thumbPath] = session.media.thumbPath
+                    it[librarySectionKey] = session.media.librarySectionKey
+                    it[durationMs] = session.media.durationMs
+                    it[viewOffsetMs] = session.viewOffsetMs
+                    it[state] = session.state
+                    it[streamDecision] = session.streamTech.streamDecision
+                    it[videoDecision] = session.streamTech.videoDecision
+                    it[audioDecision] = session.streamTech.audioDecision
+                    it[hwTranscode] = session.streamTech.hwTranscode
+                    it[videoCodec] = session.streamTech.videoCodec
+                    it[audioCodec] = session.streamTech.audioCodec
+                    it[videoResolution] = session.streamTech.videoResolution
+                    it[bandwidthKbps] = session.streamTech.bandwidthKbps
+                    it[playerName] = session.player.playerName
+                    it[playerPlatform] = session.player.playerPlatform
+                    it[playerProduct] = session.player.playerProduct
+                    it[playerMachineId] = session.player.playerMachineId
+                    it[ipAddress] = session.player.ipAddress
+                    it[location] = session.player.location
+                    it[startedAtMs] = session.startedAtMs
+                    it[lastSeenAtMs] = session.lastSeenAtMs
+                    it[pausedDurationSec] = session.pausedDurationSec
+                    it[missedPolls] = session.missedPolls
+                }
+            }.map { }
 
     override suspend fun findByKey(key: ActiveSessionKey): Either<MiruError.PersistenceError, ActiveSessionRecord?> =
-        dataSource.dbQuery("active_session_find_by_key") { conn ->
-            conn.prepareStatement(SELECT_BY_KEY_SQL).use { stmt ->
-                stmt.setString(1, key.serverId)
-                stmt.setString(2, key.sessionKey)
-                stmt.setString(3, key.ratingKey)
-                stmt.executeQuery().use { rs ->
-                    if (rs.next()) rs.toActiveSessionRecord() else null
-                }
-            }
+        database.exposedQuery("active_session_find_by_key") {
+            ActiveSessionsTable
+                .selectAll()
+                .where {
+                    (ActiveSessionsTable.serverId eq key.serverId) and
+                        (ActiveSessionsTable.sessionKey eq key.sessionKey) and
+                        (ActiveSessionsTable.ratingKey eq key.ratingKey)
+                }.singleOrNull()
+                ?.toActiveSessionRecord()
         }
 
     override suspend fun findByServer(serverId: String): Either<MiruError.PersistenceError, List<ActiveSessionRecord>> =
-        dataSource.dbQuery("active_session_find_by_server") { conn ->
-            conn.prepareStatement(SELECT_BY_SERVER_SQL).use { stmt ->
-                stmt.setString(1, serverId)
-                stmt.executeQuery().use { rs ->
-                    buildList {
-                        while (rs.next()) {
-                            add(rs.toActiveSessionRecord())
-                        }
-                    }
-                }
-            }
+        database.exposedQuery("active_session_find_by_server") {
+            ActiveSessionsTable
+                .selectAll()
+                .where { ActiveSessionsTable.serverId eq serverId }
+                .orderBy(
+                    ActiveSessionsTable.startedAtMs to SortOrder.DESC,
+                    ActiveSessionsTable.sessionKey to SortOrder.ASC,
+                    ActiveSessionsTable.ratingKey to SortOrder.ASC,
+                ).map { it.toActiveSessionRecord() }
         }
 
     override suspend fun findAll(): Either<MiruError.PersistenceError, List<ActiveSessionRecord>> =
-        dataSource.dbQuery("active_session_find_all") { conn ->
-            conn.prepareStatement(SELECT_ALL_SQL).use { stmt ->
-                stmt.executeQuery().use { rs ->
-                    buildList {
-                        while (rs.next()) {
-                            add(rs.toActiveSessionRecord())
-                        }
-                    }
-                }
-            }
+        database.exposedQuery("active_session_find_all") {
+            ActiveSessionsTable
+                .selectAll()
+                .orderBy(
+                    ActiveSessionsTable.startedAtMs to SortOrder.DESC,
+                    ActiveSessionsTable.serverId to SortOrder.ASC,
+                    ActiveSessionsTable.sessionKey to SortOrder.ASC,
+                    ActiveSessionsTable.ratingKey to SortOrder.ASC,
+                ).map { it.toActiveSessionRecord() }
         }
 
     override suspend fun deleteByKey(key: ActiveSessionKey): Either<MiruError.PersistenceError, Boolean> =
-        dataSource.dbQuery("active_session_delete_by_key") { conn ->
-            conn.prepareStatement(DELETE_BY_KEY_SQL).use { stmt ->
-                stmt.setString(1, key.serverId)
-                stmt.setString(2, key.sessionKey)
-                stmt.setString(3, key.ratingKey)
-                stmt.executeUpdate() > 0
-            }
+        database.exposedQuery("active_session_delete_by_key") {
+            ActiveSessionsTable.deleteWhere {
+                (ActiveSessionsTable.serverId eq key.serverId) and
+                    (ActiveSessionsTable.sessionKey eq key.sessionKey) and
+                    (ActiveSessionsTable.ratingKey eq key.ratingKey)
+            } > 0
         }
 
     override suspend fun deleteStaleMissing(
         serverId: String,
         activeKeys: Set<ActiveSessionKey>,
     ): Either<MiruError.PersistenceError, Int> =
-        dataSource.dbTransaction("active_session_delete_stale_missing") { conn ->
+        database.exposedQuery("active_session_delete_stale_missing") {
             val serverActiveKeys = activeKeys.filterTo(HashSet()) { it.serverId == serverId }
             if (serverActiveKeys.isEmpty()) {
-                return@dbTransaction conn.prepareStatement(DELETE_BY_SERVER_SQL).use { stmt ->
-                    stmt.setString(1, serverId)
-                    stmt.executeUpdate()
-                }
+                return@exposedQuery ActiveSessionsTable.deleteWhere { ActiveSessionsTable.serverId eq serverId }
             }
 
             val existingKeys =
-                conn.prepareStatement(SELECT_KEYS_BY_SERVER_SQL).use { stmt ->
-                    stmt.setString(1, serverId)
-                    stmt.executeQuery().use { rs ->
-                        buildList {
-                            while (rs.next()) {
-                                add(
-                                    ActiveSessionKey(
-                                        serverId = serverId,
-                                        sessionKey = rs.getString("session_key"),
-                                        ratingKey = rs.getString("rating_key"),
-                                    ),
-                                )
-                            }
-                        }
+                ActiveSessionsTable
+                    .select(ActiveSessionsTable.sessionKey, ActiveSessionsTable.ratingKey)
+                    .where { ActiveSessionsTable.serverId eq serverId }
+                    .map { row ->
+                        ActiveSessionKey(
+                            serverId = serverId,
+                            sessionKey = row[ActiveSessionsTable.sessionKey],
+                            ratingKey = row[ActiveSessionsTable.ratingKey],
+                        )
                     }
-                }
 
             val staleKeys = existingKeys.filter { it !in serverActiveKeys }
-            if (staleKeys.isEmpty()) {
-                return@dbTransaction 0
-            }
-
             var deleted = 0
-            conn.prepareStatement(DELETE_BY_KEY_SQL).use { stmt ->
-                for (key in staleKeys) {
-                    stmt.setString(1, key.serverId)
-                    stmt.setString(2, key.sessionKey)
-                    stmt.setString(3, key.ratingKey)
-                    deleted += stmt.executeUpdate()
-                }
+            for (key in staleKeys) {
+                deleted +=
+                    ActiveSessionsTable.deleteWhere {
+                        (ActiveSessionsTable.serverId eq key.serverId) and
+                            (ActiveSessionsTable.sessionKey eq key.sessionKey) and
+                            (ActiveSessionsTable.ratingKey eq key.ratingKey)
+                    }
             }
             deleted
         }
-
-    private fun ResultSet.toActiveSessionRecord(): ActiveSessionRecord =
-        ActiveSessionRecord(
-            serverId = getString("server_id"),
-            sessionKey = getString("session_key"),
-            sessionId = getNullableString("session_id"),
-            userId = getString("user_id"),
-            media = readMediaMetadata(),
-            viewOffsetMs = getLong("view_offset_ms"),
-            state = getString("state"),
-            streamTech = readStreamTech(dialect),
-            player = readPlayer(),
-            startedAtMs = getLong("started_at_ms"),
-            lastSeenAtMs = getLong("last_seen_at_ms"),
-            pausedDurationSec = getInt("paused_duration_sec"),
-            missedPolls = getInt("missed_polls"),
-        )
-
-    private companion object {
-        const val COLUMNS =
-            "server_id, session_key, session_id, user_id, rating_key, media_type, title, " +
-                "parent_title, grandparent_title, parent_index, media_index, year, thumb_path, " +
-                "library_section_key, duration_ms, view_offset_ms, state, stream_decision, " +
-                "video_decision, audio_decision, hw_transcode, video_codec, audio_codec, " +
-                "video_resolution, bandwidth_kbps, player_name, player_platform, player_product, " +
-                "player_machine_id, ip_address, location, started_at_ms, last_seen_at_ms, " +
-                "paused_duration_sec, missed_polls"
-
-        const val SELECT_BY_KEY_SQL =
-            "SELECT $COLUMNS FROM active_sessions WHERE server_id = ? AND session_key = ? AND rating_key = ?"
-        const val SELECT_BY_SERVER_SQL =
-            "SELECT $COLUMNS FROM active_sessions WHERE server_id = ? " +
-                "ORDER BY started_at_ms DESC, session_key ASC, rating_key ASC"
-        const val SELECT_ALL_SQL =
-            "SELECT $COLUMNS FROM active_sessions ORDER BY started_at_ms DESC, server_id ASC, session_key ASC, rating_key ASC"
-        const val SELECT_KEYS_BY_SERVER_SQL =
-            "SELECT session_key, rating_key FROM active_sessions WHERE server_id = ?"
-        const val DELETE_BY_KEY_SQL =
-            "DELETE FROM active_sessions WHERE server_id = ? AND session_key = ? AND rating_key = ?"
-        const val DELETE_BY_SERVER_SQL =
-            "DELETE FROM active_sessions WHERE server_id = ?"
-
-        const val UPSERT_SQL =
-            """
-            INSERT INTO active_sessions (
-                server_id, session_key, session_id, user_id, rating_key, media_type, title,
-                parent_title, grandparent_title, parent_index, media_index, year, thumb_path,
-                library_section_key, duration_ms, view_offset_ms, state, stream_decision,
-                video_decision, audio_decision, hw_transcode, video_codec, audio_codec,
-                video_resolution, bandwidth_kbps, player_name, player_platform, player_product,
-                player_machine_id, ip_address, location, started_at_ms, last_seen_at_ms,
-                paused_duration_sec, missed_polls
-            )
-            VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-            )
-            ON CONFLICT (server_id, session_key, rating_key) DO UPDATE SET
-                session_id = EXCLUDED.session_id,
-                user_id = EXCLUDED.user_id,
-                media_type = EXCLUDED.media_type,
-                title = EXCLUDED.title,
-                parent_title = EXCLUDED.parent_title,
-                grandparent_title = EXCLUDED.grandparent_title,
-                parent_index = EXCLUDED.parent_index,
-                media_index = EXCLUDED.media_index,
-                year = EXCLUDED.year,
-                thumb_path = EXCLUDED.thumb_path,
-                library_section_key = EXCLUDED.library_section_key,
-                duration_ms = EXCLUDED.duration_ms,
-                view_offset_ms = EXCLUDED.view_offset_ms,
-                state = EXCLUDED.state,
-                stream_decision = EXCLUDED.stream_decision,
-                video_decision = EXCLUDED.video_decision,
-                audio_decision = EXCLUDED.audio_decision,
-                hw_transcode = EXCLUDED.hw_transcode,
-                video_codec = EXCLUDED.video_codec,
-                audio_codec = EXCLUDED.audio_codec,
-                video_resolution = EXCLUDED.video_resolution,
-                bandwidth_kbps = EXCLUDED.bandwidth_kbps,
-                player_name = EXCLUDED.player_name,
-                player_platform = EXCLUDED.player_platform,
-                player_product = EXCLUDED.player_product,
-                player_machine_id = EXCLUDED.player_machine_id,
-                ip_address = EXCLUDED.ip_address,
-                location = EXCLUDED.location,
-                started_at_ms = EXCLUDED.started_at_ms,
-                last_seen_at_ms = EXCLUDED.last_seen_at_ms,
-                paused_duration_sec = EXCLUDED.paused_duration_sec,
-                missed_polls = EXCLUDED.missed_polls
-            """
-    }
 }

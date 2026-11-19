@@ -14,11 +14,11 @@ import app.hononeko.miru.persistence.model.PlayerRecord
 import app.hononeko.miru.persistence.model.StreamTechRecord
 import app.hononeko.miru.persistence.model.UserRecord
 import app.hononeko.miru.persistence.repository.ActiveSessionRepository
-import app.hononeko.miru.persistence.repository.JdbcActiveSessionRepository
-import app.hononeko.miru.persistence.repository.JdbcLibraryRepository
-import app.hononeko.miru.persistence.repository.JdbcMediaServerRepository
-import app.hononeko.miru.persistence.repository.JdbcPlaybackHistoryRepository
-import app.hononeko.miru.persistence.repository.JdbcUserRepository
+import app.hononeko.miru.persistence.repository.ExposedActiveSessionRepository
+import app.hononeko.miru.persistence.repository.ExposedLibraryRepository
+import app.hononeko.miru.persistence.repository.ExposedMediaServerRepository
+import app.hononeko.miru.persistence.repository.ExposedPlaybackHistoryRepository
+import app.hononeko.miru.persistence.repository.ExposedUserRepository
 import app.hononeko.miru.persistence.repository.LibraryRepository
 import app.hononeko.miru.persistence.repository.MediaServerRepository
 import app.hononeko.miru.persistence.repository.PlaybackHistoryRepository
@@ -37,11 +37,11 @@ import java.util.UUID
 private class ContractContext(
     val handle: DatabaseHandle,
 ) {
-    val servers: MediaServerRepository = JdbcMediaServerRepository(handle)
-    val users: UserRepository = JdbcUserRepository(handle)
-    val sessions: ActiveSessionRepository = JdbcActiveSessionRepository(handle)
-    val history: PlaybackHistoryRepository = JdbcPlaybackHistoryRepository(handle)
-    val library: LibraryRepository = JdbcLibraryRepository(handle)
+    val servers: MediaServerRepository = ExposedMediaServerRepository(handle)
+    val users: UserRepository = ExposedUserRepository(handle)
+    val sessions: ActiveSessionRepository = ExposedActiveSessionRepository(handle)
+    val history: PlaybackHistoryRepository = ExposedPlaybackHistoryRepository(handle)
+    val library: LibraryRepository = ExposedLibraryRepository(handle)
 }
 
 fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =

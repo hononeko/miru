@@ -22,8 +22,6 @@ jobs:
   validate:
     name: Build & Code Verification
     uses: ./.github/workflows/validate.yml
-    with:
-      ref: ${{ github.event.pull_request.head.sha }}
     permissions:
       contents: read
 

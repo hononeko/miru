@@ -1,0 +1,261 @@
+package app.hononeko.miru.adapter.plex
+
+import app.hononeko.miru.MiruJson
+import app.hononeko.miru.adapter.ArtworkData
+import app.hononeko.miru.adapter.LibrarySectionType
+import app.hononeko.miru.adapter.MediaType
+import app.hononeko.miru.adapter.MediaUser
+import app.hononeko.miru.adapter.PlaybackState
+import app.hononeko.miru.adapter.StreamDecision
+import app.hononeko.miru.adapter.StreamLocation
+import io.kotest.core.spec.style.FunSpec
+import io.kotest.matchers.collections.shouldBeEmpty
+import io.kotest.matchers.collections.shouldHaveSize
+import io.kotest.matchers.nulls.shouldBeNull
+import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
+
+class PlexMapperTest :
+    FunSpec({
+        test("maps server root info and identity-only fallback") {
+            val root = MiruJson.decodeFromString<PlexServerInfoResponse>(PlexFixtures.serverRootJson)
+            val mappedRoot = PlexMapper.mapServerIdentity(root.mediaContainer)
+            mappedRoot.machineIdentifier shouldBe "abc123machine"
+            mappedRoot.friendlyName shouldBe "KerrLab Plex"
+            mappedRoot.version shouldBe "1.41.3.9314-a0bfb8370"
+            mappedRoot.platform shouldBe "Linux"
+
+            val identityOnly = MiruJson.decodeFromString<PlexServerInfoResponse>(PlexFixtures.serverIdentityOnlyJson)
+            val mappedIdentity = PlexMapper.mapServerIdentity(identityOnly.mediaContainer)
+            mappedIdentity.machineIdentifier shouldBe "identity-only-id"
+            mappedIdentity.friendlyName shouldBe "identity-only-id"
+            mappedIdentity.version shouldBe "1.41.3.9314"
+            mappedIdentity.platform.shouldBeNull()
+        }
+
+        test("maps empty /status/sessions without Metadata to empty list") {
+            val response = MiruJson.decodeFromString<PlexSessionsResponse>(PlexFixtures.emptySessionsJson)
+            PlexMapper.mapSessions(response.mediaContainer).shouldBeEmpty()
+        }
+
+        test("maps movie direct play LAN session") {
+            val response = MiruJson.decodeFromString<PlexSessionsResponse>(PlexFixtures.movieDirectPlayLanJson)
+            val sessions = PlexMapper.mapSessions(response.mediaContainer)
+            sessions shouldHaveSize 1
+
+            val stream = sessions.single()
+            stream.sessionId shouldBe "session-movie-1"
+            stream.sessionKey shouldBe "11"
+            stream.state shouldBe PlaybackState.PLAYING
+            stream.viewOffsetMs shouldBe 1_800_000L
+
+            stream.media.ratingKey shouldBe "12345"
+            stream.media.mediaType shouldBe MediaType.MOVIE
+            stream.media.title shouldBe "Spirited Away"
+            stream.media.year shouldBe 2001
+            stream.media.durationMs shouldBe 7_500_000L
+            stream.media.thumbPath shouldBe "/library/metadata/12345/thumb/1700000000"
+            stream.media.artPath shouldBe "/library/metadata/12345/art/1700000000"
+            stream.media.librarySectionId shouldBe "1"
+
+            stream.user.externalId shouldBe "2002"
+            stream.user.username shouldBe "yuki"
+            stream.user.thumbUrl shouldBe "https://plex.tv/users/yuki/avatar"
+
+            stream.player.machineIdentifier shouldBe "player-appletv-1"
+            stream.player.product shouldBe "Plex for Apple TV"
+            stream.player.platform shouldBe "tvOS"
+            stream.player.device shouldBe "Apple TV 4K"
+            stream.player.address shouldBe "10.10.20.15"
+            stream.player.location shouldBe StreamLocation.LAN
+            stream.player.isLocal shouldBe true
+
+            stream.technical.decision shouldBe StreamDecision.DIRECT_PLAY
+            stream.technical.videoDecision shouldBe StreamDecision.DIRECT_PLAY
+            stream.technical.audioDecision shouldBe StreamDecision.DIRECT_PLAY
+            stream.technical.isHwTranscode shouldBe false
+            stream.technical.videoCodec shouldBe "h264"
+            stream.technical.audioCodec shouldBe "dts"
+            stream.technical.container shouldBe "mkv"
+            stream.technical.videoResolution shouldBe "1080"
+            stream.technical.bitrateKbps shouldBe 14_000
+        }
+
+        test("maps TV episode HW transcode WAN session") {
+            val response = MiruJson.decodeFromString<PlexSessionsResponse>(PlexFixtures.episodeHwTranscodeWanJson)
+            val stream = PlexMapper.mapSessions(response.mediaContainer).single()
+
+            stream.state shouldBe PlaybackState.PAUSED
+            stream.media.mediaType shouldBe MediaType.EPISODE
+            stream.media.title shouldBe "Ozymandias"
+            stream.media.parentTitle shouldBe "Season 5"
+            stream.media.grandparentTitle shouldBe "Breaking Bad"
+            stream.media.parentIndex shouldBe 5
+            stream.media.index shouldBe 14
+            stream.media.durationMs shouldBe 2_880_000L
+
+            stream.player.location shouldBe StreamLocation.WAN
+            stream.player.isLocal shouldBe false
+
+            stream.technical.decision shouldBe StreamDecision.TRANSCODE
+            stream.technical.videoDecision shouldBe StreamDecision.TRANSCODE
+            stream.technical.audioDecision shouldBe StreamDecision.DIRECT_STREAM
+            stream.technical.isHwTranscode shouldBe true
+            stream.technical.videoCodec shouldBe "hevc"
+            stream.technical.transcodeVideoCodec shouldBe "h264"
+            stream.technical.audioCodec shouldBe "eac3"
+            stream.technical.transcodeAudioCodec shouldBe "aac"
+            stream.technical.container shouldBe "mkv"
+            stream.technical.transcodeContainer shouldBe "mp4"
+            stream.technical.videoResolution shouldBe "4k"
+            stream.technical.bitrateKbps shouldBe 4_500
+            stream.technical.transcodeProgress shouldBe 42.5
+            stream.technical.transcodeSpeed shouldBe 3.4
+        }
+
+        test("detects software transcode when HW requested fell back and maps direct stream remux") {
+            val swResponse = MiruJson.decodeFromString<PlexSessionsResponse>(PlexFixtures.episodeSwTranscodeJson)
+            val swStream = PlexMapper.mapSessions(swResponse.mediaContainer).single()
+            swStream.state shouldBe PlaybackState.BUFFERING
+            swStream.technical.decision shouldBe StreamDecision.TRANSCODE
+            swStream.technical.isHwTranscode shouldBe false
+
+            val remuxResponse = MiruJson.decodeFromString<PlexSessionsResponse>(PlexFixtures.directStreamRemuxJson)
+            val remuxStream = PlexMapper.mapSessions(remuxResponse.mediaContainer).single()
+            remuxStream.technical.decision shouldBe StreamDecision.DIRECT_STREAM
+            remuxStream.technical.videoDecision shouldBe StreamDecision.DIRECT_STREAM
+            remuxStream.technical.audioDecision shouldBe StreamDecision.DIRECT_STREAM
+            remuxStream.technical.isHwTranscode shouldBe false
+        }
+
+        test("maps Plexamp music track and Live TV with missing duration and Media") {
+            val trackResponse = MiruJson.decodeFromString<PlexSessionsResponse>(PlexFixtures.musicTrackJson)
+            val track = PlexMapper.mapSessions(trackResponse.mediaContainer).single()
+            track.media.mediaType shouldBe MediaType.TRACK
+            track.media.title shouldBe "Resonance"
+            track.media.parentTitle shouldBe "Odyssey"
+            track.media.grandparentTitle shouldBe "HOME"
+            track.media.parentIndex shouldBe 1
+            track.media.index shouldBe 5
+            track.technical.decision shouldBe StreamDecision.DIRECT_PLAY
+            track.technical.audioCodec shouldBe "flac"
+            track.technical.videoCodec.shouldBeNull()
+
+            val liveResponse = MiruJson.decodeFromString<PlexSessionsResponse>(PlexFixtures.liveTvMissingFieldsJson)
+            val live = PlexMapper.mapSessions(liveResponse.mediaContainer).single()
+            live.media.mediaType shouldBe MediaType.LIVE_TV
+            live.media.title shouldBe "Evening News"
+            live.media.grandparentTitle shouldBe "NHK-G"
+            live.media.durationMs.shouldBeNull()
+            live.player.location shouldBe StreamLocation.LAN
+            live.player.isLocal shouldBe true
+            live.technical.decision shouldBe StreamDecision.DIRECT_PLAY
+            live.technical.videoCodec.shouldBeNull()
+        }
+
+        test("normalizes local owner User.id == 1 consistently with owner metadata") {
+            val response = MiruJson.decodeFromString<PlexSessionsResponse>(PlexFixtures.localOwnerSessionJson)
+            val resolvedOwner =
+                MediaUser(
+                    externalId = "99887766",
+                    username = "kerrlab",
+                    displayName = "Alex Kerr",
+                    email = "alex@kerrlab.app",
+                    thumbUrl = "https://plex.tv/users/owner/avatar",
+                    isAdmin = true,
+                )
+
+            val normalized = PlexMapper.mapSessions(response.mediaContainer, ownerUser = resolvedOwner).single()
+            normalized.user.externalId shouldBe "99887766"
+            normalized.user.username shouldBe "kerrlab"
+            normalized.user.thumbUrl shouldBe "https://plex.tv/users/owner/avatar"
+
+            val unnormalized = PlexMapper.mapSessions(response.mediaContainer, ownerUser = null).single()
+            unnormalized.user.externalId shouldBe "1"
+            unnormalized.user.username shouldBe "Local Admin"
+        }
+
+        test("merges /accounts with optional plex.tv user and friends and filters dummy id 0") {
+            val accounts = MiruJson.decodeFromString<PlexAccountsResponse>(PlexFixtures.accountsJson).mediaContainer.account.orEmpty()
+            val tvUser = MiruJson.decodeFromString<PlexTvUserDto>(PlexFixtures.plexTvUserJson)
+            val tvFriends = MiruJson.decodeFromString<List<PlexTvFriendDto>>(PlexFixtures.plexTvFriendsJson)
+
+            val offlineUsers = PlexMapper.mapUsers(accounts)
+            offlineUsers shouldHaveSize 3
+            offlineUsers[0] shouldBe MediaUser(externalId = "1", username = "kerrlab", displayName = "kerrlab", isAdmin = true)
+            offlineUsers[1] shouldBe MediaUser(externalId = "2002", username = "yuki", displayName = "yuki", isAdmin = false)
+            offlineUsers[2] shouldBe MediaUser(externalId = "3003", username = "managed_kid", displayName = "managed_kid", isAdmin = false)
+
+            val onlineUsers = PlexMapper.mapUsers(accounts, tvUser, tvFriends)
+            onlineUsers shouldHaveSize 3
+            onlineUsers[0] shouldBe
+                MediaUser(
+                    externalId = "99887766",
+                    username = "kerrlab",
+                    displayName = "Alex Kerr",
+                    email = "alex@kerrlab.app",
+                    thumbUrl = "https://plex.tv/users/owner/avatar",
+                    isAdmin = true,
+                )
+            onlineUsers[1] shouldBe
+                MediaUser(
+                    externalId = "2002",
+                    username = "yuki",
+                    displayName = "Yuki Tanaka",
+                    email = "yuki@example.com",
+                    thumbUrl = "https://plex.tv/users/yuki/avatar",
+                    isAdmin = false,
+                )
+            onlineUsers[2].externalId shouldBe "3003"
+            onlineUsers[2].isAdmin shouldBe false
+        }
+
+        test("maps library sections and paginated library items") {
+            val sectionsResponse = MiruJson.decodeFromString<PlexLibrarySectionsResponse>(PlexFixtures.librarySectionsJson)
+            val sections = PlexMapper.mapLibrarySections(sectionsResponse.mediaContainer)
+            sections shouldHaveSize 5
+            sections.map { it.type } shouldBe
+                listOf(
+                    LibrarySectionType.MOVIE,
+                    LibrarySectionType.SHOW,
+                    LibrarySectionType.ARTIST,
+                    LibrarySectionType.PHOTO,
+                    LibrarySectionType.OTHER,
+                )
+
+            val itemsResponse = MiruJson.decodeFromString<PlexLibraryItemsResponse>(PlexFixtures.libraryItemsPageJson)
+            val page = PlexMapper.mapLibraryItemsPage(sectionKey = "1", requestedStart = 0, container = itemsResponse.mediaContainer)
+            page.totalSize shouldBe 412
+            page.offset shouldBe 20
+            page.items shouldHaveSize 2
+
+            val movie = page.items[0]
+            movie.ratingKey shouldBe "12345"
+            movie.sectionKey shouldBe "1"
+            movie.mediaType shouldBe MediaType.MOVIE
+            movie.fileSizeBytes shouldBe 11_718_750_000L
+            movie.videoResolution shouldBe "1080"
+            movie.videoCodec shouldBe "h264"
+            movie.audioCodec shouldBe "dts"
+            movie.addedAtEpochSeconds shouldBe 1_700_000_000L
+
+            val episode = page.items[1]
+            episode.mediaType shouldBe MediaType.EPISODE
+            episode.parentTitle shouldBe "Season 5"
+            episode.grandparentTitle shouldBe "Breaking Bad"
+            episode.videoCodec shouldBe "hevc"
+            episode.audioCodec shouldBe "eac3"
+            episode.fileSizeBytes shouldBe 8_500_000_000L
+        }
+
+        test("ArtworkData implements value equality and safe toString") {
+            val a1 = ArtworkData(byteArrayOf(1, 2, 3), "image/jpeg")
+            val a2 = ArtworkData(byteArrayOf(1, 2, 3), "image/jpeg")
+            val b = ArtworkData(byteArrayOf(4, 5, 6), "image/png")
+
+            a1 shouldBe a2
+            a1.hashCode() shouldBe a2.hashCode()
+            a1 shouldNotBe b
+            a1.toString() shouldBe "ArtworkData(size=3, contentType=image/jpeg)"
+        }
+    })

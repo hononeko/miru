@@ -1,6 +1,6 @@
 # Agent & Contributor Guidelines (`AGENTS.md`)
 
-<!-- One or two sentences: what this repository is and who consumes it. -->
+**Miru** (見る) is a lightweight media server telemetry, live stream monitor, playback history tracker, and library analytics service built in Kotlin/Ktor with Arrow-kt, supporting both SQLite and PostgreSQL, and exposing a versioned REST + SSE API for a decoupled Svelte/Astro frontend.
 
 All automated agents and human contributors must follow the rules in this document.
 
@@ -9,17 +9,18 @@ All automated agents and human contributors must follow the rules in this docume
 Before committing, all of these must pass:
 
 ```bash
-# <!-- format / lint command -->
-# <!-- test command -->
-# <!-- build / type-check command -->
+./gradlew check
+./gradlew test
+./gradlew shadowJar
 ```
 
 ## 2. Rules
 
-<!-- Project-specific architecture, coding and security rules. Keep each one short and actionable. -->
-
-* **No secrets in code or logs:** credentials come from the environment and are never logged.
-* **Pinned dependencies:** third-party GitHub Actions are pinned by commit SHA with a version comment.
+* **Arrow-kt typed errors:** Use `Either<MiruError, T>` and `Raise<MiruError>` (`either { ... }`) across adapters, repositories, and services. Avoid exception-driven domain control flow; map `MiruError` to RFC 7807 Problem Details at the Ktor routing boundary.
+* **Dual-DB parity:** All persistence changes must ship migrations and passing tests for both **SQLite** and **PostgreSQL**.
+* **No secrets in code or logs:** Credentials (`PLEX_TOKEN`, `DATABASE_PASSWORD`, `AUTH_SESSION_SECRET`, `MIRU_ADMIN_PASSWORD`) come from the environment, are redacted in `toString()`, and are never logged or returned in API responses.
+* **Keep OpenAPI in sync:** Every new or modified HTTP endpoint updates `src/main/resources/openapi/openapi.yaml`.
+* **Pinned dependencies:** Third-party GitHub Actions are pinned by commit SHA with a version comment.
 
 ## 3. Commits & Releases
 
@@ -37,7 +38,22 @@ Versions follow the rules shared by all hononeko repositories in [`hononeko/acti
 ```
 .
 ├── .githooks/
-│   └── commit-msg    # Conventional Commits check
-├── AGENTS.md         # This file
+│   └── commit-msg                # Conventional Commits check
+├── config/detekt/detekt.yml      # Detekt rules
+├── gradle/libs.versions.toml     # Dependency version catalog
+├── src/
+│   ├── main/
+│   │   ├── kotlin/app/hononeko/miru/
+│   │   │   ├── Application.kt
+│   │   │   ├── config/           # Typed AppConfig + Arrow validation
+│   │   │   ├── domain/error/     # Sealed MiruError hierarchy
+│   │   │   ├── health/           # Readiness checks & probes
+│   │   │   └── http/             # RFC 7807 ProblemDetails, Either mapper, routes
+│   │   └── resources/
+│   │       ├── application.conf
+│   │       ├── logback.xml
+│   │       └── openapi/openapi.yaml
+│   └── test/kotlin/app/hononeko/miru/
+├── AGENTS.md
 └── README.md
 ```

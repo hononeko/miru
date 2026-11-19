@@ -1,0 +1,135 @@
+openapi: 3.1.0
+info:
+  title: Miru API
+  version: 0.1.0
+  description: >-
+    Lightweight media server telemetry, live stream monitor, playback history tracker,
+    and library analytics API.
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
+
+servers:
+  - url: /
+    description: Current Miru instance
+
+tags:
+  - name: System
+    description: Liveness, readiness, and API contract endpoints
+
+paths:
+  /healthz:
+    get:
+      tags: [System]
+      operationId: getHealthz
+      summary: Liveness probe
+      responses:
+        '200':
+          description: Service process is alive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /readyz:
+    get:
+      tags: [System]
+      operationId: getReadyz
+      summary: Readiness probe
+      description: Verifies registered dependency checks (database, media server).
+      responses:
+        '200':
+          description: All dependencies are ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+        '503':
+          description: One or more dependencies are unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+
+  /api/v1/openapi.yaml:
+    get:
+      tags: [System]
+      operationId: getOpenApiSpec
+      summary: Retrieve OpenAPI 3.1 specification
+      responses:
+        '200':
+          description: OpenAPI YAML document
+          content:
+            application/yaml:
+              schema:
+                type: string
+        '404':
+          description: OpenAPI specification resource not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, service, version]
+      properties:
+        status:
+          type: string
+          example: ok
+        service:
+          type: string
+          example: miru
+        version:
+          type: string
+          example: 0.1.0
+
+    DependencyCheckStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+        detail:
+          type: string
+
+    ReadinessResponse:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+        checks:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/DependencyCheckStatus'
+
+    ProblemDetails:
+      type: object
+      description: RFC 7807 / RFC 9457 Problem Details error response
+      required: [type, title, status, detail]
+      properties:
+        type:
+          type: string
+          format: uri
+          example: https://miru.hononeko.app/errors/validation
+        title:
+          type: string
+          example: Validation Error
+        status:
+          type: integer
+          example: 400
+        detail:
+          type: string
+          example: Invalid request parameters
+        instance:
+          type: string
+          example: /api/v1/history
+        errors:
+          type: object
+          additionalProperties:
+            type: string

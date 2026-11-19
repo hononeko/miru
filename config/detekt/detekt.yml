@@ -1,0 +1,44 @@
+naming:
+  FunctionNaming:
+    ignoreAnnotated: ['Test']
+
+style:
+  MaxLineLength:
+    maxLineLength: 140
+  MagicNumber:
+    active: false
+  ReturnCount:
+    active: false
+  ThrowsCount:
+    active: false
+  LoopWithTooManyJumpStatements:
+    active: false
+  UseCheckOrError:
+    active: false
+
+complexity:
+  LargeClass:
+    active: false
+  TooManyFunctions:
+    allowedFunctionsPerFile: 35
+    allowedFunctionsPerClass: 35
+    allowedFunctionsPerInterface: 20
+    allowedFunctionsPerObject: 20
+    allowedFunctionsPerEnum: 10
+  LongParameterList:
+    allowedFunctionParameters: 12
+    allowedConstructorParameters: 15
+  LongMethod:
+    allowedLines: 120
+  CyclomaticComplexMethod:
+    allowedComplexity: 30
+
+coroutines:
+  InjectDispatcher:
+    active: false
+
+exceptions:
+  TooGenericExceptionCaught:
+    active: false
+  SwallowedException:
+    active: false

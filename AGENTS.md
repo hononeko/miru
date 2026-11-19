@@ -17,6 +17,7 @@ Before committing, all of these must pass:
 ## 2. Rules
 
 * **Arrow-kt typed errors:** Use `Either<MiruError, T>` and `Raise<MiruError>` (`either { ... }`) across adapters, repositories, and services. Avoid exception-driven domain control flow; map `MiruError` to RFC 7807 Problem Details at the Ktor routing boundary.
+* **Kotest for all tests:** Write all unit and integration tests using **Kotest** (`FunSpec` / `kotest-assertions-core` / `kotest-assertions-arrow`). Do not add JUnit Jupiter `@Test` suites.
 * **Dual-DB parity:** All persistence changes must ship migrations and passing tests for both **SQLite** and **PostgreSQL**.
 * **No secrets in code or logs:** Credentials (`PLEX_TOKEN`, `DATABASE_PASSWORD`, `AUTH_SESSION_SECRET`, `MIRU_ADMIN_PASSWORD`) come from the environment, are redacted in `toString()`, and are never logged or returned in API responses.
 * **Keep OpenAPI in sync:** Every new or modified HTTP endpoint updates `src/main/resources/openapi/openapi.yaml`.

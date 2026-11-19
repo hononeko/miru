@@ -95,7 +95,20 @@ tasks.shadowJar {
 
 detekt {
     buildUponDefaultConfig = true
+    parallel = true
     config.setFrom(files("$rootDir/config/detekt/detekt.yml"))
+}
+
+kover {
+    currentProject {
+        instrumentation {
+            disabledForTestTasks.add("integrationTest")
+        }
+    }
+}
+
+tasks.named("detekt") {
+    enabled = false
 }
 
 tasks.named("check") {

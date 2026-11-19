@@ -1,0 +1,44 @@
+name: Snapshot Cleanup
+
+on:
+  pull_request:
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      pr-number:
+        description: Pull request whose snapshots to delete
+        required: true
+        type: number
+      dry-run:
+        description: Only log what would be deleted
+        type: boolean
+        default: false
+
+jobs:
+  prune:
+    name: Prune Snapshots
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-26.04
+    permissions:
+      packages: write
+    steps:
+      - name: Check package exists in GHCR
+        id: check
+        env:
+          OWNER: ${{ github.repository_owner }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          exists=false
+          if gh api "orgs/$OWNER/packages/container/miru" >/dev/null 2>&1 || \
+             gh api "users/$OWNER/packages/container/miru" >/dev/null 2>&1; then
+            exists=true
+          fi
+          echo "exists=$exists" >> "$GITHUB_OUTPUT"
+
+      - name: Prune miru snapshots
+        if: steps.check.outputs.exists == 'true'
+        uses: hononeko/actions/prune-snapshots@v1
+        with:
+          package: miru
+          pr-number: ${{ inputs.pr-number || github.event.pull_request.number }}
+          dry-run: ${{ inputs.dry-run || false }}

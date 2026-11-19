@@ -1,0 +1,68 @@
+name: Validate
+
+# Reusable workflow for building, linting, and verifying the codebase.
+# Lints workflows/actions (actionlint + zizmor) and Dockerfile (hadolint), runs check
+# (Detekt, unit tests, Kover verification & XML report), builds the shadow JAR,
+# and checks Kover changed-line coverage (80% minimum on PR source changes).
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit ref to check out (empty for default)
+        type: string
+        default: ""
+
+jobs:
+  validate:
+    name: Build & Code Verification
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ inputs.ref || '' }}
+
+      - name: Set up Gradle & JDK
+        uses: hononeko/actions/gradle-setup@v1
+
+      - name: Lint workflows and actions
+        uses: hononeko/actions/lint-actions@v1
+
+      - name: Lint Dockerfile
+        uses: hononeko/actions/lint-docker@v1
+
+      - name: Run build, Detekt, unit tests, Kover report, and shadow JAR
+        run: ./gradlew check shadowJar --no-daemon
+
+      # PRs that touch no source or build files (e.g. docs/CI/k8s-only) have no changed lines
+      # to measure, so the changed-line coverage gate is skipped for them.
+      - name: Detect source changes
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$BASE_SHA" ] && git diff --quiet "$BASE_SHA" HEAD -- src/ build.gradle.kts settings.gradle.kts; then
+            echo "Pull request changes no source or build files; skipping changed-line coverage."
+            echo "source=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "source=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Kover coverage
+        if: steps.changes.outputs.source == 'true'
+        uses: hononeko/actions/coverage@v1
+        with:
+          files: build/reports/kover/report.xml
+          min-changed-coverage: "80"
+
+      - name: Upload Kover coverage reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: kover-reports
+          path: build/reports/kover/
+          if-no-files-found: ignore

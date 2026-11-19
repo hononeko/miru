@@ -1,0 +1,138 @@
+name: Continuous Delivery & Release
+
+# Promotes the release candidate published by main.yml for this commit to the stable version:
+# re-tags that tested digest as X.Y.Z and `latest`, creates the GitHub Release, and prunes old RCs.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Check the release candidate and list what would be tagged and pruned without changing anything
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/${{ github.repository_owner }}/miru
+
+jobs:
+  version:
+    uses: ./.github/workflows/version.yml
+    permissions:
+      contents: read
+
+  promote:
+    name: Promote, Tag & Release
+    needs: version
+    if: needs.version.outputs.version_type != 'none'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: write
+      packages: write
+      actions: read
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      VERSION_TAG: ${{ needs.version.outputs.version_tag }}
+      COMMIT_TAG: ${{ needs.version.outputs.commit_tag }}
+      DRY_RUN: ${{ inputs.dry_run }}
+    steps:
+      - name: Only main publishes
+        if: ${{ !inputs.dry_run && github.ref != 'refs/heads/main' }}
+        run: |
+          echo "::error::Releases are published from main only; dispatch with dry_run to check another branch."
+          exit 1
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Release notes
+        uses: hononeko/actions/release-notes@v1
+        with:
+          previous-tag: ${{ needs.version.outputs.last_tag }}
+          tag: ${{ needs.version.outputs.version_tag }}
+          summary: Release notes for ${{ needs.version.outputs.version_tag }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Log in to GitHub Container Registry (GHCR)
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Find release candidate
+        id: rc
+        uses: hononeko/actions/release-candidate@v1
+        with:
+          image: ${{ env.IMAGE }}
+          tag: ${{ env.COMMIT_TAG }}
+          version: ${{ env.VERSION }}
+
+      - name: Promote to stable
+        env:
+          DIGEST: ${{ steps.rc.outputs.digest }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "Dry run: would tag $IMAGE@$DIGEST as $VERSION and latest"
+            echo "Dry run: would tag \`$DIGEST\` as \`$VERSION\` and \`latest\`" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          docker buildx imagetools create -t "$IMAGE:$VERSION" -t "$IMAGE:latest" "$IMAGE@$DIGEST"
+          for tag in "$VERSION" latest; do
+            got=$(docker buildx imagetools inspect "$IMAGE:$tag" --format '{{json .Manifest}}' | jq -r .digest)
+            if [ "$got" != "$DIGEST" ]; then
+              echo "::error::$IMAGE:$tag is $got, expected the release candidate's $DIGEST"
+              exit 1
+            fi
+          done
+          echo "Tagged as \`$VERSION\` and \`latest\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Tag & create GitHub Release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$VERSION_TAG" --target "$GITHUB_SHA" --title "$VERSION_TAG" --notes-file release-notes.md
+
+  prune:
+    name: Prune Release Candidates
+    needs: [version, promote]
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Select release candidate tags
+        id: select
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          LAST_TAG: ${{ needs.version.outputs.last_tag }}
+        run: |
+          range=HEAD
+          if [ -n "$LAST_TAG" ]; then range="$LAST_TAG..HEAD"; fi
+          commits=$(git rev-list "$range" | cut -c1-7 | paste -sd'|' -)
+          pattern="^(${VERSION//./\\.}-rc\\.[0-9]+|sha-($commits))$"
+          echo "pattern=$pattern" >> "$GITHUB_OUTPUT"
+          echo "Pruning tags matching: $pattern"
+
+      - name: Prune
+        uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
+        with:
+          package: miru
+          use-regex: true
+          delete-tags: ${{ steps.select.outputs.pattern }}
+          validate: true
+          dry-run: ${{ inputs.dry_run }}

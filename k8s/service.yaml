@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: miru-service
+  labels:
+    app: miru
+spec:
+  type: ClusterIP
+  selector:
+    app: miru
+  ports:
+    - name: web-ui
+      port: 8080
+      targetPort: web-ui
+      protocol: TCP

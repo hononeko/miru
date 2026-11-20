@@ -1,6 +1,7 @@
 package app.hononeko.miru.http
 
 import app.hononeko.miru.MiruJson
+import app.hononeko.miru.adapter.plex.RealtimeLifecycle
 import app.hononeko.miru.config.AppConfig
 import app.hononeko.miru.config.AuthConfig
 import app.hononeko.miru.config.AuthMode
@@ -23,6 +24,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
+import java.util.concurrent.atomic.AtomicInteger
 
 class SystemRoutesTest :
     FunSpec({
@@ -124,5 +126,34 @@ class SystemRoutesTest :
                 yaml shouldContain "/readyz:"
                 yaml shouldContain "ProblemDetails:"
             }
+        }
+
+        test("real-time pipeline starts with the application and stops on shutdown") {
+            val realtime =
+                object : RealtimeLifecycle {
+                    val started = AtomicInteger()
+                    val stopped = AtomicInteger()
+
+                    override fun start() {
+                        started.incrementAndGet()
+                    }
+
+                    override suspend fun stop() {
+                        stopped.incrementAndGet()
+                    }
+                }
+
+            testApplication {
+                application {
+                    miruModule(config = testConfig, appVersion = "0.1.0-test", realtime = realtime)
+                }
+
+                client.get("/healthz").status shouldBe HttpStatusCode.OK
+                realtime.started.get() shouldBe 1
+                realtime.stopped.get() shouldBe 0
+            }
+
+            realtime.started.get() shouldBe 1
+            realtime.stopped.get() shouldBe 1
         }
     })

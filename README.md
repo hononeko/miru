@@ -25,6 +25,21 @@ Copy `.env.example` to `.env` (git-ignored) and export your local settings, then
 - `GET /readyz` — readiness probe aggregating registered dependency checks
 - `GET /api/v1/openapi.yaml` — OpenAPI 3.1 specification
 
+## Real-time Plex Monitoring
+
+Miru keeps live sessions in sync with Plex through two complementary paths:
+
+- **Notification socket** (`PLEX_WEBSOCKET_ENABLED`, default `true`): a WebSocket client on
+  `ws(s)://<plex>/:/websockets/notifications` (token sent as the `X-Plex-Token` header) parses `playing`,
+  `timeline`, and `activity` notifications. Bursts of `playing` events are debounced before the active sessions
+  are re-fetched. Dropped sockets reconnect with exponential backoff (1s → 60s cap, full jitter), and every
+  reconnect triggers an immediate re-fetch.
+- **Fallback reconciler** (`PLEX_POLL_INTERVAL_SECONDS`, default `20`, minimum `5`): re-fetches active sessions
+  whenever the interval elapses without a reconcile, catching clients that crash without emitting `stopped`.
+  With `PLEX_WEBSOCKET_ENABLED=false` Miru runs in polling-only mode.
+
+Both stop cleanly when the Ktor application shuts down.
+
 ## Container & Kubernetes Deployment
 
 Build and smoke-test the container image locally:

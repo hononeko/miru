@@ -1,5 +1,7 @@
 package app.hononeko.miru
 
+import app.hononeko.miru.adapter.plex.RealtimeLifecycle
+import app.hononeko.miru.adapter.plex.buildPlexRuntime
 import app.hononeko.miru.config.AppConfig
 import app.hononeko.miru.config.AppConfigLoader
 import app.hononeko.miru.domain.error.MiruError
@@ -12,6 +14,8 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
+import io.ktor.server.application.ApplicationStarted
+import io.ktor.server.application.ApplicationStopping
 import io.ktor.server.application.install
 import io.ktor.server.config.ApplicationConfig
 import io.ktor.server.engine.embeddedServer
@@ -24,12 +28,16 @@ import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.path
 import io.ktor.server.routing.routing
 import io.ktor.server.sse.SSE
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
 import org.slf4j.bridge.SLF4JBridgeHandler
 import kotlin.system.exitProcess
+import kotlin.time.Duration.Companion.seconds
 
 private val logger = LoggerFactory.getLogger("app.hononeko.miru.Application")
+private val REALTIME_SHUTDOWN_TIMEOUT = 5.seconds
 
 val MiruJson: Json =
     Json {
@@ -65,20 +73,46 @@ fun main() {
         appConfig.auth.mode,
     )
 
-    embeddedServer(
-        factory = Netty,
-        port = appConfig.server.port,
-        host = appConfig.server.host,
-    ) {
-        miruModule(config = appConfig)
-    }.start(wait = true)
+    val plexRuntime = buildPlexRuntime(appConfig.plex)
+
+    val server =
+        embeddedServer(
+            factory = Netty,
+            port = appConfig.server.port,
+            host = appConfig.server.host,
+        ) {
+            miruModule(config = appConfig, realtime = plexRuntime.realtime)
+        }
+    try {
+        server.start(wait = true)
+    } catch (e: Throwable) {
+        runBlocking {
+            withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { plexRuntime.realtime.stop() }
+        }
+        throw e
+    }
 }
 
 fun Application.miruModule(
     config: AppConfig,
     readinessChecks: List<NamedReadinessCheck> = emptyList(),
     appVersion: String = resolveAppVersion(),
+    realtime: RealtimeLifecycle? = null,
 ) {
+    if (realtime != null) {
+        monitor.subscribe(ApplicationStarted) {
+            logger.info("Starting real-time media server pipeline")
+            realtime.start()
+        }
+        monitor.subscribe(ApplicationStopping) {
+            logger.info("Stopping real-time media server pipeline")
+            runBlocking {
+                withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { realtime.stop() }
+                    ?: logger.warn("Real-time pipeline did not stop within {}", REALTIME_SHUTDOWN_TIMEOUT)
+            }
+        }
+    }
+
     install(ContentNegotiation) {
         json(MiruJson)
     }

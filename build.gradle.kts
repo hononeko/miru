@@ -41,6 +41,7 @@ dependencies {
     testImplementation(libs.mockk)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.ktor.server.test.host)
+    testImplementation(libs.ktor.server.websockets)
     testImplementation(libs.ktor.client.mock)
     testImplementation(libs.testcontainers)
     testImplementation(libs.testcontainers.postgresql)

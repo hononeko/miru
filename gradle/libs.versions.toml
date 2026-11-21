@@ -18,6 +18,7 @@ testcontainers = "2.0.5"
 shadow = "9.6.1"
 detekt = "2.0.0-alpha.6"
 kover = "0.9.11"
+bcprov = "1.87"
 
 [libraries]
 # Kotlin, Coroutines & Serialization
@@ -29,6 +30,9 @@ kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serializa
 # Arrow-kt (Typed Functional Error Handling)
 arrow-core = { module = "io.arrow-kt:arrow-core", version.ref = "arrow" }
 arrow-fx-coroutines = { module = "io.arrow-kt:arrow-fx-coroutines", version.ref = "arrow" }
+
+# Cryptography
+bouncycastle-bcprov = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bcprov" }
 
 # Ktor Server
 ktor-server-core = { module = "io.ktor:ktor-server-core", version.ref = "ktor" }

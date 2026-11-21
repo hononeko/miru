@@ -1,0 +1,510 @@
+package app.hononeko.miru.auth
+
+import app.hononeko.miru.config.AuthConfig
+import app.hononeko.miru.config.AuthMode
+import app.hononeko.miru.domain.error.MiruError
+import app.hononeko.miru.persistence.model.ApiKeyRecord
+import app.hononeko.miru.persistence.model.AuthAccountRecord
+import app.hononeko.miru.persistence.model.AuthSessionRecord
+import app.hononeko.miru.persistence.repository.ApiKeyRepository
+import app.hononeko.miru.persistence.repository.AuthAccountRepository
+import app.hononeko.miru.persistence.repository.AuthSessionRepository
+import app.hononeko.miru.persistence.repository.UserRepository
+import arrow.core.Either
+import arrow.core.raise.either
+import arrow.core.raise.ensure
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import org.slf4j.LoggerFactory
+import java.util.UUID
+
+data class LoginResult(
+    val principal: MiruPrincipal,
+    val signedToken: String,
+    val expiresAtMs: Long,
+) {
+    override fun toString(): String =
+        "LoginResult(principal=$principal, signedToken=***, expiresAtMs=$expiresAtMs)"
+}
+
+data class AccountWithLinks(
+    val account: AuthAccountRecord,
+    val linkedMediaUserIds: Set<String>,
+)
+
+data class CreatedApiKey(
+    val record: ApiKeyRecord,
+    val rawKey: String,
+) {
+    override fun toString(): String =
+        "CreatedApiKey(record=$record, rawKey=***)"
+}
+
+@Suppress("LongParameterList")
+class AuthService(
+    private val accountRepository: AuthAccountRepository,
+    private val sessionRepository: AuthSessionRepository,
+    private val apiKeyRepository: ApiKeyRepository,
+    private val userRepository: UserRepository,
+    private val passwordHasher: PasswordHasher,
+    private val authConfig: AuthConfig,
+    private val sessionTtlMs: Long = DEFAULT_SESSION_TTL_MS,
+    private val clock: () -> Long = { System.currentTimeMillis() },
+    private val idGenerator: () -> String = { UUID.randomUUID().toString() },
+) {
+    private val logger = LoggerFactory.getLogger(AuthService::class.java)
+    private val setupMutex = Mutex()
+    private val dummyPasswordHash: String by lazy {
+        passwordHasher.hash("miru-constant-time-dummy-password")
+    }
+
+    suspend fun bootstrapAdminIfConfigured(): Either<MiruError, Boolean> =
+        either {
+            val adminUsername = authConfig.adminUsername
+            val adminPassword = authConfig.adminPassword
+            if (authConfig.mode == AuthMode.NONE || adminUsername.isNullOrBlank() || adminPassword.isNullOrBlank()) {
+                return@either false
+            }
+
+            setupMutex.withLock {
+                val existingAdmins = accountRepository.countAdmins().bind()
+                if (existingAdmins > 0L) {
+                    return@either false
+                }
+
+                val validated = validateCredentials(adminUsername, adminPassword, email = null).bind()
+                val existingByUsername = accountRepository.findByNormalizedUsername(validated.usernameNormalized).bind()
+                ensure(existingByUsername == null) {
+                    MiruError.Conflict("Username '${validated.username}' already exists")
+                }
+
+                val now = clock()
+                val record =
+                    AuthAccountRecord(
+                        id = idGenerator(),
+                        username = validated.username,
+                        usernameNormalized = validated.usernameNormalized,
+                        email = null,
+                        passwordHash = passwordHasher.hash(adminPassword),
+                        role = MiruRole.ADMIN.name,
+                        disabled = false,
+                        createdAtMs = now,
+                        updatedAtMs = now,
+                    )
+                accountRepository.insert(record).bind()
+                logger.info("Bootstrapped initial local admin account '{}'", validated.username)
+                true
+            }
+        }
+
+    suspend fun isSetupRequired(): Either<MiruError, Boolean> =
+        either {
+            if (authConfig.mode == AuthMode.NONE) {
+                false
+            } else {
+                accountRepository.countAdmins().bind() == 0L
+            }
+        }
+
+    suspend fun setupInitialAdmin(
+        username: String,
+        password: String,
+        email: String? = null,
+    ): Either<MiruError, LoginResult> =
+        either {
+            ensure(authConfig.mode == AuthMode.LOCAL) {
+                MiruError.Conflict("Local authentication is disabled")
+            }
+
+            val created =
+                setupMutex.withLock {
+                    val existingAdmins = accountRepository.countAdmins().bind()
+                    ensure(existingAdmins == 0L) {
+                        MiruError.Conflict("Initial admin account has already been configured")
+                    }
+
+                    val validated = validateCredentials(username, password, email).bind()
+                    val existingByUsername = accountRepository.findByNormalizedUsername(validated.usernameNormalized).bind()
+                    ensure(existingByUsername == null) {
+                        MiruError.Conflict("Username '${validated.username}' already exists")
+                    }
+
+                    val now = clock()
+                    val account =
+                        AuthAccountRecord(
+                            id = idGenerator(),
+                            username = validated.username,
+                            usernameNormalized = validated.usernameNormalized,
+                            email = validated.email,
+                            passwordHash = passwordHasher.hash(password),
+                            role = MiruRole.ADMIN.name,
+                            disabled = false,
+                            createdAtMs = now,
+                            updatedAtMs = now,
+                        )
+                    accountRepository.insert(account).bind()
+                }
+
+            logger.info("Created initial admin account '{}' via first-run setup", created.username)
+            issueSession(created, linkedMediaUserIds = emptySet()).bind()
+        }
+
+    suspend fun login(
+        username: String,
+        password: String,
+    ): Either<MiruError, LoginResult> =
+        either {
+            ensure(authConfig.mode == AuthMode.LOCAL) {
+                MiruError.Conflict("Local authentication is disabled")
+            }
+
+            val normalized = username.trim().lowercase()
+            val account = accountRepository.findByNormalizedUsername(normalized).bind()
+
+            if (account == null) {
+                passwordHasher.verify(password, dummyPasswordHash)
+                raise(MiruError.Unauthorized("Invalid username or password"))
+            }
+
+            val passwordMatches = passwordHasher.verify(password, account.passwordHash)
+            ensure(passwordMatches) {
+                MiruError.Unauthorized("Invalid username or password")
+            }
+            ensure(!account.disabled) {
+                MiruError.Unauthorized("Account is disabled")
+            }
+
+            val linkedMediaUserIds = accountRepository.findLinkedMediaUserIds(account.id).bind()
+            issueSession(account, linkedMediaUserIds).bind()
+        }
+
+    suspend fun logout(signedToken: String?): Either<MiruError, Unit> =
+        either {
+            if (signedToken.isNullOrBlank()) {
+                return@either
+            }
+            val rawToken =
+                TokenCrypto.verifySignedSessionToken(signedToken, authConfig.sessionSecret)
+                    ?: return@either
+            val tokenHash = TokenCrypto.sha256Hex(rawToken)
+            sessionRepository.deleteByTokenHash(tokenHash).bind()
+        }
+
+    suspend fun authenticateCookie(signedToken: String): Either<MiruError, MiruPrincipal> =
+        either {
+            val rawToken =
+                TokenCrypto.verifySignedSessionToken(signedToken, authConfig.sessionSecret)
+                    ?: raise(MiruError.Unauthorized("Invalid session token"))
+
+            val tokenHash = TokenCrypto.sha256Hex(rawToken)
+            val session =
+                sessionRepository.findByTokenHash(tokenHash).bind()
+                    ?: raise(MiruError.Unauthorized("Session not found"))
+
+            val now = clock()
+            if (session.expiresAtMs <= now) {
+                sessionRepository.deleteByTokenHash(tokenHash).bind()
+                raise(MiruError.Unauthorized("Session expired"))
+            }
+
+            val account =
+                accountRepository.findById(session.accountId).bind()
+                    ?: raise(MiruError.Unauthorized("Account not found"))
+            ensure(!account.disabled) {
+                MiruError.Unauthorized("Account is disabled")
+            }
+
+            sessionRepository.touchLastSeen(session.id, now).bind()
+            val linkedIds = accountRepository.findLinkedMediaUserIds(account.id).bind()
+            account.toPrincipal(linkedIds, AuthSource.SESSION_COOKIE)
+        }
+
+    suspend fun authenticateApiKey(rawKey: String): Either<MiruError, MiruPrincipal> =
+        either {
+            val trimmed = rawKey.trim()
+            ensure(trimmed.isNotEmpty()) {
+                MiruError.Unauthorized("Missing API key")
+            }
+
+            val keyHash = TokenCrypto.sha256Hex(trimmed)
+            val record =
+                apiKeyRepository.findByKeyHash(keyHash).bind()
+                    ?: raise(MiruError.Unauthorized("Invalid API key"))
+
+            val now = clock()
+            ensure(record.revokedAtMs == null) {
+                MiruError.Unauthorized("API key has been revoked")
+            }
+            ensure(record.expiresAtMs == null || record.expiresAtMs > now) {
+                MiruError.Unauthorized("API key has expired")
+            }
+
+            val account =
+                accountRepository.findById(record.accountId).bind()
+                    ?: raise(MiruError.Unauthorized("Account not found"))
+            ensure(!account.disabled) {
+                MiruError.Unauthorized("Account is disabled")
+            }
+
+            apiKeyRepository.updateLastUsed(record.id, now).bind()
+            val linkedIds = accountRepository.findLinkedMediaUserIds(account.id).bind()
+            val accountRole = parseRole(account.role)
+            val keyRole = parseRole(record.role)
+            val effectiveRole =
+                if (accountRole == MiruRole.USER) {
+                    MiruRole.USER
+                } else {
+                    keyRole
+                }
+
+            MiruPrincipal(
+                accountId = account.id,
+                username = account.username,
+                email = account.email,
+                role = effectiveRole,
+                linkedMediaUserIds = linkedIds,
+                authSource = AuthSource.API_KEY,
+            )
+        }
+
+    suspend fun listAccounts(): Either<MiruError, List<AccountWithLinks>> =
+        either {
+            val accounts = accountRepository.findAll().bind()
+            accounts.map { account ->
+                val links = accountRepository.findLinkedMediaUserIds(account.id).bind()
+                AccountWithLinks(account = account, linkedMediaUserIds = links)
+            }
+        }
+
+    suspend fun createAccount(
+        username: String,
+        password: String,
+        email: String? = null,
+        role: MiruRole = MiruRole.USER,
+        linkedMediaUserIds: Set<String> = emptySet(),
+    ): Either<MiruError, AccountWithLinks> =
+        either {
+            val validated = validateCredentials(username, password, email).bind()
+            val normalizedLinks = linkedMediaUserIds.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+            validateMediaUserIdsExist(normalizedLinks).bind()
+
+            val existing = accountRepository.findByNormalizedUsername(validated.usernameNormalized).bind()
+            ensure(existing == null) {
+                MiruError.Conflict("Username '${validated.username}' already exists")
+            }
+
+            val now = clock()
+            val account =
+                AuthAccountRecord(
+                    id = idGenerator(),
+                    username = validated.username,
+                    usernameNormalized = validated.usernameNormalized,
+                    email = validated.email,
+                    passwordHash = passwordHasher.hash(password),
+                    role = role.name,
+                    disabled = false,
+                    createdAtMs = now,
+                    updatedAtMs = now,
+                )
+            accountRepository.insert(account).bind()
+            if (normalizedLinks.isNotEmpty()) {
+                accountRepository.replaceLinkedMediaUserIds(account.id, normalizedLinks, now).bind()
+            }
+            AccountWithLinks(account = account, linkedMediaUserIds = normalizedLinks)
+        }
+
+    suspend fun deleteAccount(
+        id: String,
+        actingAccountId: String,
+    ): Either<MiruError, Unit> =
+        either {
+            ensure(id != actingAccountId) {
+                MiruError.Conflict("Cannot delete your own account")
+            }
+            val target =
+                accountRepository.findById(id).bind()
+                    ?: raise(MiruError.NotFound(resource = "Account", id = id))
+            if (parseRole(target.role) == MiruRole.ADMIN) {
+                val adminCount = accountRepository.countAdmins().bind()
+                ensure(adminCount > 1L) {
+                    MiruError.Conflict("Cannot delete the last remaining admin account")
+                }
+            }
+            val deleted = accountRepository.delete(id).bind()
+            ensure(deleted) {
+                MiruError.NotFound(resource = "Account", id = id)
+            }
+        }
+
+    suspend fun setLinkedMediaUsers(
+        accountId: String,
+        mediaUserIds: Set<String>,
+    ): Either<MiruError, AccountWithLinks> =
+        either {
+            val account =
+                accountRepository.findById(accountId).bind()
+                    ?: raise(MiruError.NotFound(resource = "Account", id = accountId))
+            val normalizedLinks = mediaUserIds.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+            validateMediaUserIdsExist(normalizedLinks).bind()
+            accountRepository.replaceLinkedMediaUserIds(accountId, normalizedLinks, clock()).bind()
+            AccountWithLinks(account = account, linkedMediaUserIds = normalizedLinks)
+        }
+
+    suspend fun listApiKeys(accountId: String? = null): Either<MiruError, List<ApiKeyRecord>> =
+        apiKeyRepository.findAll(accountId)
+
+    suspend fun createApiKey(
+        accountId: String,
+        name: String,
+        role: MiruRole,
+        expiresAtMs: Long? = null,
+    ): Either<MiruError, CreatedApiKey> =
+        either {
+            val trimmedName = name.trim()
+            val errors = linkedMapOf<String, String>()
+            if (trimmedName.isEmpty() || trimmedName.length > MAX_API_KEY_NAME_LENGTH) {
+                errors["name"] = "must be between 1 and $MAX_API_KEY_NAME_LENGTH characters"
+            }
+            val now = clock()
+            if (expiresAtMs != null && expiresAtMs <= now) {
+                errors["expiresAtMs"] = "must be in the future"
+            }
+            ensure(errors.isEmpty()) {
+                MiruError.ValidationError("Invalid API key request", fieldErrors = errors)
+            }
+
+            accountRepository.findById(accountId).bind()
+                ?: raise(MiruError.NotFound(resource = "Account", id = accountId))
+
+            val (rawKey, prefix) = TokenCrypto.generateApiKey()
+            val record =
+                ApiKeyRecord(
+                    id = idGenerator(),
+                    accountId = accountId,
+                    name = trimmedName,
+                    keyPrefix = prefix,
+                    keyHash = TokenCrypto.sha256Hex(rawKey),
+                    role = role.name,
+                    lastUsedAtMs = null,
+                    expiresAtMs = expiresAtMs,
+                    revokedAtMs = null,
+                    createdAtMs = now,
+                )
+            apiKeyRepository.insert(record).bind()
+            CreatedApiKey(record = record, rawKey = rawKey)
+        }
+
+    suspend fun revokeApiKey(id: String): Either<MiruError, Unit> =
+        either {
+            val existing =
+                apiKeyRepository.findById(id).bind()
+                    ?: raise(MiruError.NotFound(resource = "ApiKey", id = id))
+            if (existing.revokedAtMs == null) {
+                apiKeyRepository.revoke(id, clock()).bind()
+            }
+        }
+
+    private suspend fun issueSession(
+        account: AuthAccountRecord,
+        linkedMediaUserIds: Set<String>,
+    ): Either<MiruError, LoginResult> =
+        either {
+            val now = clock()
+            val rawToken = TokenCrypto.generateToken()
+            val expiresAtMs = now + sessionTtlMs
+            val session =
+                AuthSessionRecord(
+                    id = idGenerator(),
+                    accountId = account.id,
+                    tokenHash = TokenCrypto.sha256Hex(rawToken),
+                    createdAtMs = now,
+                    expiresAtMs = expiresAtMs,
+                    lastSeenAtMs = now,
+                )
+            sessionRepository.insert(session).bind()
+            val signedToken = TokenCrypto.signSessionToken(rawToken, authConfig.sessionSecret)
+            LoginResult(
+                principal = account.toPrincipal(linkedMediaUserIds, AuthSource.SESSION_COOKIE),
+                signedToken = signedToken,
+                expiresAtMs = expiresAtMs,
+            )
+        }
+
+    private suspend fun validateMediaUserIdsExist(mediaUserIds: Set<String>): Either<MiruError, Unit> =
+        either {
+            for (mediaUserId in mediaUserIds) {
+                val found = userRepository.findById(mediaUserId).bind()
+                if (found == null) {
+                    raise(MiruError.NotFound(resource = "MediaUser", id = mediaUserId))
+                }
+            }
+        }
+
+    private fun validateCredentials(
+        username: String,
+        password: String,
+        email: String?,
+    ): Either<MiruError.ValidationError, ValidatedCredentials> =
+        either {
+            val trimmedUsername = username.trim()
+            val trimmedEmail = email?.trim()?.takeIf { it.isNotEmpty() }
+            val errors = linkedMapOf<String, String>()
+
+            if (trimmedUsername.length !in MIN_USERNAME_LENGTH..MAX_USERNAME_LENGTH ||
+                !USERNAME_REGEX.matches(trimmedUsername)
+            ) {
+                errors["username"] =
+                    "must be $MIN_USERNAME_LENGTH-$MAX_USERNAME_LENGTH characters matching [A-Za-z0-9._-]"
+            }
+            if (password.length < MIN_PASSWORD_LENGTH) {
+                errors["password"] = "must be at least $MIN_PASSWORD_LENGTH characters"
+            }
+
+            ensure(errors.isEmpty()) {
+                MiruError.ValidationError(
+                    message = "Invalid account credentials",
+                    fieldErrors = errors,
+                )
+            }
+
+            ValidatedCredentials(
+                username = trimmedUsername,
+                usernameNormalized = trimmedUsername.lowercase(),
+                email = trimmedEmail,
+            )
+        }
+
+    private fun AuthAccountRecord.toPrincipal(
+        linkedMediaUserIds: Set<String>,
+        authSource: AuthSource,
+    ): MiruPrincipal =
+        MiruPrincipal(
+            accountId = id,
+            username = username,
+            email = email,
+            role = parseRole(role),
+            linkedMediaUserIds = linkedMediaUserIds,
+            authSource = authSource,
+        )
+
+    private fun parseRole(raw: String): MiruRole =
+        when (raw.uppercase()) {
+            "ADMIN" -> MiruRole.ADMIN
+            else -> MiruRole.USER
+        }
+
+    private data class ValidatedCredentials(
+        val username: String,
+        val usernameNormalized: String,
+        val email: String?,
+    )
+
+    companion object {
+        const val MIN_USERNAME_LENGTH = 3
+        const val MAX_USERNAME_LENGTH = 64
+        const val MIN_PASSWORD_LENGTH = 12
+        const val MAX_API_KEY_NAME_LENGTH = 100
+        const val DEFAULT_SESSION_TTL_MS = 7L * 24L * 60L * 60L * 1000L
+        private val USERNAME_REGEX = Regex("^[A-Za-z0-9._-]+$")
+    }
+}

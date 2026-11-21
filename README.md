@@ -25,6 +25,23 @@ Copy `.env.example` to `.env` (git-ignored) and export your local settings, then
 - `GET /readyz` — readiness probe aggregating registered dependency checks
 - `GET /api/v1/openapi.yaml` — OpenAPI 3.1 specification
 
+## Authentication, RBAC & API Keys
+
+Miru supports `AUTH_MODE=local` (default) and `AUTH_MODE=none` (local development bypass).
+
+- **First-run setup & bootstrap**: Set `MIRU_ADMIN_USERNAME` + `MIRU_ADMIN_PASSWORD` (min 12 chars) to
+  bootstrap an initial admin idempotently on startup, or call `POST /api/v1/auth/setup` once when
+  `GET /api/v1/auth/status` reports `setupRequired: true`.
+- **Session cookies**: `POST /api/v1/auth/login` and `POST /api/v1/auth/setup` issue an `HttpOnly; SameSite=Lax`
+  HMAC-SHA256 signed `miru_session` cookie backed by hashed tokens in `auth_sessions`. `POST /api/v1/auth/logout`
+  revokes the session and clears the cookie.
+- **RBAC roles**: Accounts have role `ADMIN` or `USER`. `USER` accounts can be linked to specific Plex media
+  user IDs (`PUT /api/v1/admin/accounts/{id}/media-users`) for downstream data scoping.
+- **API keys**: Admins can manage keys via `/api/v1/admin/api-keys` (raw `miru_...` key returned once on
+  creation; stored as SHA-256 hash). Authenticate requests using either `X-Api-Key: <key>` or
+  `Authorization: Bearer <key>`.
+- **Unauthenticated system endpoints**: `/healthz`, `/readyz`, and `/api/v1/openapi.yaml` remain public.
+
 ## Real-time Plex Monitoring
 
 Miru keeps live sessions in sync with Plex through two complementary paths:

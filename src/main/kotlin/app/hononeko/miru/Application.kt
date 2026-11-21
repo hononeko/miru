@@ -2,16 +2,23 @@ package app.hononeko.miru
 
 import app.hononeko.miru.adapter.plex.RealtimeLifecycle
 import app.hononeko.miru.adapter.plex.buildPlexRuntime
+import app.hononeko.miru.auth.Argon2idPasswordHasher
+import app.hononeko.miru.auth.AuthService
 import app.hononeko.miru.config.AppConfig
 import app.hononeko.miru.config.AppConfigLoader
 import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.health.NamedReadinessCheck
 import app.hononeko.miru.health.ReadinessService
+import app.hononeko.miru.http.authRoutes
 import app.hononeko.miru.http.healthRoutes
 import app.hononeko.miru.http.openApiRoutes
 import app.hononeko.miru.http.respondError
 import app.hononeko.miru.persistence.DatabaseFactory
 import app.hononeko.miru.persistence.DatabaseReadinessCheck
+import app.hononeko.miru.persistence.repository.ExposedApiKeyRepository
+import app.hononeko.miru.persistence.repository.ExposedAuthAccountRepository
+import app.hononeko.miru.persistence.repository.ExposedAuthSessionRepository
+import app.hononeko.miru.persistence.repository.ExposedUserRepository
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.serialization.kotlinx.json.json
@@ -87,6 +94,24 @@ fun main() {
                 ifRight = { it },
             )
 
+    val authService =
+        AuthService(
+            accountRepository = ExposedAuthAccountRepository(databaseHandle),
+            sessionRepository = ExposedAuthSessionRepository(databaseHandle),
+            apiKeyRepository = ExposedApiKeyRepository(databaseHandle),
+            userRepository = ExposedUserRepository(databaseHandle),
+            passwordHasher = Argon2idPasswordHasher(),
+            authConfig = appConfig.auth,
+        )
+
+    runBlocking {
+        authService.bootstrapAdminIfConfigured()
+    }.onLeft { error ->
+        logger.error("Initial admin bootstrap failed: {}", error.message)
+        databaseHandle.close()
+        exitProcess(1)
+    }
+
     val plexRuntime =
         try {
             buildPlexRuntime(
@@ -99,6 +124,8 @@ fun main() {
                 .onFailure { err -> logger.warn("Failed to close database handle after startup failure: {}", err.message) }
             throw e
         }
+
+    val readinessChecks = listOf(NamedReadinessCheck("database", DatabaseReadinessCheck(databaseHandle)))
 
     val server =
         embeddedServer(
@@ -113,8 +140,9 @@ fun main() {
             }
             miruModule(
                 config = appConfig,
-                readinessChecks = listOf(NamedReadinessCheck("database", DatabaseReadinessCheck(databaseHandle.dataSource))),
+                readinessChecks = readinessChecks,
                 realtime = plexRuntime.realtime,
+                authService = authService,
             )
         }
     try {
@@ -134,6 +162,7 @@ fun Application.miruModule(
     readinessChecks: List<NamedReadinessCheck> = emptyList(),
     appVersion: String = resolveAppVersion(),
     realtime: RealtimeLifecycle? = null,
+    authService: AuthService? = null,
 ) {
     if (realtime != null) {
         monitor.subscribe(ApplicationStarted) {
@@ -208,6 +237,9 @@ fun Application.miruModule(
     routing {
         healthRoutes(readinessService = readinessService, appVersion = appVersion)
         openApiRoutes()
+        if (authService != null) {
+            authRoutes(authService = authService, authMode = config.auth.mode)
+        }
     }
 }
 

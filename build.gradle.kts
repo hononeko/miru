@@ -36,6 +36,9 @@ dependencies {
     // Persistence & Migrations
     implementation(libs.bundles.persistence)
 
+    // Cryptography
+    implementation(libs.bouncycastle.bcprov)
+
     // Testing
     testImplementation(libs.bundles.kotest)
     testImplementation(libs.mockk)
@@ -95,6 +98,7 @@ tasks.shadowJar {
     archiveFileName.set("miru-all.jar")
     duplicatesStrategy = DuplicatesStrategy.INCLUDE
     mergeServiceFiles()
+    exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA")
 }
 
 detekt {

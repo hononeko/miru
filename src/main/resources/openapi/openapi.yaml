@@ -16,6 +16,10 @@ servers:
 tags:
   - name: System
     description: Liveness, readiness, and API contract endpoints
+  - name: Auth
+    description: Local authentication, first-run admin setup, and session management
+  - name: Admin
+    description: Administrator-only account, media user linking, and API key management
 
 paths:
   /healthz:
@@ -70,7 +74,414 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /api/v1/auth/status:
+    get:
+      tags: [Auth]
+      operationId: getAuthStatus
+      summary: Retrieve authentication mode and initial setup status
+      responses:
+        '200':
+          description: Authentication status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthStatusResponse'
+
+  /api/v1/auth/setup:
+    post:
+      tags: [Auth]
+      operationId: setupInitialAdmin
+      summary: Create the initial administrator account during first-run setup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetupAdminRequest'
+      responses:
+        '201':
+          description: Initial administrator created and session cookie issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrincipalResponse'
+        '400':
+          description: Invalid username or password
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Initial administrator already configured or local auth disabled
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      summary: Authenticate with username and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login succeeded and signed session cookie issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrincipalResponse'
+        '401':
+          description: Invalid credentials or disabled account
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Local authentication is disabled
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logout
+      summary: Invalidate current session and clear session cookie
+      responses:
+        '204':
+          description: Logged out and session cookie cleared
+
+  /api/v1/auth/me:
+    get:
+      tags: [Auth]
+      operationId: getCurrentPrincipal
+      summary: Get the currently authenticated principal
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Current authenticated principal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrincipalResponse'
+        '401':
+          description: Missing, invalid, or expired credentials
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/admin/accounts:
+    get:
+      tags: [Admin]
+      operationId: listAccounts
+      summary: List all local accounts
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of accounts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountListResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+    post:
+      tags: [Admin]
+      operationId: createAccount
+      summary: Create a new local account
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAccountRequest'
+      responses:
+        '201':
+          description: Account created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '400':
+          description: Validation error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Linked media user not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Username already exists
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/admin/accounts/{id}:
+    delete:
+      tags: [Admin]
+      operationId: deleteAccount
+      summary: Delete a local account
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Account deleted
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Account not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Cannot delete self or last remaining admin
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/admin/accounts/{id}/media-users:
+    put:
+      tags: [Admin]
+      operationId: setLinkedMediaUsers
+      summary: Replace linked media server user IDs for an account
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetLinkedMediaUsersRequest'
+      responses:
+        '200':
+          description: Updated account with linked media user IDs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Account or media user not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/admin/api-keys:
+    get:
+      tags: [Admin]
+      operationId: listApiKeys
+      summary: List API keys (secrets redacted)
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: accountId
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of API keys
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKeyListResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+    post:
+      tags: [Admin]
+      operationId: createApiKey
+      summary: Create a new API key (raw key returned once)
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateApiKeyRequest'
+      responses:
+        '201':
+          description: API key created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateApiKeyResponse'
+        '400':
+          description: Validation error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Target account not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/admin/api-keys/{id}:
+    delete:
+      tags: [Admin]
+      operationId: revokeApiKey
+      summary: Revoke an API key
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: API key revoked
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: API key not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
 components:
+  securitySchemes:
+    CookieAuth:
+      type: apiKey
+      in: cookie
+      name: miru_session
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+    BearerAuth:
+      type: http
+      scheme: bearer
+
   schemas:
     HealthResponse:
       type: object
@@ -133,3 +544,199 @@ components:
           type: object
           additionalProperties:
             type: string
+
+    MiruRole:
+      type: string
+      enum: [ADMIN, USER]
+
+    AuthSource:
+      type: string
+      enum: [SESSION_COOKIE, API_KEY, DEV_BYPASS]
+
+    AuthStatusResponse:
+      type: object
+      required: [authMode, setupRequired]
+      properties:
+        authMode:
+          type: string
+          enum: [local, none]
+        setupRequired:
+          type: boolean
+
+    SetupAdminRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 64
+        password:
+          type: string
+          format: password
+          minLength: 12
+        email:
+          type: string
+          nullable: true
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+
+    PrincipalResponse:
+      type: object
+      required: [accountId, username, role, linkedMediaUserIds, authSource]
+      properties:
+        accountId:
+          type: string
+        username:
+          type: string
+        email:
+          type: string
+          nullable: true
+        role:
+          $ref: '#/components/schemas/MiruRole'
+        linkedMediaUserIds:
+          type: array
+          items:
+            type: string
+        authSource:
+          $ref: '#/components/schemas/AuthSource'
+
+    AccountResponse:
+      type: object
+      required: [id, username, role, disabled, linkedMediaUserIds, createdAtMs, updatedAtMs]
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        email:
+          type: string
+          nullable: true
+        role:
+          $ref: '#/components/schemas/MiruRole'
+        disabled:
+          type: boolean
+        linkedMediaUserIds:
+          type: array
+          items:
+            type: string
+        createdAtMs:
+          type: integer
+          format: int64
+        updatedAtMs:
+          type: integer
+          format: int64
+
+    AccountListResponse:
+      type: object
+      required: [accounts]
+      properties:
+        accounts:
+          type: array
+          items:
+            $ref: '#/components/schemas/AccountResponse'
+
+    CreateAccountRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 64
+        password:
+          type: string
+          format: password
+          minLength: 12
+        email:
+          type: string
+          nullable: true
+        role:
+          $ref: '#/components/schemas/MiruRole'
+        linkedMediaUserIds:
+          type: array
+          items:
+            type: string
+
+    SetLinkedMediaUsersRequest:
+      type: object
+      required: [mediaUserIds]
+      properties:
+        mediaUserIds:
+          type: array
+          items:
+            type: string
+
+    CreateApiKeyRequest:
+      type: object
+      required: [name]
+      properties:
+        accountId:
+          type: string
+          nullable: true
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        role:
+          $ref: '#/components/schemas/MiruRole'
+        expiresAtMs:
+          type: integer
+          format: int64
+          nullable: true
+
+    ApiKeyResponse:
+      type: object
+      required: [id, accountId, name, keyPrefix, role, createdAtMs]
+      properties:
+        id:
+          type: string
+        accountId:
+          type: string
+        name:
+          type: string
+        keyPrefix:
+          type: string
+        role:
+          $ref: '#/components/schemas/MiruRole'
+        lastUsedAtMs:
+          type: integer
+          format: int64
+          nullable: true
+        expiresAtMs:
+          type: integer
+          format: int64
+          nullable: true
+        revokedAtMs:
+          type: integer
+          format: int64
+          nullable: true
+        createdAtMs:
+          type: integer
+          format: int64
+
+    ApiKeyListResponse:
+      type: object
+      required: [apiKeys]
+      properties:
+        apiKeys:
+          type: array
+          items:
+            $ref: '#/components/schemas/ApiKeyResponse'
+
+    CreateApiKeyResponse:
+      type: object
+      required: [apiKey, rawKey]
+      properties:
+        apiKey:
+          $ref: '#/components/schemas/ApiKeyResponse'
+        rawKey:
+          type: string

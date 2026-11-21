@@ -2,6 +2,9 @@ package app.hononeko.miru.persistence
 
 import app.hononeko.miru.persistence.model.ActiveSessionKey
 import app.hononeko.miru.persistence.model.ActiveSessionRecord
+import app.hononeko.miru.persistence.model.ApiKeyRecord
+import app.hononeko.miru.persistence.model.AuthAccountRecord
+import app.hononeko.miru.persistence.model.AuthSessionRecord
 import app.hononeko.miru.persistence.model.HistoryFilter
 import app.hononeko.miru.persistence.model.LibrarySectionRecord
 import app.hononeko.miru.persistence.model.LibrarySnapshotRecord
@@ -14,7 +17,13 @@ import app.hononeko.miru.persistence.model.PlayerRecord
 import app.hononeko.miru.persistence.model.StreamTechRecord
 import app.hononeko.miru.persistence.model.UserRecord
 import app.hononeko.miru.persistence.repository.ActiveSessionRepository
+import app.hononeko.miru.persistence.repository.ApiKeyRepository
+import app.hononeko.miru.persistence.repository.AuthAccountRepository
+import app.hononeko.miru.persistence.repository.AuthSessionRepository
 import app.hononeko.miru.persistence.repository.ExposedActiveSessionRepository
+import app.hononeko.miru.persistence.repository.ExposedApiKeyRepository
+import app.hononeko.miru.persistence.repository.ExposedAuthAccountRepository
+import app.hononeko.miru.persistence.repository.ExposedAuthSessionRepository
 import app.hononeko.miru.persistence.repository.ExposedLibraryRepository
 import app.hononeko.miru.persistence.repository.ExposedMediaServerRepository
 import app.hononeko.miru.persistence.repository.ExposedPlaybackHistoryRepository
@@ -42,6 +51,9 @@ private class ContractContext(
     val sessions: ActiveSessionRepository = ExposedActiveSessionRepository(handle)
     val history: PlaybackHistoryRepository = ExposedPlaybackHistoryRepository(handle)
     val library: LibraryRepository = ExposedLibraryRepository(handle)
+    val authAccounts: AuthAccountRepository = ExposedAuthAccountRepository(handle)
+    val authSessions: AuthSessionRepository = ExposedAuthSessionRepository(handle)
+    val apiKeys: ApiKeyRepository = ExposedApiKeyRepository(handle)
 }
 
 fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
@@ -52,6 +64,7 @@ fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
             val handle = handleProvider()
             handle.dataSource.connection.use { conn ->
                 conn.createStatement().use { stmt ->
+                    stmt.executeUpdate("DELETE FROM auth_accounts")
                     stmt.executeUpdate("DELETE FROM media_servers")
                 }
             }
@@ -64,6 +77,9 @@ fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
         playbackHistoryTests { ctx }
         libraryTests { ctx }
         cascadeTests { ctx }
+        authAccountTests { ctx }
+        authSessionTests { ctx }
+        apiKeyTests { ctx }
     }
 
 private fun FunSpecRootScope.mediaServerTests(ctxProvider: () -> ContractContext) {
@@ -432,6 +448,197 @@ private fun FunSpecRootScope.cascadeTests(ctxProvider: () -> ContractContext) {
             ctx.library.findSectionsByServer(server.id).shouldBeRight() shouldHaveSize 0
             ctx.library.findSnapshots(server.id, "sec-1").shouldBeRight() shouldHaveSize 0
             ctx.library.findRecentlyAdded(server.id).shouldBeRight() shouldHaveSize 0
+        }
+    }
+}
+
+private fun FunSpecRootScope.authAccountTests(ctxProvider: () -> ContractContext) {
+    context("AuthAccountRepository") {
+        test("persists accounts, linked media users, and cascades on media user or account deletion") {
+            val ctx = ctxProvider()
+            ctx.servers.upsert(sampleServer(id = "srv-auth")).shouldBeRight()
+            ctx.users.upsert(sampleUser(id = "mu-1", serverId = "srv-auth", externalUserId = "10", username = "alice")).shouldBeRight()
+            ctx.users.upsert(sampleUser(id = "mu-2", serverId = "srv-auth", externalUserId = "20", username = "bob")).shouldBeRight()
+
+            val admin =
+                AuthAccountRecord(
+                    id = "acc-1",
+                    username = "AdminUser",
+                    usernameNormalized = "adminuser",
+                    email = "admin@miru.local",
+                    passwordHash = $$"$argon2id$v=19$m=1024,t=1,p=1$c2FsdA$aGFzaA",
+                    role = "ADMIN",
+                    disabled = false,
+                    createdAtMs = 1_000L,
+                    updatedAtMs = 1_000L,
+                )
+            val viewer =
+                AuthAccountRecord(
+                    id = "acc-2",
+                    username = "viewer",
+                    usernameNormalized = "viewer",
+                    passwordHash = $$"$argon2id$v=19$m=1024,t=1,p=1$c2FsdDI$aGFzaDI",
+                    role = "USER",
+                    disabled = true,
+                    createdAtMs = 2_000L,
+                    updatedAtMs = 2_000L,
+                )
+
+            ctx.authAccounts.insert(admin).shouldBeRight() shouldBe admin
+            ctx.authAccounts.insert(viewer).shouldBeRight() shouldBe viewer
+
+            ctx.authAccounts.findById("acc-1").shouldBeRight() shouldBe admin
+            ctx.authAccounts.findByNormalizedUsername("adminuser").shouldBeRight() shouldBe admin
+            ctx.authAccounts.findAll().shouldBeRight() shouldContainExactly listOf(admin, viewer)
+            ctx.authAccounts.countAdmins().shouldBeRight() shouldBe 1L
+
+            ctx.authAccounts.replaceLinkedMediaUserIds("acc-2", setOf("mu-1", "mu-2"), createdAtMs = 2_500L).shouldBeRight()
+            ctx.authAccounts.findLinkedMediaUserIds("acc-2").shouldBeRight() shouldBe setOf("mu-1", "mu-2")
+
+            ctx.authAccounts.replaceLinkedMediaUserIds("acc-2", setOf("mu-2"), createdAtMs = 3_000L).shouldBeRight()
+            ctx.authAccounts.findLinkedMediaUserIds("acc-2").shouldBeRight() shouldBe setOf("mu-2")
+
+            // Deleting media server cascades to users and auth_account_media_users
+            ctx.servers.delete("srv-auth").shouldBeRight() shouldBe true
+            ctx.authAccounts.findLinkedMediaUserIds("acc-2").shouldBeRight() shouldBe emptySet()
+
+            ctx.authAccounts.delete("acc-2").shouldBeRight() shouldBe true
+            ctx.authAccounts.delete("acc-2").shouldBeRight() shouldBe false
+            ctx.authAccounts.findById("acc-2").shouldBeRight().shouldBeNull()
+        }
+    }
+}
+
+private fun FunSpecRootScope.authSessionTests(ctxProvider: () -> ContractContext) {
+    context("AuthSessionRepository") {
+        test("persists auth sessions, touches last seen, deletes by token/account/expiry, and cascades on account delete") {
+            val ctx = ctxProvider()
+            val account =
+                AuthAccountRecord(
+                    id = "acc-sess",
+                    username = "sessuser",
+                    usernameNormalized = "sessuser",
+                    passwordHash = "hash",
+                    role = "ADMIN",
+                    createdAtMs = 1_000L,
+                    updatedAtMs = 1_000L,
+                )
+            ctx.authAccounts.insert(account).shouldBeRight()
+
+            val s1 =
+                AuthSessionRecord(
+                    id = "sess-1",
+                    accountId = "acc-sess",
+                    tokenHash = "tok-hash-1",
+                    createdAtMs = 1_000L,
+                    expiresAtMs = 5_000L,
+                    lastSeenAtMs = 1_000L,
+                )
+            val s2 =
+                AuthSessionRecord(
+                    id = "sess-2",
+                    accountId = "acc-sess",
+                    tokenHash = "tok-hash-2",
+                    createdAtMs = 2_000L,
+                    expiresAtMs = 20_000L,
+                    lastSeenAtMs = 2_000L,
+                )
+            ctx.authSessions.insert(s1).shouldBeRight() shouldBe s1
+            ctx.authSessions.insert(s2).shouldBeRight() shouldBe s2
+
+            ctx.authSessions.findByTokenHash("tok-hash-1").shouldBeRight() shouldBe s1
+            ctx.authSessions.touchLastSeen("sess-2", 3_500L).shouldBeRight() shouldBe true
+            ctx.authSessions.findByTokenHash("tok-hash-2").shouldBeRight()?.lastSeenAtMs shouldBe 3_500L
+
+            ctx.authSessions.deleteExpired(nowMs = 5_000L).shouldBeRight() shouldBe 1
+            ctx.authSessions.findByTokenHash("tok-hash-1").shouldBeRight().shouldBeNull()
+            ctx.authSessions.findByTokenHash("tok-hash-2").shouldBeRight().shouldNotBeNull()
+
+            ctx.authSessions.deleteByTokenHash("tok-hash-2").shouldBeRight() shouldBe true
+            ctx.authSessions.deleteByTokenHash("tok-hash-2").shouldBeRight() shouldBe false
+
+            val s3 = s2.copy(id = "sess-3", tokenHash = "tok-hash-3")
+            ctx.authSessions.insert(s3).shouldBeRight()
+            ctx.authSessions.deleteByAccountId("acc-sess").shouldBeRight() shouldBe 1
+            ctx.authSessions.findByTokenHash("tok-hash-3").shouldBeRight().shouldBeNull()
+
+            val s4 = s2.copy(id = "sess-4", tokenHash = "tok-hash-4")
+            ctx.authSessions.insert(s4).shouldBeRight()
+            ctx.authAccounts.delete("acc-sess").shouldBeRight() shouldBe true
+            ctx.authSessions.findByTokenHash("tok-hash-4").shouldBeRight().shouldBeNull()
+        }
+    }
+}
+
+private fun FunSpecRootScope.apiKeyTests(ctxProvider: () -> ContractContext) {
+    context("ApiKeyRepository") {
+        test("persists API keys, updates lastUsed, revokes, deletes, and cascades on account delete") {
+            val ctx = ctxProvider()
+            val a1 =
+                AuthAccountRecord(
+                    id = "acc-k1",
+                    username = "keyuser1",
+                    usernameNormalized = "keyuser1",
+                    passwordHash = "hash",
+                    role = "ADMIN",
+                    createdAtMs = 1_000L,
+                    updatedAtMs = 1_000L,
+                )
+            val a2 =
+                AuthAccountRecord(
+                    id = "acc-k2",
+                    username = "keyuser2",
+                    usernameNormalized = "keyuser2",
+                    passwordHash = "hash",
+                    role = "USER",
+                    createdAtMs = 2_000L,
+                    updatedAtMs = 2_000L,
+                )
+            ctx.authAccounts.insert(a1).shouldBeRight()
+            ctx.authAccounts.insert(a2).shouldBeRight()
+
+            val k1 =
+                ApiKeyRecord(
+                    id = "key-1",
+                    accountId = "acc-k1",
+                    name = "CLI Key",
+                    keyPrefix = "miru_abcdefg",
+                    keyHash = "key-hash-1",
+                    role = "ADMIN",
+                    expiresAtMs = 99_000L,
+                    createdAtMs = 1_500L,
+                )
+            val k2 =
+                ApiKeyRecord(
+                    id = "key-2",
+                    accountId = "acc-k2",
+                    name = "Readonly Key",
+                    keyPrefix = "miru_1234567",
+                    keyHash = "key-hash-2",
+                    role = "USER",
+                    createdAtMs = 2_500L,
+                )
+
+            ctx.apiKeys.insert(k1).shouldBeRight() shouldBe k1
+            ctx.apiKeys.insert(k2).shouldBeRight() shouldBe k2
+
+            ctx.apiKeys.findByKeyHash("key-hash-1").shouldBeRight() shouldBe k1
+            ctx.apiKeys.findById("key-2").shouldBeRight() shouldBe k2
+            ctx.apiKeys.findAll().shouldBeRight() shouldContainExactly listOf(k1, k2)
+            ctx.apiKeys.findAll(accountId = "acc-k2").shouldBeRight() shouldContainExactly listOf(k2)
+
+            ctx.apiKeys.updateLastUsed("key-1", 4_000L).shouldBeRight() shouldBe true
+            ctx.apiKeys.findById("key-1").shouldBeRight()?.lastUsedAtMs shouldBe 4_000L
+
+            ctx.apiKeys.revoke("key-1", 5_000L).shouldBeRight() shouldBe true
+            ctx.apiKeys.findById("key-1").shouldBeRight()?.revokedAtMs shouldBe 5_000L
+
+            ctx.apiKeys.delete("key-1").shouldBeRight() shouldBe true
+            ctx.apiKeys.delete("key-1").shouldBeRight() shouldBe false
+            ctx.apiKeys.findById("key-1").shouldBeRight().shouldBeNull()
+
+            ctx.authAccounts.delete("acc-k2").shouldBeRight() shouldBe true
+            ctx.apiKeys.findById("key-2").shouldBeRight().shouldBeNull()
         }
     }
 }

@@ -38,6 +38,7 @@ interface PlaybackHistoryRepository {
         userId: String,
         ratingKey: String,
         minStoppedAtMs: Long,
+        playerMachineId: String? = null,
     ): Either<MiruError.PersistenceError, PlaybackHistoryRecord?>
 
     suspend fun updateMergedSession(record: PlaybackHistoryRecord): Either<MiruError.PersistenceError, Boolean>
@@ -75,16 +76,24 @@ class ExposedPlaybackHistoryRepository(
         userId: String,
         ratingKey: String,
         minStoppedAtMs: Long,
+        playerMachineId: String?,
     ): Either<MiruError.PersistenceError, PlaybackHistoryRecord?> =
         database.exposedQuery("playback_history_find_merge_candidate") {
+            val baseCondition =
+                (PlaybackHistoryTable.serverId eq serverId) and
+                    (PlaybackHistoryTable.userId eq userId) and
+                    (PlaybackHistoryTable.ratingKey eq ratingKey) and
+                    (PlaybackHistoryTable.stoppedAtMs greaterEq minStoppedAtMs)
+            val condition =
+                if (playerMachineId != null) {
+                    baseCondition and (PlaybackHistoryTable.playerMachineId eq playerMachineId)
+                } else {
+                    baseCondition
+                }
             PlaybackHistoryTable
                 .selectAll()
-                .where {
-                    (PlaybackHistoryTable.serverId eq serverId) and
-                        (PlaybackHistoryTable.userId eq userId) and
-                        (PlaybackHistoryTable.ratingKey eq ratingKey) and
-                        (PlaybackHistoryTable.stoppedAtMs greaterEq minStoppedAtMs)
-                }.orderBy(PlaybackHistoryTable.stoppedAtMs to SortOrder.DESC, PlaybackHistoryTable.id to SortOrder.ASC)
+                .where { condition }
+                .orderBy(PlaybackHistoryTable.stoppedAtMs to SortOrder.DESC, PlaybackHistoryTable.id to SortOrder.ASC)
                 .limit(1)
                 .singleOrNull()
                 ?.toPlaybackHistoryRecord()

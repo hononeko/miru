@@ -10,11 +10,14 @@ import app.hononeko.miru.health.ReadinessService
 import app.hononeko.miru.http.healthRoutes
 import app.hononeko.miru.http.openApiRoutes
 import app.hononeko.miru.http.respondError
+import app.hononeko.miru.persistence.DatabaseFactory
+import app.hononeko.miru.persistence.DatabaseReadinessCheck
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationStarted
+import io.ktor.server.application.ApplicationStopped
 import io.ktor.server.application.ApplicationStopping
 import io.ktor.server.application.install
 import io.ktor.server.config.ApplicationConfig
@@ -73,7 +76,29 @@ fun main() {
         appConfig.auth.mode,
     )
 
-    val plexRuntime = buildPlexRuntime(appConfig.plex)
+    val databaseHandle =
+        DatabaseFactory
+            .createAndMigrate(appConfig.database)
+            .fold(
+                ifLeft = { error ->
+                    logger.error("Database initialization failed: {}", error.message)
+                    exitProcess(1)
+                },
+                ifRight = { it },
+            )
+
+    val plexRuntime =
+        try {
+            buildPlexRuntime(
+                config = appConfig.plex,
+                databaseHandle = databaseHandle,
+                sessionConfig = appConfig.session,
+            )
+        } catch (e: Throwable) {
+            runCatching { databaseHandle.close() }
+                .onFailure { err -> logger.warn("Failed to close database handle after startup failure: {}", err.message) }
+            throw e
+        }
 
     val server =
         embeddedServer(
@@ -81,7 +106,16 @@ fun main() {
             port = appConfig.server.port,
             host = appConfig.server.host,
         ) {
-            miruModule(config = appConfig, realtime = plexRuntime.realtime)
+            monitor.subscribe(ApplicationStopped) {
+                logger.info("Closing database handle")
+                runCatching { databaseHandle.close() }
+                    .onFailure { err -> logger.warn("Failed to close database handle on shutdown: {}", err.message) }
+            }
+            miruModule(
+                config = appConfig,
+                readinessChecks = listOf(NamedReadinessCheck("database", DatabaseReadinessCheck(databaseHandle.dataSource))),
+                realtime = plexRuntime.realtime,
+            )
         }
     try {
         server.start(wait = true)
@@ -89,6 +123,8 @@ fun main() {
         runBlocking {
             withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { plexRuntime.realtime.stop() }
         }
+        runCatching { databaseHandle.close() }
+            .onFailure { err -> logger.warn("Failed to close database handle after server failure: {}", err.message) }
         throw e
     }
 }

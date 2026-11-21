@@ -213,6 +213,7 @@ private fun FunSpecRootScope.playbackHistoryTests(ctxProvider: () -> ContractCon
                     sectionKey = "sec-movies",
                     streamDecision = "transcode",
                     hwTranscode = true,
+                    playerMachineId = "player-1",
                     startedAtMs = 1_000L,
                     stoppedAtMs = 2_000L,
                     externalImportKey = "tautulli:1001",
@@ -256,6 +257,16 @@ private fun FunSpecRootScope.playbackHistoryTests(ctxProvider: () -> ContractCon
             ctx.history.insert(r3).shouldBeRight() shouldBe r3
 
             ctx.history.findLatestMergeCandidate("srv-1", "u-1", "mov-1", minStoppedAtMs = 2_500L).shouldBeRight().shouldBeNull()
+            ctx.history
+                .findLatestMergeCandidate("srv-1", "u-1", "mov-1", minStoppedAtMs = 1_500L, playerMachineId = "player-other")
+                .shouldBeRight()
+                .shouldBeNull()
+            val mergeCandidateByPlayer =
+                ctx.history
+                    .findLatestMergeCandidate("srv-1", "u-1", "mov-1", minStoppedAtMs = 1_500L, playerMachineId = "player-1")
+                    .shouldBeRight()
+                    .shouldNotBeNull()
+            mergeCandidateByPlayer.id shouldBe "hist-1"
             val mergeCandidate =
                 ctx.history.findLatestMergeCandidate("srv-1", "u-1", "mov-1", minStoppedAtMs = 1_500L).shouldBeRight().shouldNotBeNull()
             mergeCandidate.id shouldBe "hist-1"
@@ -526,6 +537,7 @@ private fun sampleHistory(
     sectionKey: String = "sec-1",
     streamDecision: String = "direct_play",
     hwTranscode: Boolean = false,
+    playerMachineId: String? = null,
     startedAtMs: Long = 1_000L,
     stoppedAtMs: Long = 2_000L,
     externalImportKey: String? = null,
@@ -551,7 +563,7 @@ private fun sampleHistory(
         completionPercent = 50.0,
         isWatched = false,
         streamTech = StreamTechRecord(streamDecision = streamDecision, hwTranscode = hwTranscode),
-        player = PlayerRecord(playerName = "Web", location = "lan"),
+        player = PlayerRecord(playerName = "Web", playerMachineId = playerMachineId, location = "lan"),
         startedAtMs = startedAtMs,
         stoppedAtMs = stoppedAtMs,
     )

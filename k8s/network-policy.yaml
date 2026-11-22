@@ -1,31 +1,37 @@
-apiVersion: cilium.io/v2
-kind: CiliumNetworkPolicy
+# Limits Miru to the traffic it needs. Adjust the ports if Plex, PostgreSQL or your OIDC
+# provider listen elsewhere, and narrow the ingress rule to your ingress controller or gateway.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
 metadata:
-  name: miru-policy
+  name: miru
 spec:
-  endpointSelector:
+  podSelector:
     matchLabels:
       app: miru
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Web UI and API
+    - ports:
+        - port: http
+          protocol: TCP
   egress:
-    # Plex Media Server HTTP & WebSocket API
-    - toEndpoints:
-        - matchLabels:
-            app: plex
-      toPorts:
-        - ports:
-            - port: "32400"
-              protocol: TCP
-    # NAS PostgreSQL (when DB_ENGINE=postgres)
-    - toCIDR:
-        - "10.10.1.218/32"
-      toPorts:
-        - ports:
-            - port: "15432"
-              protocol: TCP
-    # Optional plex.tv user/avatar resolution
-    - toEntities:
-        - "world"
-      toPorts:
-        - ports:
-            - port: "443"
-              protocol: TCP
+    # DNS
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Plex Media Server
+    - ports:
+        - port: 32400
+          protocol: TCP
+    # plex.tv (sign-in, users and avatars) and HTTPS OIDC providers
+    - ports:
+        - port: 443
+          protocol: TCP
+    # PostgreSQL (DB_ENGINE=postgres)
+    - ports:
+        - port: 5432
+          protocol: TCP

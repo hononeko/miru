@@ -45,7 +45,7 @@ Versions follow the rules shared by all hononeko repositories in [`hononeko/acti
 │   └── workflows/                # PR, Main, Image, Version, CD & CodeQL CI
 ├── config/detekt/detekt.yml      # Detekt rules
 ├── docs/
-│   ├── dashboard_*.png           # README screenshots
+│   ├── screenshots/              # README screenshots
 │   └── k8s/                      # Example Kustomize manifests (documentation only, not deployed)
 ├── gradle/libs.versions.toml     # Dependency version catalog
 ├── src/

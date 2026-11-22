@@ -17,18 +17,12 @@
 		class: className = ''
 	}: Props = $props();
 
-	let failed = $state(false);
+	let failedSrc = $state<string | null>(null);
 
 	// Security guard: only allow same-origin Miru artwork/avatar proxy URLs
 	const safeSrc = $derived.by(() => {
-		if (!src || failed) return null;
+		if (!src || src === failedSrc) return null;
 		return src.startsWith('/api/v1/') ? src : null;
-	});
-
-	$effect(() => {
-		// Reset error state whenever src changes
-		void src;
-		failed = false;
 	});
 </script>
 
@@ -38,7 +32,9 @@
 		{alt}
 		loading="lazy"
 		decoding="async"
-		onerror={() => (failed = true)}
+		onerror={() => {
+			if (src) failedSrc = src;
+		}}
 		class={cn(
 			'object-cover shrink-0',
 			variant === 'avatar' ? 'rounded-full' : 'rounded-lg border border-border-strong bg-elevated',

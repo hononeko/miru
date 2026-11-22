@@ -9,7 +9,7 @@ import arrow.core.raise.either
 import arrow.core.raise.ensure
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.HttpClientEngine
-import io.ktor.client.engine.cio.CIO
+import io.ktor.client.engine.java.Java
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.ResponseException
 import io.ktor.client.request.get
@@ -47,7 +47,7 @@ val DEFAULT_ALLOWED_AVATAR_HOSTS: Set<String> =
     )
 
 fun createAvatarHttpClient(
-    engine: HttpClientEngine = CIO.create(),
+    engine: HttpClientEngine = Java.create(),
     requestTimeoutMs: Long = DEFAULT_AVATAR_REQUEST_TIMEOUT_MS,
     connectTimeoutMs: Long = DEFAULT_AVATAR_CONNECT_TIMEOUT_MS,
 ): HttpClient =

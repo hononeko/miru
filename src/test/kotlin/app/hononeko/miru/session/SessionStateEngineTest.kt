@@ -922,4 +922,55 @@ class SessionStateEngineTest :
                 }
             }
         }
+
+        test("deduplicates local owner externalId=1 against existing admin or unique username without creating duplicate user") {
+            runTest {
+                newEnv().use { env ->
+                    env.seedServer()
+                    env.users
+                        .upsert(
+                            UserRecord(
+                                id = "unused-local",
+                                serverId = DEFAULT_SERVER_ID,
+                                externalUserId = "0",
+                                username = "Local",
+                                displayName = "Local",
+                                isAdmin = false,
+                                createdAtMs = 500L,
+                                updatedAtMs = 500L,
+                            ),
+                        ).shouldBeRight()
+                    env.users
+                        .upsert(
+                            UserRecord(
+                                id = "tautulli-owner-id",
+                                serverId = DEFAULT_SERVER_ID,
+                                externalUserId = "18475316",
+                                username = "Vehkiya",
+                                displayName = "Vehkiya",
+                                email = "owner@example.com",
+                                isAdmin = true,
+                                createdAtMs = 1_000L,
+                                updatedAtMs = 1_000L,
+                            ),
+                        ).shouldBeRight()
+
+                    val engine = env.createEngine()
+                    env.nowMs = 50_000L
+                    val started =
+                        engine
+                            .reconcile(
+                                listOf(sampleSnapshot(userExternalId = "1", username = "Vehkiya")),
+                                ReconcileTrigger.PERIODIC,
+                            ).shouldBeRight()
+                            .single()
+                            .shouldBeInstanceOf<SessionEvent.SessionStarted>()
+
+                    started.session.userId shouldBe "tautulli-owner-id"
+                    val usersAfter = env.users.findByServer(DEFAULT_SERVER_ID).shouldBeRight()
+                    usersAfter.none { it.externalUserId == "1" } shouldBe true
+                    env.users.findById("tautulli-owner-id").shouldBeRight().shouldNotBeNull().lastSeenAtMs shouldBe 50_000L
+                }
+            }
+        }
     })

@@ -5,6 +5,7 @@
 	import Badge from '$components/ui/Badge.svelte';
 	import Button from '$components/ui/Button.svelte';
 	import { authStore } from '$stores/auth.svelte';
+	import { validatePassword } from '$lib/utils';
 
 	let username = $state('admin');
 	let email = $state('');
@@ -17,8 +18,9 @@
 		e.preventDefault();
 		error = null;
 
-		if (password.length < 12) {
-			error = 'Password must be at least 12 characters long.';
+		const passwordError = validatePassword(password);
+		if (passwordError) {
+			error = passwordError;
 			return;
 		}
 		if (password !== confirmPassword) {
@@ -99,10 +101,11 @@
 					minlength={12}
 					autocomplete="new-password"
 					bind:value={password}
-					placeholder="Minimum 12 characters"
-					class="rounded-lg border border-border-strong bg-canvas px-3 py-2.5 font-mono text-sm text-fg-primary placeholder:text-fg-muted focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan/30"
+					class="rounded-lg border border-border-strong bg-canvas px-3 py-2.5 font-mono text-sm text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan/30"
 				/>
-				<span class="text-[10px] text-fg-muted">Minimum 12 characters · hashed with Argon2id</span>
+				<span class="text-[10px] text-fg-muted">
+					At least 12 characters with 1 lowercase, 1 uppercase, and 1 digit · hashed with Argon2id
+				</span>
 			</label>
 
 			<label class="flex flex-col gap-1.5">
@@ -113,8 +116,7 @@
 					minlength={12}
 					autocomplete="new-password"
 					bind:value={confirmPassword}
-					placeholder="Re-enter password"
-					class="rounded-lg border border-border-strong bg-canvas px-3 py-2.5 font-mono text-sm text-fg-primary placeholder:text-fg-muted focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan/30"
+					class="rounded-lg border border-border-strong bg-canvas px-3 py-2.5 font-mono text-sm text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan/30"
 				/>
 			</label>
 

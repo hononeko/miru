@@ -203,6 +203,34 @@ class PlexMediaServerAdapterTest :
             users.first { it.externalId == "2002" }.email shouldBe null
         }
 
+        test("does not poison owner cache when plex.tv fails transiently and recovers on subsequent poll") {
+            var plexTvUp = false
+            val (adapter, _) =
+                adapterWithMock(plexTvBaseUrl = TEST_PLEX_TV_URL) { request ->
+                    when {
+                        request.url.host == "plex.tv" && request.url.encodedPath == "/api/v2/user" ->
+                            if (plexTvUp) {
+                                respondJson(PlexFixtures.plexTvUserJson)
+                            } else {
+                                respond("plex.tv unavailable", HttpStatusCode.ServiceUnavailable)
+                            }
+                        request.url.encodedPath == "/status/sessions" ->
+                            respondJson(PlexFixtures.localOwnerSessionJson)
+                        request.url.encodedPath == "/accounts" ->
+                            respondJson(PlexFixtures.accountsJson)
+                        else -> error("Unexpected path: ${request.url}")
+                    }
+                }
+
+            val firstSession = adapter.fetchActiveSessions().shouldBeRight().single()
+            firstSession.user.externalId shouldBe "1"
+
+            plexTvUp = true
+            val recoveredSession = adapter.fetchActiveSessions().shouldBeRight().single()
+            recoveredSession.user.externalId shouldBe "99887766"
+            recoveredSession.user.username shouldBe "kerrlab"
+        }
+
         test("fetches library sections, Size=0 counts with optional type, and paginated items") {
             val (adapter, requests) =
                 adapterWithMock { request ->

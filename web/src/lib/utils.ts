@@ -136,3 +136,22 @@ export function safeInitial(name: string | null | undefined): string {
 	const trimmed = (name ?? '').trim();
 	return trimmed ? trimmed[0].toUpperCase() : '?';
 }
+
+export const MIN_PASSWORD_LENGTH = 12;
+
+export function validatePassword(password: string): string | null {
+	const missing: string[] = [];
+	if (password.length < MIN_PASSWORD_LENGTH) {
+		missing.push(`at least ${MIN_PASSWORD_LENGTH} characters`);
+	}
+	if (!/[a-z]/.test(password)) {
+		missing.push('at least 1 lowercase letter');
+	}
+	if (!/[A-Z]/.test(password)) {
+		missing.push('at least 1 uppercase letter');
+	}
+	if (!/[0-9]/.test(password)) {
+		missing.push('at least 1 digit');
+	}
+	return missing.length === 0 ? null : `Password must contain ${missing.join(', ')}.`;
+}

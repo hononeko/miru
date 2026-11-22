@@ -4,7 +4,7 @@ import app.hononeko.miru.adapter.MediaServerEvent
 import app.hononeko.miru.config.PlexConfig
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.HttpClientEngine
-import io.ktor.client.engine.cio.CIO
+import io.ktor.client.engine.java.Java
 import io.ktor.client.plugins.ResponseException
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
@@ -50,11 +50,10 @@ private const val PLEX_TOKEN_HEADER = "X-Plex-Token"
  */
 fun createPlexWebSocketClient(
     engine: HttpClientEngine =
-        CIO.create {
-            // 0 disables the per-request timeout so idle-but-healthy sessions are not torn down;
-            // liveness is detected by WebSocket ping/pong instead.
-            requestTimeout = 0
-            endpoint.connectTimeout = WS_CONNECT_TIMEOUT_MS
+        Java.create {
+            config {
+                connectTimeout(java.time.Duration.ofMillis(WS_CONNECT_TIMEOUT_MS))
+            }
         },
 ): HttpClient =
     HttpClient(engine) {
@@ -269,6 +268,9 @@ class PlexNotificationListener(
                 is ResponseException ->
                     cause.response.status == HttpStatusCode.Unauthorized ||
                         cause.response.status == HttpStatusCode.Forbidden
+                is java.net.http.WebSocketHandshakeException ->
+                    cause.response?.statusCode() == HttpStatusCode.Unauthorized.value ||
+                        cause.response?.statusCode() == HttpStatusCode.Forbidden.value
                 else -> AUTH_STATUS_REGEX.containsMatchIn(cause.message.orEmpty())
             }
         }

@@ -17,6 +17,7 @@ import io.kotest.matchers.string.shouldNotContain
 import io.kotest.matchers.types.shouldBeInstanceOf
 import io.kotest.matchers.types.shouldBeSameInstanceAs
 import io.ktor.http.HttpStatusCode
+import io.ktor.server.application.install
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import io.ktor.server.response.respond
@@ -414,7 +415,7 @@ class PlexNotificationListenerTest :
             logs.none { it.formattedMessage.contains("plex.ws.state=backoff") } shouldBe true
         }
 
-        test("Ktor CIO connector treats a real HTTP 401 handshake rejection as an auth failure without leaking the token") {
+        test("Ktor Java connector treats a real HTTP 401 handshake rejection as an auth failure without leaking the token") {
             val server =
                 embeddedServer(Netty, host = "127.0.0.1", port = 0) {
                     routing {
@@ -458,6 +459,48 @@ class PlexNotificationListenerTest :
             val rendered = logs.map { it.formattedMessage + " " + it.argumentArray.orEmpty().joinToString() }
             rendered.forEach { it shouldNotContain SECRET_TOKEN }
             rendered.any { it.contains("plex.ws.state=auth_error") } shouldBe true
+        }
+
+        test("Ktor Java WebSocket client connects to real Netty WebSocket server with X-Plex-Token and receives frames") {
+            val headerTokens = CopyOnWriteArrayList<String>()
+            val server =
+                embeddedServer(Netty, host = "127.0.0.1", port = 0) {
+                    install(ServerWebSockets)
+                    routing {
+                        webSocket("/:/websockets/notifications") {
+                            headerTokens += call.request.headers["X-Plex-Token"].orEmpty()
+                            send(Frame.Text(PlexNotificationFixtures.playing("java-ws-1")))
+                            do {
+                                val result = incoming.receiveCatching()
+                            } while (result.isSuccess)
+                        }
+                    }
+                }.start(wait = false)
+            val wsClient = createPlexWebSocketClient()
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            try {
+                val port = server.engine.resolvedConnectors().first().port
+                val listener =
+                    PlexNotificationListener(
+                        connector =
+                            KtorPlexNotificationConnector(
+                                httpClient = wsClient,
+                                config = PlexConfig(baseUrl = "http://127.0.0.1:$port", token = SECRET_TOKEN),
+                            ),
+                        scope = scope,
+                        secretToRedact = SECRET_TOKEN,
+                    )
+                val received = scope.async(start = CoroutineStart.UNDISPATCHED) { listener.events.first() }
+                listener.start()
+                val event = withTimeout(5.seconds) { received.await() }
+                (event as MediaServerEvent.PlayingEvent).sessionKey shouldBe "java-ws-1"
+                headerTokens.toList() shouldBe listOf(SECRET_TOKEN)
+                listener.stop()
+            } finally {
+                scope.cancel()
+                wsClient.close()
+                server.stop(0, 1_000)
+            }
         }
     })
 

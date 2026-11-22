@@ -209,8 +209,8 @@ class TautulliImporterService(
                 ?: "unknown"
 
         val pausedSec = (row.pausedCounter ?: 0L).coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()
-        val viewOffsetMs = (row.viewOffset ?: 0L).coerceAtLeast(0L) * MILLIS_PER_SECOND
-        val durationMs = (row.duration ?: 0L).coerceAtLeast(0L) * MILLIS_PER_SECOND
+        val viewOffsetMs = (row.viewOffset ?: 0L).coerceAtLeast(0L)
+        val durationMs = (row.duration ?: 0L).coerceAtLeast(0L)
 
         return ValidatedHistoryRow(
             row = row,
@@ -252,6 +252,10 @@ class TautulliImporterService(
                 user.username?.trim()?.takeIf { it.isNotEmpty() }
                     ?: user.friendlyName?.trim()?.takeIf { it.isNotEmpty() }
                     ?: "user-$externalId"
+            // Skip Tautulli's seeded dummy local account (user_id=0 / Local) when it has no playback history.
+            if (externalId == "0" && username.equals("Local", ignoreCase = true) && externalId !in lastSeenByExternalId) {
+                continue
+            }
             val displayName = user.friendlyName?.trim()?.takeIf { it.isNotEmpty() } ?: username
             discovered[externalId] =
                 DiscoveredUser(
@@ -346,9 +350,11 @@ class TautulliImporterService(
             val durationMs = latest.durationMs.takeIf { it > 0L } ?: group.lastOrNull { it.durationMs > 0L }?.durationMs ?: 0L
 
             val watchedDurationSec =
-                (((stoppedAtMs - startedAtMs) / MILLIS_PER_SECOND) - pausedDurationSec)
-                    .coerceAtLeast(0L)
-                    .coerceAtMost(Int.MAX_VALUE.toLong())
+                group
+                    .sumOf { item ->
+                        (((item.stoppedAtMs - item.startedAtMs) / MILLIS_PER_SECOND) - item.pausedDurationSec.toLong())
+                            .coerceAtLeast(0L)
+                    }.coerceAtMost(Int.MAX_VALUE.toLong())
                     .toInt()
             val completionPercent =
                 if (durationMs > 0L) {

@@ -137,7 +137,13 @@ class PlexRuntimeManagerTest :
                                     )
                                 "/status/sessions" ->
                                     respond(
-                                        content = """{"MediaContainer":{"size":0,"Metadata":[]}}""",
+                                        content = PlexFixtures.localOwnerSessionJson,
+                                        status = HttpStatusCode.OK,
+                                        headers = jsonHeaders,
+                                    )
+                                "/api/v2/user" ->
+                                    respond(
+                                        content = PlexFixtures.plexTvUserJson,
                                         status = HttpStatusCode.OK,
                                         headers = jsonHeaders,
                                     )
@@ -174,9 +180,12 @@ class PlexRuntimeManagerTest :
                 manager.currentMachineId() shouldBe "mach-1"
                 manager.currentCredentialSource() shouldBe PlexCredentialSource.STORED_ENCRYPTED
 
-                // serverIdProvider resolves via checkHealth and caches id
+                // serverIdProvider resolves via checkHealth and caches id; default plex.tv lookup resolves local owner
                 val resolvedId = manager.serverIdProvider().shouldBeRight()
                 manager.serverIdProvider().shouldBeRight() shouldBe resolvedId
+                val active = manager.adapter.fetchActiveSessions().shouldBeRight().single()
+                active.user.externalId shouldBe "99887766"
+                active.user.username shouldBe "kerrlab"
 
                 // Reload while Plex unreachable exercises DB fallback for serverIdProvider
                 reachable.set(false)

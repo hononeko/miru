@@ -122,7 +122,7 @@
 							autocomplete="username"
 							required
 							bind:value={username}
-							placeholder="sergiu"
+							placeholder="username"
 							class="rounded-lg border border-border-strong bg-canvas px-3 py-2.5 text-sm text-fg-primary placeholder:text-fg-muted focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan/30"
 						/>
 					</label>
@@ -135,7 +135,6 @@
 							autocomplete="current-password"
 							required
 							bind:value={password}
-							placeholder="••••••••••••"
 							class="rounded-lg border border-border-strong bg-canvas px-3 py-2.5 font-mono text-sm text-fg-primary placeholder:text-fg-muted focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan/30"
 						/>
 					</label>

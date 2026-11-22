@@ -45,7 +45,7 @@ class AppConfigLoaderTest :
                         "DATABASE_PASSWORD" to "db-super-secret",
                         "DATABASE_MAX_POOL_SIZE" to "15",
                         "MIRU_ADMIN_USERNAME" to "admin",
-                        "MIRU_ADMIN_PASSWORD" to "very-strong-password-123",
+                        "MIRU_ADMIN_PASSWORD" to "Very-strong-password-123",
                         "MIRU_CORS_ALLOWED_ORIGINS" to "http://localhost:5173, https://miru.hononeko.app",
                     ),
                 )
@@ -60,7 +60,7 @@ class AppConfigLoaderTest :
             rendered shouldNotContain "super-secret-plex-token"
             rendered shouldNotContain "db-super-secret"
             rendered shouldNotContain validSecret
-            rendered shouldNotContain "very-strong-password-123"
+            rendered shouldNotContain "Very-strong-password-123"
         }
 
         test("falls back to HOCON values when environment variables are absent") {
@@ -132,16 +132,25 @@ class AppConfigLoaderTest :
         }
 
         test("rejects weak bootstrap admin password") {
-            val env =
-                baseSqliteEnv(
-                    mapOf(
-                        "MIRU_ADMIN_USERNAME" to "admin",
-                        "MIRU_ADMIN_PASSWORD" to "short",
-                    ),
+            val weakPasswords =
+                listOf(
+                    "Short1a",
+                    "alllowercase12",
+                    "ALLUPPERCASE12",
+                    "NoDigitsPassword!",
                 )
+            for (weak in weakPasswords) {
+                val env =
+                    baseSqliteEnv(
+                        mapOf(
+                            "MIRU_ADMIN_USERNAME" to "admin",
+                            "MIRU_ADMIN_PASSWORD" to weak,
+                        ),
+                    )
 
-            val error = AppConfigLoader.load(env = env).shouldBeLeft()
-            error.fieldErrors.keys shouldBe setOf("MIRU_ADMIN_PASSWORD")
+                val error = AppConfigLoader.load(env = env).shouldBeLeft()
+                error.fieldErrors.keys shouldBe setOf("MIRU_ADMIN_PASSWORD")
+            }
         }
 
         test("loads OIDC-only and hybrid configurations and redacts OIDC_CLIENT_SECRET") {

@@ -484,6 +484,14 @@ class SessionStateEngine(
             return existing.id
         }
 
+        if (user.externalId == LOCAL_OWNER_EXTERNAL_ID) {
+            val matchedOwner = findFallbackLocalOwner(serverId = serverId, username = user.username).bind()
+            if (matchedOwner != null) {
+                userRepository.updateLastSeen(matchedOwner.id, lastSeenAtMs = nowMs).bind()
+                return matchedOwner.id
+            }
+        }
+
         val created =
             userRepository
                 .upsert(
@@ -494,7 +502,7 @@ class SessionStateEngine(
                         username = user.username,
                         displayName = user.username,
                         thumbUrl = user.thumbUrl,
-                        isAdmin = false,
+                        isAdmin = user.externalId == LOCAL_OWNER_EXTERNAL_ID,
                         lastSeenAtMs = nowMs,
                         createdAtMs = nowMs,
                         updatedAtMs = nowMs,
@@ -502,6 +510,30 @@ class SessionStateEngine(
                 ).bind()
         return created.id
     }
+
+    private suspend fun findFallbackLocalOwner(
+        serverId: String,
+        username: String,
+    ): Either<MiruError, UserRecord?> =
+        userRepository.findByServer(serverId).map { users ->
+            val candidates =
+                users.filter { it.externalUserId != "0" && it.externalUserId != LOCAL_OWNER_EXTERNAL_ID }
+            val normalizedName = username.trim()
+            candidates.firstOrNull { candidate ->
+                candidate.isAdmin &&
+                    normalizedName.isNotEmpty() &&
+                    (
+                        candidate.username.equals(normalizedName, ignoreCase = true) ||
+                            candidate.displayName?.equals(normalizedName, ignoreCase = true) == true
+                    )
+            }
+                ?: candidates.singleOrNull { it.isAdmin }
+                ?: if (normalizedName.isNotEmpty()) {
+                    candidates.singleOrNull { it.username.equals(normalizedName, ignoreCase = true) }
+                } else {
+                    null
+                }
+        }
 
     private fun accumulatePauseDurationMs(
         prev: TrackedSession,
@@ -599,5 +631,6 @@ class SessionStateEngine(
 
     companion object {
         const val DEFAULT_MISSED_POLLS_THRESHOLD = 2
+        private const val LOCAL_OWNER_EXTERNAL_ID = "1"
     }
 }

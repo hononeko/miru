@@ -172,7 +172,7 @@ private fun createArtworkHarness(
 }
 
 private suspend fun seedAuthAndUsers(harness: ArtworkTestHarness): Pair<String, String> {
-    val admin = harness.authService.setupInitialAdmin("admin", "admin-password-1234").shouldBeRight()
+    val admin = harness.authService.setupInitialAdmin("admin", "Admin-password-1234").shouldBeRight()
     val adminKey =
         harness.authService
             .createApiKey(
@@ -227,7 +227,7 @@ private suspend fun seedAuthAndUsers(harness: ArtworkTestHarness): Pair<String, 
         harness.authService
             .createAccount(
                 username = "alice-miru",
-                password = "alice-password-1234",
+                password = "Alice-password-1234",
                 role = MiruRole.USER,
                 linkedMediaUserIds = setOf("user-plex-tv"),
             ).shouldBeRight()

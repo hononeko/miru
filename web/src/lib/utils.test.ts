@@ -7,7 +7,8 @@ import {
 	formatMediaTitle,
 	formatRelativeTime,
 	getDecisionMeta,
-	safeInitial
+	safeInitial,
+	validatePassword
 } from './utils';
 
 describe('Miru telemetry formatters', () => {
@@ -74,5 +75,13 @@ describe('Miru telemetry formatters', () => {
 		expect(formatRelativeTime(now - 7_200_000, now)).toBe('2h ago');
 		expect(safeInitial('sergiu')).toBe('S');
 		expect(safeInitial('   ')).toBe('?');
+	});
+
+	it('enforces password length and character complexity rules', () => {
+		expect(validatePassword('Short1a')).toContain('at least 12 characters');
+		expect(validatePassword('alllowercase12')).toContain('at least 1 uppercase letter');
+		expect(validatePassword('ALLUPPERCASE12')).toContain('at least 1 lowercase letter');
+		expect(validatePassword('NoDigitsHereAtAll')).toContain('at least 1 digit');
+		expect(validatePassword('ValidPassword1')).toBeNull();
 	});
 });

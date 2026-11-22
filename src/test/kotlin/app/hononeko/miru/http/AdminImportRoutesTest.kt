@@ -131,9 +131,9 @@ class AdminImportRoutesTest :
     FunSpec({
         test("enforces admin RBAC, supports dryRun and idempotent multipart import, and validates bad uploads") {
             createAdminImportHarness().use { harness ->
-                val adminLogin = harness.authService.setupInitialAdmin("admin", "admin-password-123").shouldBeRight()
-                harness.authService.createAccount("viewer", "viewer-password-123", role = MiruRole.USER).shouldBeRight()
-                val userLogin = harness.authService.login("viewer", "viewer-password-123").shouldBeRight()
+                val adminLogin = harness.authService.setupInitialAdmin("admin", "Admin-password-123").shouldBeRight()
+                harness.authService.createAccount("viewer", "Viewer-password-123", role = MiruRole.USER).shouldBeRight()
+                val userLogin = harness.authService.login("viewer", "Viewer-password-123").shouldBeRight()
                 val dbBytes = createSampleTautulliBytes(harness.tempDir)
 
                 testApplication {

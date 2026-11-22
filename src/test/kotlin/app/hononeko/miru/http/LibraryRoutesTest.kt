@@ -278,9 +278,9 @@ class LibraryRoutesTest :
         test("enforces auth, lists libraries, returns stats with decoded aggregates and snapshots, and returns recent with artwork proxy") {
             createLibraryRouteHarness().use { harness ->
                 seedSampleLibraryData(harness)
-                val adminLogin = harness.authService.setupInitialAdmin("admin", "admin-password-123").shouldBeRight()
-                harness.authService.createAccount("viewer", "viewer-password-123", role = MiruRole.USER).shouldBeRight()
-                val userLogin = harness.authService.login("viewer", "viewer-password-123").shouldBeRight()
+                val adminLogin = harness.authService.setupInitialAdmin("admin", "Admin-password-123").shouldBeRight()
+                harness.authService.createAccount("viewer", "Viewer-password-123", role = MiruRole.USER).shouldBeRight()
+                val userLogin = harness.authService.login("viewer", "Viewer-password-123").shouldBeRight()
 
                 testApplication {
                     setupLibraryApp(harness)
@@ -387,9 +387,9 @@ class LibraryRoutesTest :
         test("supports serverId filtering, 409 on ambiguous sectionKey, and malformed snapshot JSON fallback") {
             createLibraryRouteHarness().use { harness ->
                 seedSampleLibraryData(harness)
-                harness.authService.setupInitialAdmin("admin", "admin-password-123").shouldBeRight()
-                harness.authService.createAccount("viewer", "viewer-password-123", role = MiruRole.USER).shouldBeRight()
-                val userLogin = harness.authService.login("viewer", "viewer-password-123").shouldBeRight()
+                harness.authService.setupInitialAdmin("admin", "Admin-password-123").shouldBeRight()
+                harness.authService.createAccount("viewer", "Viewer-password-123", role = MiruRole.USER).shouldBeRight()
+                val userLogin = harness.authService.login("viewer", "Viewer-password-123").shouldBeRight()
 
                 harness.serverRepo
                     .upsert(
@@ -465,9 +465,9 @@ class LibraryRoutesTest :
 
         test("POST /api/v1/libraries/sync requires ADMIN role, validates params, and maps errors") {
             createLibraryRouteHarness().use { harness ->
-                val adminLogin = harness.authService.setupInitialAdmin("admin", "admin-password-123").shouldBeRight()
-                harness.authService.createAccount("viewer", "viewer-password-123", role = MiruRole.USER).shouldBeRight()
-                val userLogin = harness.authService.login("viewer", "viewer-password-123").shouldBeRight()
+                val adminLogin = harness.authService.setupInitialAdmin("admin", "Admin-password-123").shouldBeRight()
+                harness.authService.createAccount("viewer", "Viewer-password-123", role = MiruRole.USER).shouldBeRight()
+                val userLogin = harness.authService.login("viewer", "Viewer-password-123").shouldBeRight()
 
                 val recordedCalls = mutableListOf<Pair<Boolean, String?>>()
                 var nextResult: Either<MiruError, LibrarySyncSummary>? = null

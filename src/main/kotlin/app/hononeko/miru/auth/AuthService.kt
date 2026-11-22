@@ -488,8 +488,8 @@ class AuthService(
                 errors["username"] =
                     "must be $MIN_USERNAME_LENGTH-$MAX_USERNAME_LENGTH characters matching [A-Za-z0-9._-]"
             }
-            if (password.length < MIN_PASSWORD_LENGTH) {
-                errors["password"] = "must be at least $MIN_PASSWORD_LENGTH characters"
+            PasswordPolicy.validationError(password)?.let { message ->
+                errors["password"] = message
             }
 
             ensure(errors.isEmpty()) {
@@ -534,7 +534,7 @@ class AuthService(
     companion object {
         const val MIN_USERNAME_LENGTH = 3
         const val MAX_USERNAME_LENGTH = 64
-        const val MIN_PASSWORD_LENGTH = 12
+        const val MIN_PASSWORD_LENGTH = PasswordPolicy.MIN_LENGTH
         const val MAX_API_KEY_NAME_LENGTH = 100
         const val DEFAULT_SESSION_TTL_MS = 7L * 24L * 60L * 60L * 1000L
         private val USERNAME_REGEX = Regex("^[A-Za-z0-9._-]+$")

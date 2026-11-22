@@ -274,4 +274,85 @@ class PlexMapperTest :
             a1 shouldNotBe b
             a1.toString() shouldBe "ArtworkData(size=3, contentType=image/jpeg)"
         }
+
+        test("maps rich movie, episode, season, and show metadata details") {
+            val movieDto =
+                MiruJson
+                    .decodeFromString<PlexLibraryItemsResponse>(PlexFixtures.movieMetadataDetailsJson)
+                    .mediaContainer
+                    .metadata!!
+                    .single()
+            val movie = PlexMapper.mapMediaItemDetails(movieDto)
+            movie.ratingKey shouldBe "12345"
+            movie.mediaType shouldBe MediaType.MOVIE
+            movie.title shouldBe "Spirited Away"
+            movie.originallyAvailableAt shouldBe "2001-07-20"
+            movie.studio shouldBe "Studio Ghibli"
+            movie.contentRating shouldBe "PG"
+            movie.genres shouldBe listOf("Animation", "Fantasy")
+            movie.directors shouldBe listOf("Hayao Miyazaki")
+            movie.librarySectionId shouldBe "1"
+            movie.librarySectionTitle shouldBe "Movies"
+            movie.technical?.videoResolution shouldBe "1080"
+            movie.technical?.videoCodec shouldBe "h264"
+            movie.technical?.videoProfile shouldBe "high"
+            movie.technical?.audioCodec shouldBe "dts"
+            movie.technical?.audioChannels shouldBe 6
+            movie.technical?.container shouldBe "mkv"
+            movie.technical?.bitrateKbps shouldBe 14000
+            movie.technical?.fileSizeBytes shouldBe 11_718_750_000L
+            movie.technical?.subtitleLanguages shouldBe listOf("English", "Japanese")
+            movie.series.shouldBeNull()
+            movie.season.shouldBeNull()
+
+            val episodeDto =
+                MiruJson
+                    .decodeFromString<PlexLibraryItemsResponse>(PlexFixtures.episodeMetadataDetailsJson)
+                    .mediaContainer
+                    .metadata!!
+                    .single()
+            val seasonDto =
+                MiruJson
+                    .decodeFromString<PlexLibraryItemsResponse>(PlexFixtures.seasonMetadataDetailsJson)
+                    .mediaContainer
+                    .metadata!!
+                    .single()
+            val showDto =
+                MiruJson
+                    .decodeFromString<PlexLibraryItemsResponse>(PlexFixtures.showMetadataDetailsJson)
+                    .mediaContainer
+                    .metadata!!
+                    .single()
+
+            val episode = PlexMapper.mapMediaItemDetails(episodeDto, parentSeason = seasonDto, grandparentSeries = showDto)
+            episode.mediaType shouldBe MediaType.EPISODE
+            episode.series?.ratingKey shouldBe "54000"
+            episode.series?.title shouldBe "Breaking Bad"
+            episode.series?.studio shouldBe "AMC"
+            episode.series?.seasonCount shouldBe 5
+            episode.series?.episodeCount shouldBe 62
+            episode.series?.genres shouldBe listOf("Crime", "Drama")
+            episode.series?.hasThumb shouldBe true
+            episode.season?.ratingKey shouldBe "54300"
+            episode.season?.title shouldBe "Season 5"
+            episode.season?.seasonIndex shouldBe 5
+            episode.season?.episodeCount shouldBe 16
+            episode.season?.currentEpisodeIndex shouldBe 14
+            episode.season?.hasThumb shouldBe true
+            episode.technical?.videoProfile shouldBe "main 10"
+            episode.technical?.subtitleLanguages shouldBe listOf("eng")
+
+            val season = PlexMapper.mapMediaItemDetails(seasonDto, grandparentSeries = showDto)
+            season.mediaType shouldBe MediaType.SEASON
+            season.series?.title shouldBe "Breaking Bad"
+            season.season?.seasonIndex shouldBe 5
+            season.season?.currentEpisodeIndex.shouldBeNull()
+
+            val show = PlexMapper.mapMediaItemDetails(showDto)
+            show.mediaType shouldBe MediaType.SHOW
+            show.series?.seasonCount shouldBe 5
+            show.series?.episodeCount shouldBe 62
+            show.season.shouldBeNull()
+            show.technical.shouldBeNull()
+        }
     })

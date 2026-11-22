@@ -133,6 +133,12 @@ data class PlexLibraryItemsContainer(
 )
 
 @Serializable
+data class PlexTagDto(
+    val id: FlexibleString? = null,
+    val tag: String? = null,
+)
+
+@Serializable
 class PlexMetadataDto {
     var ratingKey: FlexibleString? = null
     var sessionKey: FlexibleString? = null
@@ -140,20 +146,37 @@ class PlexMetadataDto {
     var title: String? = null
     var parentTitle: String? = null
     var grandparentTitle: String? = null
+    var parentRatingKey: FlexibleString? = null
+    var grandparentRatingKey: FlexibleString? = null
     var parentIndex: Int? = null
     var index: Int? = null
     var year: Int? = null
+    var originallyAvailableAt: String? = null
     var duration: Long? = null
     var viewOffset: Long? = null
+    var contentRating: String? = null
+    var studio: String? = null
+    var summary: String? = null
     var thumb: String? = null
+    var parentThumb: String? = null
     var grandparentThumb: String? = null
     var art: String? = null
     var librarySectionID: FlexibleString? = null
+    var librarySectionTitle: String? = null
     var addedAt: Long? = null
+    var childCount: Int? = null
+    var leafCount: Int? = null
+    var viewedLeafCount: Int? = null
     var live: FlexibleBoolean? = null
     var channelIdentifier: String? = null
     var channelCallSign: String? = null
     var channelTitle: String? = null
+
+    @SerialName("Genre")
+    var genre: List<PlexTagDto>? = null
+
+    @SerialName("Director")
+    var director: List<PlexTagDto>? = null
 
     @SerialName("Media")
     var media: List<PlexMediaDto>? = null
@@ -179,9 +202,11 @@ data class PlexMediaDto(
     val width: Int? = null,
     val height: Int? = null,
     val videoResolution: String? = null,
+    val videoProfile: String? = null,
     val container: String? = null,
     val videoCodec: String? = null,
     val audioCodec: String? = null,
+    val audioChannels: Int? = null,
     val selected: FlexibleBoolean? = null,
     @SerialName("Part")
     val part: List<PlexPartDto>? = null,
@@ -205,12 +230,17 @@ data class PlexStreamDto(
     val id: FlexibleString? = null,
     val streamType: Int? = null,
     val codec: String? = null,
+    val profile: String? = null,
     val decision: String? = null,
     val selected: FlexibleBoolean? = null,
     val width: Int? = null,
     val height: Int? = null,
     val bitrate: Int? = null,
     val channels: Int? = null,
+    val language: String? = null,
+    val languageCode: String? = null,
+    val languageTag: String? = null,
+    val title: String? = null,
     val displayTitle: String? = null,
 )
 

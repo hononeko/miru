@@ -8,10 +8,12 @@ import app.hononeko.miru.persistence.model.HistoryFilter
 import app.hononeko.miru.persistence.model.HistoryPage
 import app.hononeko.miru.persistence.model.HistorySortDirection
 import app.hononeko.miru.persistence.model.HistorySortField
+import app.hononeko.miru.persistence.model.MediaPlaySummary
 import app.hononeko.miru.persistence.model.PlaybackHistoryRecord
 import app.hononeko.miru.persistence.model.PlaybackHistoryStatsRow
 import app.hononeko.miru.persistence.model.UserPlaybackSummary
 import app.hononeko.miru.persistence.table.PlaybackHistoryTable
+import app.hononeko.miru.persistence.table.UsersTable
 import arrow.core.Either
 import org.jetbrains.exposed.v1.core.Expression
 import org.jetbrains.exposed.v1.core.LikePattern
@@ -36,8 +38,10 @@ import org.jetbrains.exposed.v1.jdbc.insertIgnore
 import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.update
+import kotlin.math.roundToLong
 
 private const val IMPORT_KEY_QUERY_CHUNK_SIZE = 500
+private const val COMPLETION_ROUNDING_SCALE = 100.0
 
 interface PlaybackHistoryRepository {
     suspend fun insert(record: PlaybackHistoryRecord): Either<MiruError.PersistenceError, PlaybackHistoryRecord>
@@ -65,6 +69,16 @@ interface PlaybackHistoryRepository {
     suspend fun summarizeByUser(
         userIds: Set<String>? = null,
     ): Either<MiruError.PersistenceError, Map<String, UserPlaybackSummary>>
+
+    suspend fun summarizeByRatingKey(
+        ratingKey: String,
+        allowedUserIds: Set<String>? = null,
+    ): Either<MiruError.PersistenceError, MediaPlaySummary>
+
+    suspend fun summarizeSeriesByTitle(
+        seriesTitle: String,
+        allowedUserIds: Set<String>? = null,
+    ): Either<MiruError.PersistenceError, MediaPlaySummary>
 
     suspend fun listRecentByUser(
         userId: String,
@@ -322,6 +336,119 @@ class ExposedPlaybackHistoryRepository(
                     )
             }
             summaries
+        }
+    }
+
+    override suspend fun summarizeByRatingKey(
+        ratingKey: String,
+        allowedUserIds: Set<String>?,
+    ): Either<MiruError.PersistenceError, MediaPlaySummary> {
+        if (ratingKey.isBlank()) {
+            return Either.Right(MediaPlaySummary.EMPTY)
+        }
+        return summarizeMatching(
+            operation = "playback_history_summarize_by_rating_key",
+            allowedUserIds = allowedUserIds,
+        ) {
+            PlaybackHistoryTable.ratingKey eq ratingKey
+        }
+    }
+
+    override suspend fun summarizeSeriesByTitle(
+        seriesTitle: String,
+        allowedUserIds: Set<String>?,
+    ): Either<MiruError.PersistenceError, MediaPlaySummary> {
+        val trimmed = seriesTitle.trim()
+        if (trimmed.isEmpty()) {
+            return Either.Right(MediaPlaySummary.EMPTY)
+        }
+        return summarizeMatching(
+            operation = "playback_history_summarize_series_by_title",
+            allowedUserIds = allowedUserIds,
+        ) {
+            (PlaybackHistoryTable.mediaType eq "episode") and
+                (PlaybackHistoryTable.grandparentTitle.lowerCase() eq trimmed.lowercase())
+        }
+    }
+
+    private suspend fun summarizeMatching(
+        operation: String,
+        allowedUserIds: Set<String>?,
+        predicate: () -> Op<Boolean>,
+    ): Either<MiruError.PersistenceError, MediaPlaySummary> {
+        if (allowedUserIds != null && allowedUserIds.isEmpty()) {
+            return Either.Right(MediaPlaySummary.EMPTY)
+        }
+        return database.exposedQuery(operation) {
+            val baseCondition = predicate()
+            val condition =
+                if (allowedUserIds != null) {
+                    baseCondition and (PlaybackHistoryTable.userId inList allowedUserIds)
+                } else {
+                    baseCondition
+                }
+
+            val rows =
+                PlaybackHistoryTable
+                    .select(
+                        PlaybackHistoryTable.userId,
+                        PlaybackHistoryTable.watchedDurationSec,
+                        PlaybackHistoryTable.completionPercent,
+                        PlaybackHistoryTable.streamDecision,
+                        PlaybackHistoryTable.stoppedAtMs,
+                    ).where { condition }
+                    .orderBy(PlaybackHistoryTable.stoppedAtMs to SortOrder.DESC, PlaybackHistoryTable.id to SortOrder.ASC)
+                    .toList()
+
+            if (rows.isEmpty()) {
+                return@exposedQuery MediaPlaySummary.EMPTY
+            }
+
+            val uniqueUsers = hashSetOf<String>()
+            var totalWatchDurationSec = 0L
+            var completionSum = 0.0
+            var directPlayCount = 0L
+            var directStreamCount = 0L
+            var transcodeCount = 0L
+
+            for (row in rows) {
+                uniqueUsers += row[PlaybackHistoryTable.userId]
+                totalWatchDurationSec += row[PlaybackHistoryTable.watchedDurationSec].toLong()
+                completionSum += row[PlaybackHistoryTable.completionPercent]
+                when (row[PlaybackHistoryTable.streamDecision].lowercase()) {
+                    "direct_play" -> directPlayCount++
+                    "direct_stream" -> directStreamCount++
+                    "transcode" -> transcodeCount++
+                }
+            }
+
+            val latest = rows.first()
+            val lastUserId = latest[PlaybackHistoryTable.userId]
+            val lastWatchedAtMs = latest[PlaybackHistoryTable.stoppedAtMs]
+            val lastWatchedUsername =
+                UsersTable
+                    .select(UsersTable.displayName, UsersTable.username)
+                    .where { UsersTable.id eq lastUserId }
+                    .singleOrNull()
+                    ?.let { userRow ->
+                        userRow[UsersTable.displayName]?.takeIf { it.isNotBlank() } ?: userRow[UsersTable.username]
+                    }
+
+            val avgCompletionPercent =
+                ((completionSum / rows.size) * COMPLETION_ROUNDING_SCALE).roundToLong() / COMPLETION_ROUNDING_SCALE
+
+            MediaPlaySummary(
+                totalPlays = rows.size.toLong(),
+                uniqueUsers = uniqueUsers.size,
+                lastWatchedAtMs = lastWatchedAtMs,
+                lastWatchedUserId = lastUserId,
+                lastWatchedUsername = lastWatchedUsername,
+                avgCompletionPercent = avgCompletionPercent,
+                directPlayCount = directPlayCount,
+                directStreamCount = directStreamCount,
+                transcodeCount = transcodeCount,
+                totalWatchDurationSec = totalWatchDurationSec,
+            )
         }
     }
 

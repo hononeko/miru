@@ -2,6 +2,7 @@
 	import type { ActiveStreamDto } from '$api/types';
 	import Badge from '$components/ui/Badge.svelte';
 	import ProxiedImage from './ProxiedImage.svelte';
+	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
 	import {
 		cn,
 		formatBandwidthKbps,
@@ -63,20 +64,33 @@
 	)}
 >
 	<div class="flex items-start gap-3.5">
-		<ProxiedImage
-			src={stream.media.thumbUrl}
-			alt={titles.primary}
-			fallbackLabel={titles.primary}
-			variant="poster"
-			class="h-24 w-16 sm:h-[104px] sm:w-[70px]"
-		/>
+		<button
+			type="button"
+			onclick={() => void mediaDetailsModal.open(stream.media.ratingKey)}
+			aria-label={`View media details for ${titles.primary}`}
+			class="shrink-0 cursor-pointer rounded-lg transition-transform hover:scale-[1.02] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan"
+		>
+			<ProxiedImage
+				src={stream.media.thumbUrl}
+				alt={titles.primary}
+				fallbackLabel={titles.primary}
+				variant="poster"
+				class="h-24 w-16 sm:h-[104px] sm:w-[70px]"
+			/>
+		</button>
 
 		<div class="flex min-w-0 flex-1 flex-col gap-2">
 			<div class="flex items-start justify-between gap-2">
 				<div class="min-w-0">
-					<h3 class="truncate font-heading text-sm font-semibold text-fg-primary sm:text-[15px]">
-						{titles.primary}
-					</h3>
+					<button
+						type="button"
+						onclick={() => void mediaDetailsModal.open(stream.media.ratingKey)}
+						class="block max-w-full cursor-pointer text-left hover:underline"
+					>
+						<h3 class="truncate font-heading text-sm font-semibold text-fg-primary sm:text-[15px]">
+							{titles.primary}
+						</h3>
+					</button>
 					<p class="truncate text-xs text-fg-secondary">{titles.secondary}</p>
 				</div>
 				{#if isPaused}

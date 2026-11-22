@@ -22,6 +22,7 @@ import app.hononeko.miru.http.authRoutes
 import app.hononeko.miru.http.healthRoutes
 import app.hononeko.miru.http.historyStatsRoutes
 import app.hononeko.miru.http.libraryRoutes
+import app.hononeko.miru.http.mediaDetailsRoutes
 import app.hononeko.miru.http.openApiRoutes
 import app.hononeko.miru.http.plexOAuthRoutes
 import app.hononeko.miru.http.respondError
@@ -45,6 +46,7 @@ import app.hononeko.miru.persistence.repository.ExposedUserRepository
 import app.hononeko.miru.service.HistoryAndStatsService
 import app.hononeko.miru.service.LibraryQueryService
 import app.hononeko.miru.service.LibrarySyncTrigger
+import app.hononeko.miru.service.MediaDetailsService
 import app.hononeko.miru.service.PlexUserSyncService
 import app.hononeko.miru.service.StreamsAndUsersService
 import app.hononeko.miru.session.SessionEvent
@@ -192,6 +194,7 @@ private fun runServer() {
                 historyAndStatsService = historyAndStatsService,
                 libraryQueryService = libraryQueryService,
                 librarySyncTrigger = syncServices.libraryStatsCollector,
+                mediaDetailsService = MediaDetailsService(plexRuntimeManager.adapter, playbackHistoryRepository),
                 tautulliImporterService = tautulliImporterService,
                 plexOAuthService = plexOAuthService,
             )
@@ -408,6 +411,7 @@ fun Application.miruModule(
     historyAndStatsService: HistoryAndStatsService? = null,
     libraryQueryService: LibraryQueryService? = null,
     librarySyncTrigger: LibrarySyncTrigger? = null,
+    mediaDetailsService: MediaDetailsService? = null,
     tautulliImporterService: TautulliImporterService? = null,
     plexOAuthService: PlexOAuthService? = null,
 ) {
@@ -460,6 +464,13 @@ fun Application.miruModule(
             if (artworkProxyService != null) {
                 artworkRoutes(
                     artworkProxyService = artworkProxyService,
+                    authService = authService,
+                    authMode = config.auth.mode,
+                )
+            }
+            if (mediaDetailsService != null) {
+                mediaDetailsRoutes(
+                    mediaDetailsService = mediaDetailsService,
                     authService = authService,
                     authMode = config.auth.mode,
                 )

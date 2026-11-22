@@ -22,6 +22,8 @@ tags:
     description: Administrator-only account, media user linking, and API key management
   - name: Artwork
     description: Proxied media server artwork and SSRF-protected user avatar endpoints
+  - name: Media
+    description: Rich media item metadata, series/season context, technical specs, and Miru play summaries
   - name: Streams
     description: Live playback sessions and real-time Server-Sent Events (SSE) stream updates
   - name: Users
@@ -944,6 +946,54 @@ paths:
                 $ref: '#/components/schemas/ProblemDetails'
         '502':
           description: Upstream Plex.tv error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/media/{ratingKey}:
+    get:
+      tags: [Media]
+      operationId: getMediaDetails
+      summary: Retrieve rich media details, series/season context, technical specs, and Miru play summary
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: ratingKey
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9_-]+$'
+      responses:
+        '200':
+          description: Media item details with optional series/season context and RBAC-scoped play summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaDetailsResponse'
+        '400':
+          description: Invalid ratingKey
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Media item not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '502':
+          description: Upstream media server error
           content:
             application/problem+json:
               schema:
@@ -3418,3 +3468,236 @@ components:
           type: string
         credentialSource:
           $ref: '#/components/schemas/PlexCredentialSource'
+
+    MediaTechnicalSpecsDto:
+      type: object
+      required: [subtitleLanguages]
+      properties:
+        videoResolution:
+          type: string
+          nullable: true
+        videoCodec:
+          type: string
+          nullable: true
+        videoProfile:
+          type: string
+          nullable: true
+        audioCodec:
+          type: string
+          nullable: true
+        audioChannels:
+          type: integer
+          nullable: true
+        container:
+          type: string
+          nullable: true
+        bitrateKbps:
+          type: integer
+          nullable: true
+        fileSizeBytes:
+          type: integer
+          format: int64
+          nullable: true
+        subtitleLanguages:
+          type: array
+          items:
+            type: string
+
+    SeriesOverviewDto:
+      type: object
+      required: [ratingKey, title, genres]
+      properties:
+        ratingKey:
+          type: string
+        title:
+          type: string
+        year:
+          type: integer
+          nullable: true
+        studio:
+          type: string
+          nullable: true
+        contentRating:
+          type: string
+          nullable: true
+        summary:
+          type: string
+          nullable: true
+        genres:
+          type: array
+          items:
+            type: string
+        seasonCount:
+          type: integer
+          nullable: true
+        episodeCount:
+          type: integer
+          nullable: true
+        thumbUrl:
+          type: string
+          nullable: true
+
+    SeasonDetailsDto:
+      type: object
+      required: [ratingKey, title]
+      properties:
+        ratingKey:
+          type: string
+        title:
+          type: string
+        seasonIndex:
+          type: integer
+          nullable: true
+        year:
+          type: integer
+          nullable: true
+        summary:
+          type: string
+          nullable: true
+        episodeCount:
+          type: integer
+          nullable: true
+        currentEpisodeIndex:
+          type: integer
+          nullable: true
+        thumbUrl:
+          type: string
+          nullable: true
+
+    MediaPlaySummaryDto:
+      type: object
+      required:
+        - totalPlays
+        - uniqueUsers
+        - directPlayCount
+        - directStreamCount
+        - transcodeCount
+        - totalWatchDurationSec
+      properties:
+        totalPlays:
+          type: integer
+          format: int64
+        uniqueUsers:
+          type: integer
+        lastWatchedAtMs:
+          type: integer
+          format: int64
+          nullable: true
+        lastWatchedUsername:
+          type: string
+          nullable: true
+        avgCompletionPercent:
+          type: number
+          format: double
+          nullable: true
+        directPlayCount:
+          type: integer
+          format: int64
+        directStreamCount:
+          type: integer
+          format: int64
+        transcodeCount:
+          type: integer
+          format: int64
+        totalWatchDurationSec:
+          type: integer
+          format: int64
+
+    MediaDetailsResponse:
+      type: object
+      required: [ratingKey, mediaType, title, genres, directors, playSummary]
+      properties:
+        ratingKey:
+          type: string
+        mediaType:
+          type: string
+        title:
+          type: string
+        year:
+          type: integer
+          nullable: true
+        originallyAvailableAt:
+          type: string
+          nullable: true
+        durationMs:
+          type: integer
+          format: int64
+          nullable: true
+        contentRating:
+          type: string
+          nullable: true
+        studio:
+          type: string
+          nullable: true
+        summary:
+          type: string
+          nullable: true
+        genres:
+          type: array
+          items:
+            type: string
+        directors:
+          type: array
+          items:
+            type: string
+        librarySectionId:
+          type: string
+          nullable: true
+        librarySectionTitle:
+          type: string
+          nullable: true
+        addedAtMs:
+          type: integer
+          format: int64
+          nullable: true
+        parentRatingKey:
+          type: string
+          nullable: true
+        grandparentRatingKey:
+          type: string
+          nullable: true
+        parentTitle:
+          type: string
+          nullable: true
+        grandparentTitle:
+          type: string
+          nullable: true
+        parentIndex:
+          type: integer
+          nullable: true
+        index:
+          type: integer
+          nullable: true
+        childCount:
+          type: integer
+          nullable: true
+        leafCount:
+          type: integer
+          nullable: true
+        viewedLeafCount:
+          type: integer
+          nullable: true
+        thumbUrl:
+          type: string
+          nullable: true
+        artUrl:
+          type: string
+          nullable: true
+        technical:
+          oneOf:
+            - $ref: '#/components/schemas/MediaTechnicalSpecsDto'
+            - type: 'null'
+        series:
+          oneOf:
+            - $ref: '#/components/schemas/SeriesOverviewDto'
+            - type: 'null'
+        season:
+          oneOf:
+            - $ref: '#/components/schemas/SeasonDetailsDto'
+            - type: 'null'
+        playSummary:
+          $ref: '#/components/schemas/MediaPlaySummaryDto'
+        seriesPlaySummary:
+          oneOf:
+            - $ref: '#/components/schemas/MediaPlaySummaryDto'
+            - type: 'null'

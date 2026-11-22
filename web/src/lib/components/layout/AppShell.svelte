@@ -16,6 +16,7 @@
 	import Badge from '$components/ui/Badge.svelte';
 	import ProxiedImage from '$components/miru/ProxiedImage.svelte';
 	import UserPreferencesModal from '$components/miru/UserPreferencesModal.svelte';
+	import MediaDetailsModal from '$components/miru/MediaDetailsModal.svelte';
 	import { authStore } from '$stores/auth.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
 	import { streamsStore } from '$stores/streams.svelte';
@@ -342,3 +343,4 @@
 </div>
 
 <UserPreferencesModal />
+<MediaDetailsModal />

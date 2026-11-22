@@ -5,9 +5,13 @@ import app.hononeko.miru.adapter.LibraryItemInfo
 import app.hononeko.miru.adapter.LibraryItemsPage
 import app.hononeko.miru.adapter.LibrarySectionInfo
 import app.hononeko.miru.adapter.LibrarySectionType
+import app.hononeko.miru.adapter.MediaItemDetails
+import app.hononeko.miru.adapter.MediaTechnicalSpecs
 import app.hononeko.miru.adapter.MediaType
 import app.hononeko.miru.adapter.MediaUser
 import app.hononeko.miru.adapter.PlaybackState
+import app.hononeko.miru.adapter.SeasonDetailsInfo
+import app.hononeko.miru.adapter.SeriesOverviewInfo
 import app.hononeko.miru.adapter.ServerIdentity
 import app.hononeko.miru.adapter.StreamDecision
 import app.hononeko.miru.adapter.StreamLocation
@@ -18,6 +22,7 @@ import app.hononeko.miru.adapter.StreamUser
 
 private const val STREAM_TYPE_VIDEO = 1
 private const val STREAM_TYPE_AUDIO = 2
+private const val STREAM_TYPE_SUBTITLE = 3
 private const val LOCAL_OWNER_ACCOUNT_ID = 1L
 private const val LOCAL_OWNER_USER_ID = "1"
 
@@ -183,7 +188,170 @@ object PlexMapper {
             addedAtEpochSeconds = metadata.addedAt,
         )
     }
+
+    fun mapMediaType(metadata: PlexMetadataDto): MediaType = mapPlexMediaType(metadata)
+
+    fun mapMediaItemDetails(
+        metadata: PlexMetadataDto,
+        parentSeason: PlexMetadataDto? = null,
+        grandparentSeries: PlexMetadataDto? = null,
+    ): MediaItemDetails {
+        val mediaType = mapPlexMediaType(metadata)
+        val primaryMedia = selectPrimaryMedia(metadata.media)
+        val primaryPart = selectPrimaryPart(primaryMedia?.part)
+
+        val series =
+            when (mediaType) {
+                MediaType.SHOW -> mapSeriesOverview(metadata)
+                MediaType.SEASON ->
+                    grandparentSeries?.let { mapSeriesOverview(it) }
+                        ?: metadata.parentTitle?.takeIf { it.isNotBlank() }?.let { title ->
+                            SeriesOverviewInfo(
+                                ratingKey = metadata.parentRatingKey?.takeIf { it.isNotBlank() }.orEmpty(),
+                                title = title,
+                                hasThumb = !metadata.parentThumb.isNullOrBlank(),
+                            )
+                        }
+                MediaType.EPISODE ->
+                    grandparentSeries?.let { mapSeriesOverview(it) }
+                        ?: metadata.grandparentTitle?.takeIf { it.isNotBlank() }?.let { title ->
+                            SeriesOverviewInfo(
+                                ratingKey = metadata.grandparentRatingKey?.takeIf { it.isNotBlank() }.orEmpty(),
+                                title = title,
+                                hasThumb = !metadata.grandparentThumb.isNullOrBlank(),
+                            )
+                        }
+                else -> null
+            }
+
+        val season =
+            when (mediaType) {
+                MediaType.SEASON -> mapSeasonDetails(metadata, currentEpisodeIndex = null)
+                MediaType.EPISODE ->
+                    parentSeason?.let { mapSeasonDetails(it, currentEpisodeIndex = metadata.index) }
+                        ?: fallbackSeasonDetails(metadata)
+                else -> null
+            }
+
+        return MediaItemDetails(
+            ratingKey = metadata.ratingKey.orEmpty(),
+            mediaType = mediaType,
+            title = metadata.title?.takeIf { it.isNotBlank() } ?: "Unknown",
+            year = metadata.year,
+            originallyAvailableAt = metadata.originallyAvailableAt?.takeIf { it.isNotBlank() },
+            durationMs = metadata.duration ?: primaryMedia?.duration ?: primaryPart?.duration,
+            contentRating = metadata.contentRating?.takeIf { it.isNotBlank() },
+            studio = metadata.studio?.takeIf { it.isNotBlank() },
+            summary = metadata.summary?.takeIf { it.isNotBlank() },
+            genres = extractTags(metadata.genre),
+            directors = extractTags(metadata.director),
+            librarySectionId = metadata.librarySectionID?.takeIf { it.isNotBlank() },
+            librarySectionTitle = metadata.librarySectionTitle?.takeIf { it.isNotBlank() },
+            addedAtEpochSeconds = metadata.addedAt,
+            parentRatingKey = metadata.parentRatingKey?.takeIf { it.isNotBlank() },
+            grandparentRatingKey = metadata.grandparentRatingKey?.takeIf { it.isNotBlank() },
+            parentTitle = metadata.parentTitle?.takeIf { it.isNotBlank() },
+            grandparentTitle = metadata.grandparentTitle?.takeIf { it.isNotBlank() },
+            parentIndex = metadata.parentIndex,
+            index = metadata.index,
+            childCount = metadata.childCount,
+            leafCount = metadata.leafCount,
+            viewedLeafCount = metadata.viewedLeafCount,
+            thumbPath = metadata.thumb?.takeIf { it.isNotBlank() },
+            artPath = metadata.art?.takeIf { it.isNotBlank() },
+            technical = mapTechnicalSpecs(primaryMedia, primaryPart),
+            series = series,
+            season = season,
+        )
+    }
 }
+
+private fun mapSeriesOverview(series: PlexMetadataDto): SeriesOverviewInfo =
+    SeriesOverviewInfo(
+        ratingKey = series.ratingKey.orEmpty(),
+        title = series.title?.takeIf { it.isNotBlank() } ?: "Unknown",
+        year = series.year,
+        studio = series.studio?.takeIf { it.isNotBlank() },
+        contentRating = series.contentRating?.takeIf { it.isNotBlank() },
+        summary = series.summary?.takeIf { it.isNotBlank() },
+        genres = extractTags(series.genre),
+        seasonCount = series.childCount,
+        episodeCount = series.leafCount,
+        hasThumb = !series.thumb.isNullOrBlank(),
+    )
+
+private fun mapSeasonDetails(
+    season: PlexMetadataDto,
+    currentEpisodeIndex: Int?,
+): SeasonDetailsInfo =
+    SeasonDetailsInfo(
+        ratingKey = season.ratingKey.orEmpty(),
+        title = season.title?.takeIf { it.isNotBlank() } ?: season.index?.let { "Season $it" } ?: "Season",
+        seasonIndex = season.index,
+        year = season.year,
+        summary = season.summary?.takeIf { it.isNotBlank() },
+        episodeCount = season.leafCount,
+        currentEpisodeIndex = currentEpisodeIndex,
+        hasThumb = !season.thumb.isNullOrBlank(),
+    )
+
+private fun fallbackSeasonDetails(episode: PlexMetadataDto): SeasonDetailsInfo? {
+    val fallbackTitle =
+        episode.parentTitle?.takeIf { it.isNotBlank() }
+            ?: episode.parentIndex?.let { "Season $it" }
+            ?: return null
+    return SeasonDetailsInfo(
+        ratingKey = episode.parentRatingKey?.takeIf { it.isNotBlank() }.orEmpty(),
+        title = fallbackTitle,
+        seasonIndex = episode.parentIndex,
+        currentEpisodeIndex = episode.index,
+        hasThumb = !episode.parentThumb.isNullOrBlank(),
+    )
+}
+
+private fun mapTechnicalSpecs(
+    primaryMedia: PlexMediaDto?,
+    primaryPart: PlexPartDto?,
+): MediaTechnicalSpecs? {
+    if (primaryMedia == null) return null
+    val streams = primaryPart?.stream.orEmpty()
+    val videoStream = selectPrimaryStream(streams, STREAM_TYPE_VIDEO)
+    val audioStream = selectPrimaryStream(streams, STREAM_TYPE_AUDIO)
+    val subtitleLanguages =
+        streams
+            .filter { it.streamType == STREAM_TYPE_SUBTITLE }
+            .mapNotNull { stream ->
+                stream.language?.takeIf { it.isNotBlank() }
+                    ?: stream.languageTag?.takeIf { it.isNotBlank() }
+                    ?: stream.languageCode?.takeIf { it.isNotBlank() }
+                    ?: stream.displayTitle?.takeIf { it.isNotBlank() }
+            }.distinct()
+    val fileSizeBytes =
+        primaryMedia.part
+            ?.mapNotNull { it.size }
+            ?.takeIf { it.isNotEmpty() }
+            ?.sum()
+
+    return MediaTechnicalSpecs(
+        videoResolution =
+            primaryMedia.videoResolution?.takeIf { it.isNotBlank() }
+                ?: videoStream?.height?.let { "${it}p" },
+        videoCodec = primaryMedia.videoCodec?.takeIf { it.isNotBlank() } ?: videoStream?.codec?.takeIf { it.isNotBlank() },
+        videoProfile = primaryMedia.videoProfile?.takeIf { it.isNotBlank() } ?: videoStream?.profile?.takeIf { it.isNotBlank() },
+        audioCodec = primaryMedia.audioCodec?.takeIf { it.isNotBlank() } ?: audioStream?.codec?.takeIf { it.isNotBlank() },
+        audioChannels = primaryMedia.audioChannels ?: audioStream?.channels,
+        container = primaryMedia.container?.takeIf { it.isNotBlank() } ?: primaryPart?.container?.takeIf { it.isNotBlank() },
+        bitrateKbps = primaryMedia.bitrate ?: videoStream?.bitrate,
+        fileSizeBytes = fileSizeBytes,
+        subtitleLanguages = subtitleLanguages,
+    )
+}
+
+private fun extractTags(tags: List<PlexTagDto>?): List<String> =
+    tags
+        .orEmpty()
+        .mapNotNull { it.tag?.trim()?.takeIf { tag -> tag.isNotEmpty() } }
+        .distinct()
 
 private fun mapStreamMedia(
     metadata: PlexMetadataDto,
@@ -386,7 +554,9 @@ private fun mergeFriendAccount(
     )
 }
 
-private fun mapMediaType(metadata: PlexMetadataDto): MediaType {
+private fun mapMediaType(metadata: PlexMetadataDto): MediaType = mapPlexMediaType(metadata)
+
+private fun mapPlexMediaType(metadata: PlexMetadataDto): MediaType {
     val isLive =
         metadata.live == true ||
             !metadata.channelIdentifier.isNullOrBlank() ||
@@ -397,6 +567,8 @@ private fun mapMediaType(metadata: PlexMetadataDto): MediaType {
     return when (metadata.type?.trim()?.lowercase()) {
         "movie" -> MediaType.MOVIE
         "episode" -> MediaType.EPISODE
+        "season" -> MediaType.SEASON
+        "show" -> MediaType.SHOW
         "track" -> MediaType.TRACK
         "clip" -> MediaType.CLIP
         "live", "channel" -> MediaType.LIVE_TV

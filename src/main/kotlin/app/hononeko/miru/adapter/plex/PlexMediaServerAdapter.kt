@@ -5,8 +5,10 @@ import app.hononeko.miru.adapter.ActiveStreamSnapshot
 import app.hononeko.miru.adapter.ArtworkData
 import app.hononeko.miru.adapter.LibraryItemsPage
 import app.hononeko.miru.adapter.LibrarySectionInfo
+import app.hononeko.miru.adapter.MediaItemDetails
 import app.hononeko.miru.adapter.MediaServerAdapter
 import app.hononeko.miru.adapter.MediaServerEvent
+import app.hononeko.miru.adapter.MediaType
 import app.hononeko.miru.adapter.MediaUser
 import app.hononeko.miru.adapter.ServerIdentity
 import app.hononeko.miru.config.PlexConfig
@@ -36,6 +38,8 @@ import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.sync.Mutex
@@ -222,6 +226,59 @@ class PlexMediaServerAdapter(
                 container = response.mediaContainer,
             )
         }
+
+    override suspend fun fetchMediaDetails(ratingKey: String): Either<MiruError, MediaItemDetails> =
+        either {
+            validateRatingKey(ratingKey).bind()
+
+            val response =
+                executeJsonGet<PlexLibraryItemsResponse>(
+                    url = "$baseUrl/library/metadata/$ratingKey",
+                    operation = "fetch media details",
+                    notFoundResource = "Media",
+                    notFoundId = ratingKey,
+                ).bind()
+
+            val primary =
+                response.mediaContainer.metadata?.firstOrNull()
+                    ?: raise(MiruError.NotFound(resource = "Media", id = ratingKey))
+
+            val mediaType = PlexMapper.mapMediaType(primary)
+            val (parentSeason, grandparentSeries) =
+                when (mediaType) {
+                    MediaType.EPISODE ->
+                        coroutineScope {
+                            val seasonDeferred = async { fetchOptionalMetadata(primary.parentRatingKey) }
+                            val seriesDeferred = async { fetchOptionalMetadata(primary.grandparentRatingKey) }
+                            seasonDeferred.await() to seriesDeferred.await()
+                        }
+
+                    MediaType.SEASON -> null to fetchOptionalMetadata(primary.parentRatingKey)
+                    else -> null to null
+                }
+
+            PlexMapper.mapMediaItemDetails(
+                metadata = primary,
+                parentSeason = parentSeason,
+                grandparentSeries = grandparentSeries,
+            )
+        }
+
+    private suspend fun fetchOptionalMetadata(ratingKey: String?): PlexMetadataDto? {
+        val key = ratingKey?.trim()?.takeIf { it.isNotEmpty() && SECTION_KEY_REGEX.matches(it) } ?: return null
+        return executeJsonGet<PlexLibraryItemsResponse>(
+            url = "$baseUrl/library/metadata/$key",
+            operation = "fetch parent media metadata",
+            notFoundResource = "Media",
+            notFoundId = key,
+        ).fold(
+            ifLeft = { error ->
+                logger.debug("Optional parent metadata lookup for '{}' failed: {}", key, sanitizeMessage(error.message))
+                null
+            },
+            ifRight = { it.mediaContainer.metadata?.firstOrNull() },
+        )
+    }
 
     override suspend fun fetchArtwork(
         path: String,
@@ -473,6 +530,17 @@ class PlexMediaServerAdapter(
                 .ValidationError(
                     message = "Invalid library section key",
                     fieldErrors = mapOf("sectionKey" to "must be a non-empty alphanumeric section key"),
+                ).left()
+        }
+
+    private fun validateRatingKey(ratingKey: String): Either<MiruError.ValidationError, Unit> =
+        if (ratingKey.isNotBlank() && SECTION_KEY_REGEX.matches(ratingKey)) {
+            Unit.right()
+        } else {
+            MiruError
+                .ValidationError(
+                    message = "Invalid media ratingKey",
+                    fieldErrors = mapOf("ratingKey" to "must match ^[A-Za-z0-9_-]+$"),
                 ).left()
         }
 

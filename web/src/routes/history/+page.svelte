@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { page } from '$app/state';
 	import { Search, ChevronLeft, ChevronRight, X } from 'lucide-svelte';
 	import { api, MiruApiError, unwrap } from '$api/client';
 	import type { HistoryDetailResponse, HistoryItemDto, UserSummaryDto } from '$api/types';
@@ -8,6 +9,7 @@
 	import Sheet from '$components/ui/Sheet.svelte';
 	import PlayDetailContent from '$components/miru/PlayDetailContent.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
+	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
 	import {
 		cn,
 		formatDurationSec,
@@ -126,6 +128,19 @@
 
 	onMount(() => {
 		void loadUsers();
+	});
+
+	let lastUrlQ = $state<string | null>(null);
+	$effect(() => {
+		const paramQ = page.url.searchParams.get('q')?.trim() ?? '';
+		if (paramQ !== lastUrlQ) {
+			lastUrlQ = paramQ;
+			if (paramQ) {
+				searchInput = paramQ;
+				q = paramQ;
+				pageNum = 1;
+			}
+		}
 	});
 
 	$effect(() => {
@@ -301,9 +316,18 @@
 									{item.username || item.userId}
 								</td>
 								<td class="max-w-[300px] px-4 py-3">
-									<p class="truncate font-heading text-xs font-semibold text-fg-primary">
-										{titles.primary}
-									</p>
+									<button
+										type="button"
+										onclick={(e) => {
+											e.stopPropagation();
+											void mediaDetailsModal.open(item.ratingKey);
+										}}
+										class="block max-w-full cursor-pointer text-left hover:text-cyan-hi hover:underline"
+									>
+										<p class="truncate font-heading text-xs font-semibold text-fg-primary hover:text-cyan-hi">
+											{titles.primary}
+										</p>
+									</button>
 									<p class="truncate text-[11px] text-fg-muted">{titles.secondary}</p>
 								</td>
 								<td class="whitespace-nowrap px-4 py-3 text-fg-secondary">
@@ -346,21 +370,25 @@
 				{@const titles = formatMediaTitle(item)}
 				{@const dec = getDecisionMeta(item.streamDecision, item.hwTranscode)}
 				{@const selected = selectedId === item.id && detailOpen}
-				<button
-					type="button"
-					onclick={() => openDetail(item.id)}
+				<div
 					class={cn(
-						'flex w-full flex-col gap-2 rounded-xl border p-3 text-left transition-colors cursor-pointer',
+						'flex w-full flex-col gap-2 rounded-xl border p-3 text-left transition-colors',
 						selected
 							? 'border-primary bg-primary-soft/60'
-							: 'border-border bg-surface active:bg-elevated'
+							: 'border-border bg-surface'
 					)}
 				>
 					<div class="flex items-start justify-between gap-2">
 						<div class="min-w-0">
-							<p class="truncate font-heading text-sm font-semibold text-fg-primary">
-								{titles.primary}
-							</p>
+							<button
+								type="button"
+								onclick={() => void mediaDetailsModal.open(item.ratingKey)}
+								class="block max-w-full cursor-pointer text-left hover:text-cyan-hi hover:underline"
+							>
+								<p class="truncate font-heading text-sm font-semibold text-fg-primary">
+									{titles.primary}
+								</p>
+							</button>
 							<p class="truncate text-[11px] text-fg-secondary">
 								{titles.secondary} · {item.username || item.userId}
 							</p>
@@ -376,11 +404,20 @@
 					</div>
 					<div class="flex items-center justify-between gap-2">
 						<Badge tone={dec.tone} dot>{dec.label}</Badge>
-						<span class="font-mono text-[10px] text-fg-muted tabular-nums">
-							{formatDurationSec(item.watchedDurationSec)} · {formatShortDateTime(item.stoppedAtMs, preferencesStore.prefs)}
-						</span>
+						<div class="flex items-center gap-2.5">
+							<span class="font-mono text-[10px] text-fg-muted tabular-nums">
+								{formatDurationSec(item.watchedDurationSec)} · {formatShortDateTime(item.stoppedAtMs, preferencesStore.prefs)}
+							</span>
+							<button
+								type="button"
+								onclick={() => openDetail(item.id)}
+								class="cursor-pointer font-mono text-[10px] font-semibold text-cyan-hi hover:underline"
+							>
+								Details
+							</button>
+						</div>
 					</div>
-				</button>
+				</div>
 			{/each}
 		{/if}
 	</div>

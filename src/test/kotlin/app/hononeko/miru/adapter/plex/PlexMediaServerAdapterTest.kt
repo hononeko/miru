@@ -13,6 +13,8 @@ import io.kotest.assertions.arrow.core.shouldBeRight
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.collections.shouldHaveSize
+import io.kotest.matchers.nulls.shouldBeNull
+import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldNotContain
 import io.kotest.matchers.types.shouldBeInstanceOf
@@ -428,5 +430,94 @@ class PlexMediaServerAdapterTest :
                     httpClient = strictClient,
                 )
             strictAdapter.checkHealth().shouldBeLeft().shouldBeInstanceOf<MiruError.UpstreamAuthError>()
+        }
+
+        test("fetchMediaDetails parses movie, show, season, and episode with concurrent parent lookups") {
+            val (adapter, requests) =
+                adapterWithMock { request ->
+                    when (request.url.encodedPath) {
+                        "/library/metadata/12345" -> respondJson(PlexFixtures.movieMetadataDetailsJson)
+                        "/library/metadata/54321" -> respondJson(PlexFixtures.episodeMetadataDetailsJson)
+                        "/library/metadata/54300" -> respondJson(PlexFixtures.seasonMetadataDetailsJson)
+                        "/library/metadata/54000" -> respondJson(PlexFixtures.showMetadataDetailsJson)
+                        else -> respond("not found", HttpStatusCode.NotFound)
+                    }
+                }
+
+            val movie = adapter.fetchMediaDetails("12345").shouldBeRight()
+            movie.mediaType shouldBe MediaType.MOVIE
+            movie.title shouldBe "Spirited Away"
+            movie.studio shouldBe "Studio Ghibli"
+            movie.technical.shouldNotBeNull().subtitleLanguages shouldBe listOf("English", "Japanese")
+            movie.series.shouldBeNull()
+
+            val episode = adapter.fetchMediaDetails("54321").shouldBeRight()
+            episode.mediaType shouldBe MediaType.EPISODE
+            val epSeries = episode.series.shouldNotBeNull()
+            epSeries.title shouldBe "Breaking Bad"
+            epSeries.seasonCount shouldBe 5
+            epSeries.episodeCount shouldBe 62
+            val epSeason = episode.season.shouldNotBeNull()
+            epSeason.title shouldBe "Season 5"
+            epSeason.episodeCount shouldBe 16
+            epSeason.currentEpisodeIndex shouldBe 14
+
+            val season = adapter.fetchMediaDetails("54300").shouldBeRight()
+            season.mediaType shouldBe MediaType.SEASON
+            season.series.shouldNotBeNull().title shouldBe "Breaking Bad"
+            season.season.shouldNotBeNull().seasonIndex shouldBe 5
+
+            val show = adapter.fetchMediaDetails("54000").shouldBeRight()
+            show.mediaType shouldBe MediaType.SHOW
+            show.series.shouldNotBeNull().seasonCount shouldBe 5
+            show.season.shouldBeNull()
+
+            val paths = requests.map { it.url.encodedPath }
+            paths shouldHaveSize 7
+        }
+
+        test("fetchMediaDetails gracefully falls back when parent season or series lookup fails or 404s") {
+            val (partialAdapter, _) =
+                adapterWithMock { request ->
+                    when (request.url.encodedPath) {
+                        "/library/metadata/54321" -> respondJson(PlexFixtures.episodeMetadataDetailsJson)
+                        "/library/metadata/54300" -> respond("missing season", HttpStatusCode.NotFound)
+                        "/library/metadata/54000" -> respond("server error", HttpStatusCode.InternalServerError)
+                        else -> respond("missing", HttpStatusCode.NotFound)
+                    }
+                }
+
+            val episode = partialAdapter.fetchMediaDetails("54321").shouldBeRight()
+            episode.title shouldBe "Ozymandias"
+            val fallbackSeries = episode.series.shouldNotBeNull()
+            fallbackSeries.ratingKey shouldBe "54000"
+            fallbackSeries.title shouldBe "Breaking Bad"
+            fallbackSeries.summary.shouldBeNull()
+            val fallbackSeason = episode.season.shouldNotBeNull()
+            fallbackSeason.ratingKey shouldBe "54300"
+            fallbackSeason.title shouldBe "Season 5"
+            fallbackSeason.currentEpisodeIndex shouldBe 14
+            fallbackSeason.episodeCount.shouldBeNull()
+        }
+
+        test("fetchMediaDetails maps 404, empty metadata, and invalid ratingKey without leaking token") {
+            val (missingAdapter, _) =
+                adapterWithMock { request ->
+                    when (request.url.encodedPath) {
+                        "/library/metadata/empty" -> respondJson(PlexFixtures.emptyMetadataDetailsJson)
+                        else -> respond("not found", HttpStatusCode.NotFound)
+                    }
+                }
+
+            val notFound = missingAdapter.fetchMediaDetails("missing-999").shouldBeLeft().shouldBeInstanceOf<MiruError.NotFound>()
+            notFound.resource shouldBe "Media"
+            notFound.id shouldBe "missing-999"
+
+            val emptyErr = missingAdapter.fetchMediaDetails("empty").shouldBeLeft().shouldBeInstanceOf<MiruError.NotFound>()
+            emptyErr.resource shouldBe "Media"
+            emptyErr.id shouldBe "empty"
+
+            val invalidErr = missingAdapter.fetchMediaDetails("../bad").shouldBeLeft().shouldBeInstanceOf<MiruError.ValidationError>()
+            invalidErr.message shouldNotContain TEST_TOKEN
         }
     })

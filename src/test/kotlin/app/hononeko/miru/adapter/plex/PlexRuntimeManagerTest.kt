@@ -4,8 +4,10 @@ import app.hononeko.miru.adapter.ActiveStreamSnapshot
 import app.hononeko.miru.adapter.ArtworkData
 import app.hononeko.miru.adapter.LibraryItemsPage
 import app.hononeko.miru.adapter.LibrarySectionInfo
+import app.hononeko.miru.adapter.MediaItemDetails
 import app.hononeko.miru.adapter.MediaServerAdapter
 import app.hononeko.miru.adapter.MediaServerEvent
+import app.hononeko.miru.adapter.MediaType
 import app.hononeko.miru.adapter.MediaUser
 import app.hononeko.miru.adapter.PlaybackState
 import app.hononeko.miru.adapter.ServerIdentity
@@ -68,6 +70,9 @@ private class DelegatingTestStubAdapter(
         size: Int,
         mediaTypeCode: Int?,
     ): Either<MiruError, LibraryItemsPage> = LibraryItemsPage(totalSize = 0, offset = start, items = emptyList()).right()
+
+    override suspend fun fetchMediaDetails(ratingKey: String): Either<MiruError, MediaItemDetails> =
+        MediaItemDetails(ratingKey = ratingKey, mediaType = MediaType.MOVIE, title = "Stub Movie").right()
 
     override suspend fun fetchArtwork(
         path: String,

@@ -63,6 +63,12 @@ export type PlexDiscoveredServersResponse = Schemas['PlexDiscoveredServersRespon
 export type PlexSelectServerRequest = Schemas['PlexSelectServerRequest'];
 export type PlexSelectServerResponse = Schemas['PlexSelectServerResponse'];
 
+export type MediaTechnicalSpecsDto = Schemas['MediaTechnicalSpecsDto'];
+export type SeriesOverviewDto = Schemas['SeriesOverviewDto'];
+export type SeasonDetailsDto = Schemas['SeasonDetailsDto'];
+export type MediaPlaySummaryDto = Schemas['MediaPlaySummaryDto'];
+export type MediaDetailsResponse = Schemas['MediaDetailsResponse'];
+
 export type StatsRange = UserPreferencesResponse['defaultStatsRange'];
 export type ThemePreference = UserPreferencesResponse['theme'];
 export type TimeFormatPreference = UserPreferencesResponse['timeFormat'];

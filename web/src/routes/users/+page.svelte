@@ -5,6 +5,7 @@
 	import type { UserSummaryDto } from '$api/types';
 	import Badge from '$components/ui/Badge.svelte';
 	import ProxiedImage from '$components/miru/ProxiedImage.svelte';
+	import { preferencesStore } from '$stores/preferences.svelte';
 	import { cn, formatDurationSec, formatRelativeTime } from '$lib/utils';
 
 	let users = $state<UserSummaryDto[]>([]);
@@ -106,7 +107,7 @@
 									{user.displayName || user.username}
 								</h2>
 								<p class="truncate text-[11px] text-fg-muted">
-									@{user.username} · {user.isStreaming ? 'Active now' : formatRelativeTime(user.lastSeenAtMs)}
+									@{user.username} · {user.isStreaming ? 'Active now' : formatRelativeTime(user.lastSeenAtMs, Date.now(), preferencesStore.prefs)}
 								</p>
 							</div>
 						</div>
@@ -131,7 +132,7 @@
 						<span>
 							{user.isStreaming
 								? `Streaming ${user.activeStreamCount} active ${user.activeStreamCount === 1 ? 'session' : 'sessions'}`
-								: `Last seen ${formatRelativeTime(user.lastSeenAtMs)}`}
+								: `Last seen ${formatRelativeTime(user.lastSeenAtMs, Date.now(), preferencesStore.prefs)}`}
 						</span>
 						<span class="font-mono text-[10px]">View →</span>
 					</div>

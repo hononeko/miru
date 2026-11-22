@@ -6,6 +6,7 @@ import app.hononeko.miru.auth.AuthSource
 import app.hononeko.miru.auth.MiruPrincipal
 import app.hononeko.miru.auth.MiruRole
 import app.hononeko.miru.persistence.model.ApiKeyRecord
+import app.hononeko.miru.persistence.model.UserPreferencesRecord
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -127,6 +128,25 @@ data class CreateApiKeyResponse(
         "CreateApiKeyResponse(apiKey=$apiKey, rawKey=***)"
 }
 
+@Serializable
+data class UserPreferencesResponse(
+    val theme: String,
+    val timeFormat: String,
+    val dateFormat: String,
+    val defaultStatsRange: String,
+    val relativeTimestamps: Boolean,
+    val updatedAtMs: Long? = null,
+)
+
+@Serializable
+data class UpdateUserPreferencesRequest(
+    val theme: String = "system",
+    val timeFormat: String = "24h",
+    val dateFormat: String = "iso",
+    val defaultStatsRange: String = "30d",
+    val relativeTimestamps: Boolean = true,
+)
+
 internal fun MiruPrincipal.toResponse(): PrincipalResponse =
     PrincipalResponse(
         accountId = accountId,
@@ -172,4 +192,14 @@ internal fun ApiKeyRecord.toResponse(): ApiKeyResponse =
         expiresAtMs = expiresAtMs,
         revokedAtMs = revokedAtMs,
         createdAtMs = createdAtMs,
+    )
+
+internal fun UserPreferencesRecord.toResponse(): UserPreferencesResponse =
+    UserPreferencesResponse(
+        theme = theme,
+        timeFormat = timeFormat,
+        dateFormat = dateFormat,
+        defaultStatsRange = defaultStatsRange,
+        relativeTimestamps = relativeTimestamps,
+        updatedAtMs = updatedAtMs,
     )

@@ -3,12 +3,17 @@ package app.hononeko.miru.auth
 import app.hononeko.miru.config.AuthConfig
 import app.hononeko.miru.config.AuthMode
 import app.hononeko.miru.domain.error.MiruError
+import app.hononeko.miru.http.UpdateUserPreferencesRequest
+import app.hononeko.miru.http.UserPreferencesResponse
+import app.hononeko.miru.http.toResponse
 import app.hononeko.miru.persistence.model.ApiKeyRecord
 import app.hononeko.miru.persistence.model.AuthAccountRecord
 import app.hononeko.miru.persistence.model.AuthSessionRecord
+import app.hononeko.miru.persistence.model.UserPreferencesRecord
 import app.hononeko.miru.persistence.repository.ApiKeyRepository
 import app.hononeko.miru.persistence.repository.AuthAccountRepository
 import app.hononeko.miru.persistence.repository.AuthSessionRepository
+import app.hononeko.miru.persistence.repository.UserPreferencesRepository
 import app.hononeko.miru.persistence.repository.UserRepository
 import arrow.core.Either
 import arrow.core.raise.either
@@ -61,6 +66,7 @@ class AuthService(
     private val sessionTtlMs: Long = DEFAULT_SESSION_TTL_MS,
     private val clock: () -> Long = { System.currentTimeMillis() },
     private val idGenerator: () -> String = { UUID.randomUUID().toString() },
+    private val preferencesRepository: UserPreferencesRepository? = null,
 ) {
     private val logger = LoggerFactory.getLogger(AuthService::class.java)
     private val setupMutex = Mutex()
@@ -436,6 +442,57 @@ class AuthService(
             }
         }
 
+    suspend fun getPreferences(principal: MiruPrincipal): Either<MiruError, UserPreferencesResponse> =
+        either {
+            if (authConfig.mode == AuthMode.NONE ||
+                principal.authSource == AuthSource.DEV_BYPASS ||
+                preferencesRepository == null
+            ) {
+                return@either defaultPreferencesResponse()
+            }
+            val stored = preferencesRepository.findByAccountId(principal.accountId).bind()
+            stored?.toResponse() ?: defaultPreferencesResponse()
+        }
+
+    suspend fun updatePreferences(
+        principal: MiruPrincipal,
+        request: UpdateUserPreferencesRequest,
+    ): Either<MiruError, UserPreferencesResponse> =
+        either {
+            val validated = validatePreferences(request).bind()
+            val now = clock()
+            val canPersist =
+                authConfig.mode != AuthMode.NONE &&
+                    principal.authSource != AuthSource.DEV_BYPASS &&
+                    preferencesRepository != null
+
+            if (canPersist) {
+                val account = accountRepository.findById(principal.accountId).bind()
+                if (account != null) {
+                    val record =
+                        UserPreferencesRecord(
+                            accountId = account.id,
+                            theme = validated.theme,
+                            timeFormat = validated.timeFormat,
+                            dateFormat = validated.dateFormat,
+                            defaultStatsRange = validated.defaultStatsRange,
+                            relativeTimestamps = validated.relativeTimestamps,
+                            updatedAtMs = now,
+                        )
+                    return@either preferencesRepository.upsert(record).bind().toResponse()
+                }
+            }
+
+            UserPreferencesResponse(
+                theme = validated.theme,
+                timeFormat = validated.timeFormat,
+                dateFormat = validated.dateFormat,
+                defaultStatsRange = validated.defaultStatsRange,
+                relativeTimestamps = validated.relativeTimestamps,
+                updatedAtMs = now,
+            )
+        }
+
     private suspend fun issueSession(
         account: AuthAccountRecord,
         linkedMediaUserIds: Set<String>,
@@ -525,6 +582,55 @@ class AuthService(
             else -> MiruRole.USER
         }
 
+    private fun validatePreferences(
+        request: UpdateUserPreferencesRequest,
+    ): Either<MiruError.ValidationError, UpdateUserPreferencesRequest> =
+        either {
+            val theme = request.theme.trim()
+            val timeFormat = request.timeFormat.trim()
+            val dateFormat = request.dateFormat.trim()
+            val defaultStatsRange = request.defaultStatsRange.trim()
+            val errors = linkedMapOf<String, String>()
+
+            if (theme !in ALLOWED_THEMES) {
+                errors["theme"] = "must be one of: ${ALLOWED_THEMES.joinToString(", ")}"
+            }
+            if (timeFormat !in ALLOWED_TIME_FORMATS) {
+                errors["timeFormat"] = "must be one of: ${ALLOWED_TIME_FORMATS.joinToString(", ")}"
+            }
+            if (dateFormat !in ALLOWED_DATE_FORMATS) {
+                errors["dateFormat"] = "must be one of: ${ALLOWED_DATE_FORMATS.joinToString(", ")}"
+            }
+            if (defaultStatsRange !in ALLOWED_STATS_RANGES) {
+                errors["defaultStatsRange"] = "must be one of: ${ALLOWED_STATS_RANGES.joinToString(", ")}"
+            }
+
+            ensure(errors.isEmpty()) {
+                MiruError.ValidationError(
+                    message = "Invalid user preferences",
+                    fieldErrors = errors,
+                )
+            }
+
+            UpdateUserPreferencesRequest(
+                theme = theme,
+                timeFormat = timeFormat,
+                dateFormat = dateFormat,
+                defaultStatsRange = defaultStatsRange,
+                relativeTimestamps = request.relativeTimestamps,
+            )
+        }
+
+    private fun defaultPreferencesResponse(): UserPreferencesResponse =
+        UserPreferencesResponse(
+            theme = DEFAULT_THEME,
+            timeFormat = DEFAULT_TIME_FORMAT,
+            dateFormat = DEFAULT_DATE_FORMAT,
+            defaultStatsRange = DEFAULT_STATS_RANGE,
+            relativeTimestamps = DEFAULT_RELATIVE_TIMESTAMPS,
+            updatedAtMs = null,
+        )
+
     private data class ValidatedCredentials(
         val username: String,
         val usernameNormalized: String,
@@ -537,6 +643,15 @@ class AuthService(
         const val MIN_PASSWORD_LENGTH = PasswordPolicy.MIN_LENGTH
         const val MAX_API_KEY_NAME_LENGTH = 100
         const val DEFAULT_SESSION_TTL_MS = 7L * 24L * 60L * 60L * 1000L
+        const val DEFAULT_THEME = "system"
+        const val DEFAULT_TIME_FORMAT = "24h"
+        const val DEFAULT_DATE_FORMAT = "iso"
+        const val DEFAULT_STATS_RANGE = "30d"
+        const val DEFAULT_RELATIVE_TIMESTAMPS = true
+        val ALLOWED_THEMES = listOf("system", "dark", "light")
+        val ALLOWED_TIME_FORMATS = listOf("24h", "12h")
+        val ALLOWED_DATE_FORMATS = listOf("iso", "mdy", "dmy")
+        val ALLOWED_STATS_RANGES = listOf("7d", "30d", "90d", "all")
         private val USERNAME_REGEX = Regex("^[A-Za-z0-9._-]+$")
     }
 }

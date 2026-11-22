@@ -2,11 +2,12 @@
 	import type { HistoryDetailResponse } from '$api/types';
 	import Badge from '$components/ui/Badge.svelte';
 	import ProxiedImage from './ProxiedImage.svelte';
+	import { preferencesStore } from '$stores/preferences.svelte';
 	import {
 		formatBandwidthKbps,
 		formatClockMs,
+		formatDateTime,
 		formatDurationSec,
-		formatFullUtc,
 		formatMediaTitle,
 		getDecisionMeta
 	} from '$lib/utils';
@@ -136,11 +137,11 @@
 		<dl class="flex flex-col gap-1.5 text-xs">
 			<div class="flex items-center justify-between gap-2">
 				<dt class="text-fg-muted">Started</dt>
-				<dd class="font-mono text-[11px] text-fg-secondary">{formatFullUtc(detail.startedAtMs)}</dd>
+				<dd class="font-mono text-[11px] text-fg-secondary">{formatDateTime(detail.startedAtMs, preferencesStore.prefs)}</dd>
 			</div>
 			<div class="flex items-center justify-between gap-2">
 				<dt class="text-fg-muted">Stopped</dt>
-				<dd class="font-mono text-[11px] text-fg-secondary">{formatFullUtc(detail.stoppedAtMs)}</dd>
+				<dd class="font-mono text-[11px] text-fg-secondary">{formatDateTime(detail.stoppedAtMs, preferencesStore.prefs)}</dd>
 			</div>
 			<div class="flex items-center justify-between gap-2">
 				<dt class="text-fg-muted">Watched / Paused</dt>

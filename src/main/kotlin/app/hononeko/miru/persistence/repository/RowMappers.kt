@@ -8,6 +8,7 @@ import app.hononeko.miru.persistence.model.MediaItemTechRecord
 import app.hononeko.miru.persistence.model.MediaMetadataRecord
 import app.hononeko.miru.persistence.model.MediaServerRecord
 import app.hononeko.miru.persistence.model.PlaybackHistoryRecord
+import app.hononeko.miru.persistence.model.PlaybackHistoryStatsRow
 import app.hononeko.miru.persistence.model.PlayerRecord
 import app.hononeko.miru.persistence.model.StreamTechRecord
 import app.hononeko.miru.persistence.model.UserRecord
@@ -140,6 +141,24 @@ internal fun ResultRow.toPlaybackHistoryRecord(): PlaybackHistoryRecord =
                 location = this[PlaybackHistoryTable.location],
             ),
         startedAtMs = this[PlaybackHistoryTable.startedAtMs],
+        stoppedAtMs = this[PlaybackHistoryTable.stoppedAtMs],
+    )
+
+internal fun ResultRow.toPlaybackHistoryStatsRow(): PlaybackHistoryStatsRow =
+    PlaybackHistoryStatsRow(
+        userId = this[PlaybackHistoryTable.userId],
+        mediaType = this[PlaybackHistoryTable.mediaType],
+        ratingKey = this[PlaybackHistoryTable.ratingKey],
+        title = this[PlaybackHistoryTable.title],
+        parentTitle = this[PlaybackHistoryTable.parentTitle],
+        grandparentTitle = this[PlaybackHistoryTable.grandparentTitle],
+        thumbPath = this[PlaybackHistoryTable.thumbPath],
+        librarySectionKey = this[PlaybackHistoryTable.librarySectionKey],
+        watchedDurationSec = this[PlaybackHistoryTable.watchedDurationSec],
+        streamDecision = this[PlaybackHistoryTable.streamDecision],
+        hwTranscode = this[PlaybackHistoryTable.hwTranscode],
+        playerPlatform = this[PlaybackHistoryTable.playerPlatform],
+        playerProduct = this[PlaybackHistoryTable.playerProduct],
         stoppedAtMs = this[PlaybackHistoryTable.stoppedAtMs],
     )
 

@@ -1,11 +1,15 @@
 package app.hononeko.miru.persistence
 
+import app.hononeko.miru.auth.MiruPrincipal
+import app.hononeko.miru.auth.MiruRole
 import app.hononeko.miru.persistence.model.ActiveSessionKey
 import app.hononeko.miru.persistence.model.ActiveSessionRecord
 import app.hononeko.miru.persistence.model.ApiKeyRecord
 import app.hononeko.miru.persistence.model.AuthAccountRecord
 import app.hononeko.miru.persistence.model.AuthSessionRecord
 import app.hononeko.miru.persistence.model.HistoryFilter
+import app.hononeko.miru.persistence.model.HistorySortDirection
+import app.hononeko.miru.persistence.model.HistorySortField
 import app.hononeko.miru.persistence.model.LibrarySectionRecord
 import app.hononeko.miru.persistence.model.LibrarySnapshotRecord
 import app.hononeko.miru.persistence.model.MediaItemCacheRecord
@@ -33,15 +37,20 @@ import app.hononeko.miru.persistence.repository.LibraryRepository
 import app.hononeko.miru.persistence.repository.MediaServerRepository
 import app.hononeko.miru.persistence.repository.PlaybackHistoryRepository
 import app.hononeko.miru.persistence.repository.UserRepository
+import app.hononeko.miru.service.HistoryAndStatsService
+import app.hononeko.miru.service.HistoryQueryParams
+import io.kotest.assertions.arrow.core.shouldBeLeft
 import io.kotest.assertions.arrow.core.shouldBeRight
 import io.kotest.core.factory.TestFactory
 import io.kotest.core.spec.style.funSpec
 import io.kotest.core.spec.style.scopes.FunSpecRootScope
+import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
+import java.time.Instant
 import java.util.UUID
 
 private class ContractContext(
@@ -77,11 +86,13 @@ fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
         activeSessionTests { ctx }
         playbackHistoryTests { ctx }
         playbackHistorySummaryTests { ctx }
+        playbackHistorySortAndStatsTests { ctx }
         libraryTests { ctx }
         cascadeTests { ctx }
         authAccountTests { ctx }
         authSessionTests { ctx }
         apiKeyTests { ctx }
+        historyAndStatsServiceTests { ctx }
     }
 
 private fun FunSpecRootScope.mediaServerTests(ctxProvider: () -> ContractContext) {
@@ -374,6 +385,145 @@ private fun FunSpecRootScope.playbackHistorySummaryTests(ctxProvider: () -> Cont
     }
 }
 
+private fun FunSpecRootScope.playbackHistorySortAndStatsTests(ctxProvider: () -> ContractContext) {
+    context("PlaybackHistoryRepository sorting and stats") {
+        test("supports userIds filtering, all sortBy/sortDir combinations, date ranges, empty datasets, and listForStats") {
+            val ctx = ctxProvider()
+            ctx.servers.upsert(sampleServer(id = "srv-1")).shouldBeRight()
+            ctx.users.upsert(sampleUser(id = "u-1", serverId = "srv-1", externalUserId = "1", username = "alice")).shouldBeRight()
+            ctx.users.upsert(sampleUser(id = "u-2", serverId = "srv-1", externalUserId = "2", username = "bob")).shouldBeRight()
+            ctx.users.upsert(sampleUser(id = "u-3", serverId = "srv-1", externalUserId = "3", username = "carol")).shouldBeRight()
+
+            // Empty dataset behavior
+            val emptyQuery = ctx.history.query(HistoryFilter()).shouldBeRight()
+            emptyQuery.totalCount shouldBe 0L
+            emptyQuery.items.shouldBeEmpty()
+            ctx.history.listForStats().shouldBeRight().shouldBeEmpty()
+
+            seedSortAndStatsRecords(ctx)
+
+            // userIds empty set returns empty immediately
+            val emptyUsersPage = ctx.history.query(HistoryFilter(userIds = emptySet())).shouldBeRight()
+            emptyUsersPage.totalCount shouldBe 0L
+            emptyUsersPage.items.shouldBeEmpty()
+            ctx.history.listForStats(userIds = emptySet()).shouldBeRight().shouldBeEmpty()
+
+            // userIds non-empty filters properly
+            val scopedPage = ctx.history.query(HistoryFilter(userIds = setOf("u-1", "u-3"))).shouldBeRight()
+            scopedPage.totalCount shouldBe 2L
+            scopedPage.items.map { it.id } shouldContainExactly listOf("h-3", "h-1")
+
+            // All sortBy / sortDir combinations
+            val expectedOrders =
+                listOf(
+                    HistorySortField.STOPPED_AT to HistorySortDirection.ASC to listOf("h-1", "h-3", "h-2"),
+                    HistorySortField.STOPPED_AT to HistorySortDirection.DESC to listOf("h-2", "h-3", "h-1"),
+                    HistorySortField.STARTED_AT to HistorySortDirection.ASC to listOf("h-2", "h-1", "h-3"),
+                    HistorySortField.STARTED_AT to HistorySortDirection.DESC to listOf("h-3", "h-1", "h-2"),
+                    HistorySortField.WATCHED_DURATION to HistorySortDirection.ASC to listOf("h-3", "h-1", "h-2"),
+                    HistorySortField.WATCHED_DURATION to HistorySortDirection.DESC to listOf("h-2", "h-1", "h-3"),
+                    HistorySortField.COMPLETION_PERCENT to HistorySortDirection.ASC to listOf("h-2", "h-3", "h-1"),
+                    HistorySortField.COMPLETION_PERCENT to HistorySortDirection.DESC to listOf("h-1", "h-3", "h-2"),
+                    HistorySortField.TITLE to HistorySortDirection.ASC to listOf("h-2", "h-3", "h-1"),
+                    HistorySortField.TITLE to HistorySortDirection.DESC to listOf("h-1", "h-3", "h-2"),
+                )
+            for ((sortSpec, expectedIds) in expectedOrders) {
+                val (sortBy, sortDir) = sortSpec
+                val page = ctx.history.query(HistoryFilter(sortBy = sortBy, sortDir = sortDir)).shouldBeRight()
+                page.items.map { it.id } shouldContainExactly expectedIds
+            }
+
+            // Date range filtering
+            val rangedPage = ctx.history.query(HistoryFilter(fromMs = 12_000L, toMs = 18_000L)).shouldBeRight()
+            rangedPage.totalCount shouldBe 1L
+            rangedPage.items.map { it.id } shouldContainExactly listOf("h-3")
+
+            // listForStats filters & projection
+            val allStats = ctx.history.listForStats(serverId = "srv-1").shouldBeRight()
+            allStats.map { it.ratingKey } shouldContainExactly listOf("m-1", "e-1", "m-2")
+            allStats.first().thumbPath shouldBe "/library/metadata/m-1/thumb"
+            allStats.last().hwTranscode shouldBe true
+            allStats.last().playerPlatform shouldBe "iOS"
+
+            val filteredStats =
+                ctx.history
+                    .listForStats(
+                        serverId = "srv-1",
+                        userIds = setOf("u-2", "u-3"),
+                        fromMs = 15_000L,
+                        toMs = 19_000L,
+                    ).shouldBeRight()
+            filteredStats.map { it.ratingKey } shouldContainExactly listOf("e-1")
+        }
+    }
+}
+
+private suspend fun seedSortAndStatsRecords(ctx: ContractContext) {
+    val h1 =
+        sampleHistory(
+            id = "h-1",
+            userId = "u-1",
+            ratingKey = "m-1",
+            title = "Zeta Movie",
+            mediaType = "movie",
+            sectionKey = "sec-movies",
+            streamDecision = "direct_play",
+            hwTranscode = false,
+            startedAtMs = 5_000L,
+            stoppedAtMs = 10_000L,
+        ).copy(
+            watchedDurationSec = 300,
+            completionPercent = 90.0,
+            media =
+                MediaMetadataRecord(
+                    ratingKey = "m-1",
+                    mediaType = "movie",
+                    title = "Zeta Movie",
+                    thumbPath = "/library/metadata/m-1/thumb",
+                    librarySectionKey = "sec-movies",
+                    durationMs = 100_000L,
+                ),
+            player = PlayerRecord(playerPlatform = "Web", playerProduct = "Plex Web"),
+        )
+    val h2 =
+        sampleHistory(
+            id = "h-2",
+            userId = "u-2",
+            ratingKey = "m-2",
+            title = "alpha Movie",
+            mediaType = "movie",
+            sectionKey = "sec-movies",
+            streamDecision = "transcode",
+            hwTranscode = true,
+            startedAtMs = 2_000L,
+            stoppedAtMs = 20_000L,
+        ).copy(
+            watchedDurationSec = 600,
+            completionPercent = 40.0,
+            player = PlayerRecord(playerPlatform = "iOS", playerProduct = "Plex for iOS"),
+        )
+    val h3 =
+        sampleHistory(
+            id = "h-3",
+            userId = "u-3",
+            ratingKey = "e-1",
+            title = "Beta Episode",
+            grandparentTitle = "Show B",
+            mediaType = "episode",
+            sectionKey = "sec-tv",
+            streamDecision = "direct_stream",
+            hwTranscode = false,
+            startedAtMs = 8_000L,
+            stoppedAtMs = 15_000L,
+        ).copy(
+            watchedDurationSec = 150,
+            completionPercent = 75.0,
+            player = PlayerRecord(playerPlatform = "Android", playerProduct = "Plex for Android"),
+        )
+    ctx.history.insert(h1).shouldBeRight()
+    ctx.history.insert(h2).shouldBeRight()
+    ctx.history.insert(h3).shouldBeRight()
+}
 private fun FunSpecRootScope.libraryTests(ctxProvider: () -> ContractContext) {
     context("LibraryRepository") {
         test("upserts sections with 64-bit sizes, orders snapshots descending, and upserts/prunes cached items") {
@@ -682,6 +832,194 @@ private fun FunSpecRootScope.apiKeyTests(ctxProvider: () -> ContractContext) {
             ctx.apiKeys.findById("key-2").shouldBeRight().shouldBeNull()
         }
     }
+}
+
+private fun FunSpecRootScope.historyAndStatsServiceTests(ctxProvider: () -> ContractContext) {
+    context("HistoryAndStatsService") {
+        test("filters, paginates, aggregates stats across UTC dates, and handles empty datasets") {
+            val ctx = ctxProvider()
+            val nowMs = Instant.parse("2026-04-10T12:00:00Z").toEpochMilli()
+            val service =
+                HistoryAndStatsService(
+                    playbackHistoryRepository = ctx.history,
+                    userRepository = ctx.users,
+                    clock = { nowMs },
+                )
+            val admin = MiruPrincipal(accountId = "acc-admin", username = "admin", role = MiruRole.ADMIN)
+            val userAlice =
+                MiruPrincipal(
+                    accountId = "acc-alice",
+                    username = "alice-acct",
+                    role = MiruRole.USER,
+                    linkedMediaUserIds = setOf("u-alice"),
+                )
+
+            ctx.servers.upsert(sampleServer(id = "srv-1")).shouldBeRight()
+            ctx.users.upsert(sampleUser(id = "u-alice", serverId = "srv-1", externalUserId = "1", username = "alice")).shouldBeRight()
+            ctx.users.upsert(sampleUser(id = "u-bob", serverId = "srv-1", externalUserId = "2", username = "bob")).shouldBeRight()
+
+            // Empty dataset behavior
+            val emptyHistory = service.queryHistory(admin, HistoryQueryParams()).shouldBeRight()
+            emptyHistory.totalCount shouldBe 0L
+            emptyHistory.totalPages shouldBe 0
+            emptyHistory.items.shouldBeEmpty()
+
+            val emptyOverview = service.getOverviewStats(admin, "30d").shouldBeRight()
+            emptyOverview.totalPlays shouldBe 0L
+            emptyOverview.activeUsers shouldBe 0
+            emptyOverview.playsPerDay.shouldBeEmpty()
+            emptyOverview.decisionBreakdown.directPlayPercent shouldBe 0.0
+
+            val emptyUserStats = service.getUserStats(userAlice, "u-alice", "all").shouldBeRight()
+            emptyUserStats.totalPlays shouldBe 0L
+            emptyUserStats.topPlatforms.shouldBeEmpty()
+            emptyUserStats.libraryBreakdown.shouldBeEmpty()
+
+            // Seed multi-day playback across 7d, 30d, and >90d
+            seedHistoryForServiceTests(ctx)
+
+            // Pagination + filtering + username/thumbUrl enrichment
+            val page1 =
+                service
+                    .queryHistory(
+                        admin,
+                        HistoryQueryParams(page = 1, pageSize = 2, sortBy = "stopped_at", sortDir = "desc"),
+                    ).shouldBeRight()
+            page1.totalCount shouldBe 4L
+            page1.totalPages shouldBe 2
+            page1.items.map { it.id } shouldContainExactly listOf("p-2", "p-1")
+            page1.items[0].username shouldBe "alice"
+            page1.items[0].thumbUrl shouldBe "/api/v1/media/ep-10/thumb"
+
+            // RBAC scoping for non-admin
+            val aliceHistory = service.queryHistory(userAlice, HistoryQueryParams()).shouldBeRight()
+            aliceHistory.totalCount shouldBe 2L
+            aliceHistory.items.map { it.id } shouldContainExactly listOf("p-2", "p-1")
+            service.queryHistory(userAlice, HistoryQueryParams(userId = "u-bob")).shouldBeLeft()
+
+            // Date-range aggregation on overview (7d vs 30d vs all)
+            val stats7d = service.getOverviewStats(admin, "7d").shouldBeRight()
+            stats7d.totalPlays shouldBe 2L
+            stats7d.activeUsers shouldBe 1
+            stats7d.playsPerDay.map { it.date to it.playCount } shouldContainExactly
+                listOf("2026-04-08" to 1L, "2026-04-09" to 1L)
+            stats7d.decisionBreakdown.directPlay shouldBe 1L
+            stats7d.decisionBreakdown.transcode shouldBe 1L
+            stats7d.decisionBreakdown.hwTranscode shouldBe 1L
+            stats7d.decisionBreakdown.directPlayPercent shouldBe 50.0
+
+            val stats30d = service.getOverviewStats(admin, null).shouldBeRight()
+            stats30d.range shouldBe "30d"
+            stats30d.totalPlays shouldBe 3L
+            stats30d.activeUsers shouldBe 2
+            stats30d.topMovies.first().ratingKey shouldBe "mov-10"
+            stats30d.topMovies.first().playCount shouldBe 2L
+            stats30d.topMovies.first().thumbUrl shouldBe "/api/v1/media/mov-10/thumb"
+            stats30d.topShows.first().title shouldBe "Severance"
+
+            val statsAll = service.getOverviewStats(admin, "all").shouldBeRight()
+            statsAll.totalPlays shouldBe 4L
+
+            // Per-user stats
+            val aliceStats = service.getUserStats(userAlice, "u-alice", "30d").shouldBeRight()
+            aliceStats.totalPlays shouldBe 2L
+            aliceStats.totalWatchDurationSec shouldBe 3_000L
+            aliceStats.topPlatforms.map { it.platform } shouldContainExactly listOf("Apple TV", "Web")
+            aliceStats.libraryBreakdown.map { it.librarySectionKey } shouldContainExactly listOf("sec-movies", "sec-tv")
+        }
+    }
+}
+
+private suspend fun seedHistoryForServiceTests(ctx: ContractContext) {
+    val dayInWindow1 = Instant.parse("2026-04-08T22:00:00Z").toEpochMilli()
+    val dayInWindow2 = Instant.parse("2026-04-09T09:00:00Z").toEpochMilli()
+    val day20DaysAgo = Instant.parse("2026-03-21T15:00:00Z").toEpochMilli()
+    val day120DaysAgo = Instant.parse("2025-12-11T10:00:00Z").toEpochMilli()
+
+    val plays =
+        listOf(
+            sampleHistory(
+                id = "p-1",
+                userId = "u-alice",
+                ratingKey = "mov-10",
+                title = "Dune",
+                mediaType = "movie",
+                sectionKey = "sec-movies",
+                streamDecision = "direct_play",
+                startedAtMs = dayInWindow1 - 3_600_000L,
+                stoppedAtMs = dayInWindow1,
+            ).copy(
+                watchedDurationSec = 1_800,
+                completionPercent = 95.0,
+                media =
+                    MediaMetadataRecord(
+                        ratingKey = "mov-10",
+                        mediaType = "movie",
+                        title = "Dune",
+                        thumbPath = "/library/metadata/mov-10/thumb",
+                        librarySectionKey = "sec-movies",
+                        durationMs = 7_200_000L,
+                    ),
+                player = PlayerRecord(playerPlatform = "Apple TV", playerProduct = "Plex for Apple TV"),
+            ),
+            sampleHistory(
+                id = "p-2",
+                userId = "u-alice",
+                ratingKey = "ep-10",
+                title = "Episode 1",
+                grandparentTitle = "Severance",
+                mediaType = "episode",
+                sectionKey = "sec-tv",
+                streamDecision = "transcode",
+                hwTranscode = true,
+                startedAtMs = dayInWindow2 - 1_800_000L,
+                stoppedAtMs = dayInWindow2,
+            ).copy(
+                watchedDurationSec = 1_200,
+                completionPercent = 88.0,
+                media =
+                    MediaMetadataRecord(
+                        ratingKey = "ep-10",
+                        mediaType = "episode",
+                        title = "Episode 1",
+                        grandparentTitle = "Severance",
+                        thumbPath = "/library/metadata/ep-10/thumb",
+                        librarySectionKey = "sec-tv",
+                        durationMs = 3_000_000L,
+                    ),
+                player = PlayerRecord(playerPlatform = "Web", playerProduct = "Plex Web"),
+            ),
+            sampleHistory(
+                id = "p-3",
+                userId = "u-bob",
+                ratingKey = "mov-10",
+                title = "Dune",
+                mediaType = "movie",
+                sectionKey = "sec-movies",
+                streamDecision = "direct_stream",
+                startedAtMs = day20DaysAgo - 2_000_000L,
+                stoppedAtMs = day20DaysAgo,
+            ).copy(
+                watchedDurationSec = 2_000,
+                completionPercent = 60.0,
+                player = PlayerRecord(playerPlatform = "Android", playerProduct = "Plex for Android"),
+            ),
+            sampleHistory(
+                id = "p-4",
+                userId = "u-bob",
+                ratingKey = "mov-99",
+                title = "Old Movie",
+                mediaType = "movie",
+                sectionKey = "sec-movies",
+                streamDecision = "direct_play",
+                startedAtMs = day120DaysAgo - 1_000_000L,
+                stoppedAtMs = day120DaysAgo,
+            ).copy(
+                watchedDurationSec = 900,
+                completionPercent = 50.0,
+            ),
+        )
+    plays.forEach { ctx.history.insert(it).shouldBeRight() }
 }
 
 private fun sampleServer(

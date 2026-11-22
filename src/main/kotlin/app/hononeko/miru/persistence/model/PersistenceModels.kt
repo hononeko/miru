@@ -100,15 +100,31 @@ data class PlaybackHistoryRecord(
     val stoppedAtMs: Long,
 )
 
+enum class HistorySortField {
+    STOPPED_AT,
+    STARTED_AT,
+    WATCHED_DURATION,
+    COMPLETION_PERCENT,
+    TITLE,
+}
+
+enum class HistorySortDirection {
+    ASC,
+    DESC,
+}
+
 data class HistoryFilter(
     val serverId: String? = null,
     val userId: String? = null,
+    val userIds: Set<String>? = null,
     val mediaType: String? = null,
     val librarySectionKey: String? = null,
     val streamDecision: String? = null,
     val fromMs: Long? = null,
     val toMs: Long? = null,
     val q: String? = null,
+    val sortBy: HistorySortField = HistorySortField.STOPPED_AT,
+    val sortDir: HistorySortDirection = HistorySortDirection.DESC,
     val limit: Int = 50,
     val offset: Int = 0,
 )
@@ -124,6 +140,23 @@ data class UserPlaybackSummary(
     val userId: String,
     val totalPlays: Long,
     val totalWatchDurationSec: Long,
+)
+
+data class PlaybackHistoryStatsRow(
+    val userId: String,
+    val mediaType: String,
+    val ratingKey: String,
+    val title: String,
+    val parentTitle: String?,
+    val grandparentTitle: String?,
+    val thumbPath: String?,
+    val librarySectionKey: String?,
+    val watchedDurationSec: Int,
+    val streamDecision: String,
+    val hwTranscode: Boolean,
+    val playerPlatform: String?,
+    val playerProduct: String?,
+    val stoppedAtMs: Long,
 )
 
 data class LibrarySectionRecord(

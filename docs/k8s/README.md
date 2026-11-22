@@ -1,6 +1,8 @@
-# Deploying Miru on Kubernetes
+# Example Kubernetes manifests
 
-Kustomize manifests that run Miru on any Kubernetes cluster: one pod with a SQLite database on a persistent volume, in its own `miru` namespace.
+Example Kustomize manifests for running Miru on Kubernetes: one pod with a SQLite database on a persistent volume, in its own `miru` namespace.
+
+These files are documentation. Nothing deploys them from this repository: copy this directory into the repository you deploy from, and adapt it there.
 
 | File | Creates |
 | --- | --- |
@@ -16,7 +18,9 @@ Kustomize manifests that run Miru on any Kubernetes cluster: one pod with a SQLi
 
 ## Quick start
 
-1. **Secrets.** In `secret.yaml`, set `AUTH_SESSION_SECRET` and `MIRU_ENCRYPTION_KEY` to two different random values of at least 32 characters:
+1. **Copy.** Copy this directory into your deployment repository, for example as `apps/miru/`. The steps below edit that copy.
+
+2. **Secrets.** In `secret.yaml`, set `AUTH_SESSION_SECRET` and `MIRU_ENCRYPTION_KEY` to two different random values of at least 32 characters:
 
    ```sh
    openssl rand -base64 48
@@ -24,24 +28,24 @@ Kustomize manifests that run Miru on any Kubernetes cluster: one pod with a SQLi
 
    Keep the filled-in file out of version control. To use External Secrets, Sealed Secrets, SOPS or `kubectl create secret` instead, remove `secret.yaml` from `kustomization.yaml` and provide a Secret named `miru-secrets` with the same keys.
 
-2. **Settings.** Review `configmap.yaml`. The defaults use SQLite and local logins, and leave Plex to be connected from the Admin UI.
+3. **Settings.** Review `configmap.yaml`. The defaults use SQLite and local logins, and leave Plex to be connected from the Admin UI.
 
-3. **Image.** Set `images[0].newTag` in `kustomization.yaml` to the release you want from [`ghcr.io/hononeko/miru`](https://github.com/hononeko/miru/pkgs/container/miru). Pin a digest (`<version>@sha256:<digest>`) for repeatable deploys.
+4. **Image.** Set `images[0].newTag` in `kustomization.yaml` to the release you want from [`ghcr.io/hononeko/miru`](https://github.com/hononeko/miru/pkgs/container/miru). Pin a digest (`<version>@sha256:<digest>`) for repeatable deploys.
 
-4. **Access.** To reach Miru from outside the cluster, uncomment `httproute.yaml` (Gateway API) or `ingress.yaml` in `kustomization.yaml` and set your hostname in that file. To try it without either, port-forward after deploying:
+5. **Access.** To reach Miru from outside the cluster, uncomment `httproute.yaml` (Gateway API) or `ingress.yaml` in `kustomization.yaml` and set your hostname in that file. To try it without either, port-forward after deploying:
 
    ```sh
    kubectl -n miru port-forward svc/miru 8080:8080
    ```
 
-5. **Deploy.**
+6. **Deploy.**
 
    ```sh
-   kubectl apply -k k8s/
+   kubectl apply -k apps/miru/
    kubectl -n miru rollout status deployment/miru
    ```
 
-6. **Set up.** Open Miru, create the first admin account (or set `MIRU_ADMIN_USERNAME` and `MIRU_ADMIN_PASSWORD` in the secret beforehand), then connect your Plex server from **Admin**.
+7. **Set up.** Open Miru, create the first admin account (or set `MIRU_ADMIN_USERNAME` and `MIRU_ADMIN_PASSWORD` in the secret beforehand), then connect your Plex server from **Admin**.
 
 ## Connecting Plex
 

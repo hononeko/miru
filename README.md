@@ -99,5 +99,5 @@ docker run --rm -p 8080:8080 \
   miru:local
 ```
 
-Ready-to-adapt Kubernetes Kustomize manifests live under [`k8s/`](k8s/README.md).
+Example Kubernetes Kustomize manifests, to copy into your own deployment repository and adapt, are in [`docs/k8s/`](docs/k8s/README.md).
 

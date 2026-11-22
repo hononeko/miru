@@ -44,8 +44,10 @@ Versions follow the rules shared by all hononeko repositories in [`hononeko/acti
 │   ├── codeql/codeql-config.yml  # CodeQL Actions security config
 │   └── workflows/                # PR, Main, Image, Version, CD & CodeQL CI
 ├── config/detekt/detekt.yml      # Detekt rules
+├── docs/
+│   ├── dashboard_*.png           # README screenshots
+│   └── k8s/                      # Example Kustomize manifests (documentation only, not deployed)
 ├── gradle/libs.versions.toml     # Dependency version catalog
-├── k8s/                          # Kustomize deployment blueprint
 ├── src/
 │   ├── main/
 │   │   ├── kotlin/app/hononeko/miru/

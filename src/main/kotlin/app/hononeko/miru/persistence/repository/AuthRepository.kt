@@ -6,10 +6,12 @@ import app.hononeko.miru.persistence.exposedQuery
 import app.hononeko.miru.persistence.model.ApiKeyRecord
 import app.hononeko.miru.persistence.model.AuthAccountRecord
 import app.hononeko.miru.persistence.model.AuthSessionRecord
+import app.hononeko.miru.persistence.model.UserPreferencesRecord
 import app.hononeko.miru.persistence.table.ApiKeysTable
 import app.hononeko.miru.persistence.table.AuthAccountMediaUsersTable
 import app.hononeko.miru.persistence.table.AuthAccountsTable
 import app.hononeko.miru.persistence.table.AuthSessionsTable
+import app.hononeko.miru.persistence.table.UserPreferencesTable
 import arrow.core.Either
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
@@ -22,6 +24,7 @@ import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.update
+import org.jetbrains.exposed.v1.jdbc.upsert
 
 interface AuthAccountRepository {
     suspend fun insert(account: AuthAccountRecord): Either<MiruError.PersistenceError, AuthAccountRecord>
@@ -96,6 +99,12 @@ interface ApiKeyRepository {
     ): Either<MiruError.PersistenceError, Boolean>
 
     suspend fun delete(id: String): Either<MiruError.PersistenceError, Boolean>
+}
+
+interface UserPreferencesRepository {
+    suspend fun findByAccountId(accountId: String): Either<MiruError.PersistenceError, UserPreferencesRecord?>
+
+    suspend fun upsert(preferences: UserPreferencesRecord): Either<MiruError.PersistenceError, UserPreferencesRecord>
 }
 
 class ExposedAuthAccountRepository(
@@ -363,6 +372,39 @@ class ExposedApiKeyRepository(
         }
 }
 
+class ExposedUserPreferencesRepository(
+    private val database: Database,
+) : UserPreferencesRepository {
+    constructor(handle: DatabaseHandle) : this(handle.database)
+
+    override suspend fun findByAccountId(
+        accountId: String,
+    ): Either<MiruError.PersistenceError, UserPreferencesRecord?> =
+        database.exposedQuery("user_preferences_find_by_account_id") {
+            UserPreferencesTable
+                .selectAll()
+                .where { UserPreferencesTable.accountId eq accountId }
+                .singleOrNull()
+                ?.toUserPreferencesRecord()
+        }
+
+    override suspend fun upsert(
+        preferences: UserPreferencesRecord,
+    ): Either<MiruError.PersistenceError, UserPreferencesRecord> =
+        database.exposedQuery("user_preferences_upsert") {
+            UserPreferencesTable.upsert(UserPreferencesTable.accountId) {
+                it[accountId] = preferences.accountId
+                it[theme] = preferences.theme
+                it[timeFormat] = preferences.timeFormat
+                it[dateFormat] = preferences.dateFormat
+                it[defaultStatsRange] = preferences.defaultStatsRange
+                it[relativeTimestamps] = preferences.relativeTimestamps
+                it[updatedAtMs] = preferences.updatedAtMs
+            }
+            preferences
+        }
+}
+
 private fun ResultRow.toAuthAccountRecord(): AuthAccountRecord =
     AuthAccountRecord(
         id = this[AuthAccountsTable.id],
@@ -400,4 +442,15 @@ private fun ResultRow.toApiKeyRecord(): ApiKeyRecord =
         expiresAtMs = this[ApiKeysTable.expiresAtMs],
         revokedAtMs = this[ApiKeysTable.revokedAtMs],
         createdAtMs = this[ApiKeysTable.createdAtMs],
+    )
+
+private fun ResultRow.toUserPreferencesRecord(): UserPreferencesRecord =
+    UserPreferencesRecord(
+        accountId = this[UserPreferencesTable.accountId],
+        theme = this[UserPreferencesTable.theme],
+        timeFormat = this[UserPreferencesTable.timeFormat],
+        dateFormat = this[UserPreferencesTable.dateFormat],
+        defaultStatsRange = this[UserPreferencesTable.defaultStatsRange],
+        relativeTimestamps = this[UserPreferencesTable.relativeTimestamps],
+        updatedAtMs = this[UserPreferencesTable.updatedAtMs],
     )

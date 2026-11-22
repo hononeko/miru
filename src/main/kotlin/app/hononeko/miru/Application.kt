@@ -40,6 +40,7 @@ import app.hononeko.miru.persistence.repository.ExposedApiKeyRepository
 import app.hononeko.miru.persistence.repository.ExposedLibraryRepository
 import app.hononeko.miru.persistence.repository.ExposedMediaServerRepository
 import app.hononeko.miru.persistence.repository.ExposedPlaybackHistoryRepository
+import app.hononeko.miru.persistence.repository.ExposedUserPreferencesRepository
 import app.hononeko.miru.persistence.repository.ExposedUserRepository
 import app.hononeko.miru.service.HistoryAndStatsService
 import app.hononeko.miru.service.LibraryQueryService
@@ -361,6 +362,7 @@ private fun initAuthService(
             userRepository = userRepository,
             passwordHasher = Argon2idPasswordHasher(),
             authConfig = appConfig.auth,
+            preferencesRepository = ExposedUserPreferencesRepository(databaseHandle),
         )
     runBlocking {
         authService.bootstrapAdminIfConfigured()

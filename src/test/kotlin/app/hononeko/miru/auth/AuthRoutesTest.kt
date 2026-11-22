@@ -20,6 +20,8 @@ import app.hononeko.miru.http.PrincipalResponse
 import app.hononeko.miru.http.ProblemDetails
 import app.hononeko.miru.http.SetLinkedMediaUsersRequest
 import app.hononeko.miru.http.SetupAdminRequest
+import app.hononeko.miru.http.UpdateUserPreferencesRequest
+import app.hononeko.miru.http.UserPreferencesResponse
 import app.hononeko.miru.http.respondEither
 import app.hononeko.miru.miruModule
 import app.hononeko.miru.persistence.DatabaseFactory
@@ -31,6 +33,7 @@ import app.hononeko.miru.persistence.repository.ExposedApiKeyRepository
 import app.hononeko.miru.persistence.repository.ExposedAuthAccountRepository
 import app.hononeko.miru.persistence.repository.ExposedAuthSessionRepository
 import app.hononeko.miru.persistence.repository.ExposedMediaServerRepository
+import app.hononeko.miru.persistence.repository.ExposedUserPreferencesRepository
 import app.hononeko.miru.persistence.repository.ExposedUserRepository
 import app.hononeko.miru.domain.error.MiruError
 import io.kotest.assertions.arrow.core.shouldBeLeft
@@ -75,6 +78,7 @@ private class TestAuthHarness(
     val apiKeyRepo: ExposedApiKeyRepository,
     val serverRepo: ExposedMediaServerRepository,
     val userRepo: ExposedUserRepository,
+    val preferencesRepo: ExposedUserPreferencesRepository,
     val hasher: PasswordHasher,
     val authService: AuthService,
     val appConfig: AppConfig,
@@ -101,6 +105,7 @@ private fun createHarness(
     val apiKeyRepo = ExposedApiKeyRepository(handle)
     val serverRepo = ExposedMediaServerRepository(handle)
     val userRepo = ExposedUserRepository(handle)
+    val preferencesRepo = ExposedUserPreferencesRepository(handle)
     val hasher = Argon2idPasswordHasher(Argon2Params(memoryKb = 1024, iterations = 1, parallelism = 1))
     val authConfig =
         AuthConfig(
@@ -119,6 +124,7 @@ private fun createHarness(
             authConfig = authConfig,
             sessionTtlMs = sessionTtlMs,
             clock = { nowMs.get() },
+            preferencesRepository = preferencesRepo,
         )
     val appConfig =
         AppConfig(
@@ -137,6 +143,7 @@ private fun createHarness(
         apiKeyRepo = apiKeyRepo,
         serverRepo = serverRepo,
         userRepo = userRepo,
+        preferencesRepo = preferencesRepo,
         hasher = hasher,
         authService = service,
         appConfig = appConfig,
@@ -841,6 +848,239 @@ class AuthRoutesTest :
                     adminMe.status shouldBe HttpStatusCode.OK
                     MiruJson.decodeFromString<PrincipalResponse>(adminMe.bodyAsText()).avatarUrl.shouldBeNull()
                 }
+            }
+        }
+
+        test("GET and PUT /api/v1/auth/me/preferences return defaults, persist per-account updates, and validate fields") {
+            createHarness(adminUsername = "admin", adminPassword = "Admin-strong-password-1").use { harness ->
+                harness.authService.bootstrapAdminIfConfigured().shouldBeRight()
+                val adminLogin = harness.authService.login("admin", "Admin-strong-password-1").shouldBeRight()
+                harness.authService
+                    .createAccount(
+                        username = "viewer",
+                        password = "Viewer-strong-password-1",
+                        role = MiruRole.USER,
+                    ).shouldBeRight()
+                val viewerLogin = harness.authService.login("viewer", "Viewer-strong-password-1").shouldBeRight()
+
+                testApplication {
+                    setupAuthApp(harness)
+
+                    // Unauthenticated -> 401 Problem Details
+                    client.get("/api/v1/auth/me/preferences").status shouldBe HttpStatusCode.Unauthorized
+                    val unauthPut =
+                        client.put("/api/v1/auth/me/preferences") {
+                            contentType(ContentType.Application.Json)
+                            setBody(
+                                MiruJson.encodeToString(
+                                    UpdateUserPreferencesRequest(
+                                        theme = "dark",
+                                        timeFormat = "12h",
+                                        dateFormat = "mdy",
+                                        defaultStatsRange = "7d",
+                                        relativeTimestamps = false,
+                                    ),
+                                ),
+                            )
+                        }
+                    unauthPut.status shouldBe HttpStatusCode.Unauthorized
+
+                    // Initial GET returns defaults
+                    val initialAdmin =
+                        client.get("/api/v1/auth/me/preferences") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                        }
+                    initialAdmin.status shouldBe HttpStatusCode.OK
+                    MiruJson.decodeFromString<UserPreferencesResponse>(initialAdmin.bodyAsText()) shouldBe
+                        UserPreferencesResponse(
+                            theme = "system",
+                            timeFormat = "24h",
+                            dateFormat = "iso",
+                            defaultStatsRange = "30d",
+                            relativeTimestamps = true,
+                            updatedAtMs = null,
+                        )
+
+                    // Viewer updates preferences
+                    harness.nowMs.set(1_010_000L)
+                    val updateViewer =
+                        client.put("/api/v1/auth/me/preferences") {
+                            cookie(SESSION_COOKIE_NAME, viewerLogin.signedToken)
+                            contentType(ContentType.Application.Json)
+                            setBody(
+                                MiruJson.encodeToString(
+                                    UpdateUserPreferencesRequest(
+                                        theme = "dark",
+                                        timeFormat = "12h",
+                                        dateFormat = "mdy",
+                                        defaultStatsRange = "7d",
+                                        relativeTimestamps = false,
+                                    ),
+                                ),
+                            )
+                        }
+                    updateViewer.status shouldBe HttpStatusCode.OK
+                    val expectedViewer =
+                        UserPreferencesResponse(
+                            theme = "dark",
+                            timeFormat = "12h",
+                            dateFormat = "mdy",
+                            defaultStatsRange = "7d",
+                            relativeTimestamps = false,
+                            updatedAtMs = 1_010_000L,
+                        )
+                    MiruJson.decodeFromString<UserPreferencesResponse>(updateViewer.bodyAsText()) shouldBe expectedViewer
+
+                    // Subsequent GET for viewer returns persisted preferences
+                    val getViewer =
+                        client.get("/api/v1/auth/me/preferences") {
+                            cookie(SESSION_COOKIE_NAME, viewerLogin.signedToken)
+                        }
+                    getViewer.status shouldBe HttpStatusCode.OK
+                    MiruJson.decodeFromString<UserPreferencesResponse>(getViewer.bodyAsText()) shouldBe expectedViewer
+
+                    // Admin preferences remain independent defaults
+                    val getAdminAfter =
+                        client.get("/api/v1/auth/me/preferences") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                        }
+                    getAdminAfter.status shouldBe HttpStatusCode.OK
+                    MiruJson.decodeFromString<UserPreferencesResponse>(getAdminAfter.bodyAsText()) shouldBe
+                        UserPreferencesResponse(
+                            theme = "system",
+                            timeFormat = "24h",
+                            dateFormat = "iso",
+                            defaultStatsRange = "30d",
+                            relativeTimestamps = true,
+                            updatedAtMs = null,
+                        )
+
+                    // Invalid fields -> 400 Problem Details with field errors
+                    val invalidResp =
+                        client.put("/api/v1/auth/me/preferences") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                            contentType(ContentType.Application.Json)
+                            setBody(
+                                MiruJson.encodeToString(
+                                    UpdateUserPreferencesRequest(
+                                        theme = "neon",
+                                        timeFormat = "99h",
+                                        dateFormat = "ymd",
+                                        defaultStatsRange = "1y",
+                                        relativeTimestamps = true,
+                                    ),
+                                ),
+                            )
+                        }
+                    invalidResp.status shouldBe HttpStatusCode.BadRequest
+                    val problem = MiruJson.decodeFromString<ProblemDetails>(invalidResp.bodyAsText())
+                    problem.status shouldBe 400
+                    val fieldErrors = problem.errors.shouldNotBeNull()
+                    fieldErrors.keys shouldContainExactly setOf("theme", "timeFormat", "dateFormat", "defaultStatsRange")
+                }
+            }
+        }
+
+        test("preferences endpoints and AuthService handle AUTH_MODE=none, synthetic accounts, and null repository gracefully") {
+            createHarness(mode = AuthMode.NONE, sessionSecret = "").use { harness ->
+                testApplication {
+                    setupAuthApp(harness)
+
+                    val getResp = client.get("/api/v1/auth/me/preferences")
+                    getResp.status shouldBe HttpStatusCode.OK
+                    MiruJson.decodeFromString<UserPreferencesResponse>(getResp.bodyAsText()) shouldBe
+                        UserPreferencesResponse(
+                            theme = "system",
+                            timeFormat = "24h",
+                            dateFormat = "iso",
+                            defaultStatsRange = "30d",
+                            relativeTimestamps = true,
+                            updatedAtMs = null,
+                        )
+
+                    val putResp =
+                        client.put("/api/v1/auth/me/preferences") {
+                            contentType(ContentType.Application.Json)
+                            setBody(
+                                MiruJson.encodeToString(
+                                    UpdateUserPreferencesRequest(
+                                        theme = "light",
+                                        timeFormat = "12h",
+                                        dateFormat = "dmy",
+                                        defaultStatsRange = "90d",
+                                        relativeTimestamps = false,
+                                    ),
+                                ),
+                            )
+                        }
+                    putResp.status shouldBe HttpStatusCode.OK
+                    val updated = MiruJson.decodeFromString<UserPreferencesResponse>(putResp.bodyAsText())
+                    updated.theme shouldBe "light"
+                    updated.timeFormat shouldBe "12h"
+                    updated.dateFormat shouldBe "dmy"
+                    updated.defaultStatsRange shouldBe "90d"
+                    updated.relativeTimestamps shouldBe false
+
+                    val invalidPut =
+                        client.put("/api/v1/auth/me/preferences") {
+                            contentType(ContentType.Application.Json)
+                            setBody("""{"theme":"invalid"}""")
+                        }
+                    invalidPut.status shouldBe HttpStatusCode.BadRequest
+                }
+            }
+
+            // Synthetic/missing account row and null preferencesRepository in LOCAL mode
+            createHarness(mode = AuthMode.LOCAL).use { harness ->
+                val syntheticPrincipal =
+                    MiruPrincipal(
+                        accountId = "missing-account-id",
+                        username = "ghost",
+                        role = MiruRole.USER,
+                        authSource = AuthSource.SESSION_COOKIE,
+                    )
+                harness.authService.getPreferences(syntheticPrincipal).shouldBeRight() shouldBe
+                    UserPreferencesResponse(
+                        theme = "system",
+                        timeFormat = "24h",
+                        dateFormat = "iso",
+                        defaultStatsRange = "30d",
+                        relativeTimestamps = true,
+                        updatedAtMs = null,
+                    )
+                val updatedMissing =
+                    harness.authService
+                        .updatePreferences(
+                            syntheticPrincipal,
+                            UpdateUserPreferencesRequest(
+                                theme = "dark",
+                                timeFormat = "24h",
+                                dateFormat = "iso",
+                                defaultStatsRange = "all",
+                                relativeTimestamps = true,
+                            ),
+                        ).shouldBeRight()
+                updatedMissing.theme shouldBe "dark"
+                updatedMissing.defaultStatsRange shouldBe "all"
+
+                val serviceWithoutRepo =
+                    AuthService(
+                        accountRepository = harness.accountRepo,
+                        sessionRepository = harness.sessionRepo,
+                        apiKeyRepository = harness.apiKeyRepo,
+                        userRepository = harness.userRepo,
+                        passwordHasher = harness.hasher,
+                        authConfig = harness.appConfig.auth,
+                    )
+                serviceWithoutRepo.getPreferences(syntheticPrincipal).shouldBeRight().theme shouldBe "system"
+                val invalidErr =
+                    serviceWithoutRepo
+                        .updatePreferences(
+                            syntheticPrincipal,
+                            UpdateUserPreferencesRequest(theme = "sepia"),
+                        ).shouldBeLeft()
+                        .shouldBeInstanceOf<MiruError.ValidationError>()
+                invalidErr.fieldErrors.keys shouldContainExactly setOf("theme")
             }
         }
     })

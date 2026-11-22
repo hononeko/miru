@@ -290,6 +290,62 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /api/v1/auth/me/preferences:
+    get:
+      tags: [Auth]
+      operationId: getUserPreferences
+      summary: Get current authenticated user's preferences
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Current user preferences (or defaults if none saved yet)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPreferencesResponse'
+        '401':
+          description: Missing, invalid, or expired credentials
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+    put:
+      tags: [Auth]
+      operationId: updateUserPreferences
+      summary: Update current authenticated user's preferences
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserPreferencesRequest'
+      responses:
+        '200':
+          description: Updated user preferences
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPreferencesResponse'
+        '400':
+          description: Invalid preference values
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Missing, invalid, or expired credentials
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
   /api/v1/admin/accounts:
     get:
       tags: [Admin]
@@ -1893,6 +1949,48 @@ components:
         avatarUrl:
           type: string
           nullable: true
+
+    UserPreferencesResponse:
+      type: object
+      required: [theme, timeFormat, dateFormat, defaultStatsRange, relativeTimestamps]
+      properties:
+        theme:
+          type: string
+          enum: [system, dark, light]
+        timeFormat:
+          type: string
+          enum: [24h, 12h]
+        dateFormat:
+          type: string
+          enum: [iso, mdy, dmy]
+        defaultStatsRange:
+          type: string
+          enum: [7d, 30d, 90d, all]
+        relativeTimestamps:
+          type: boolean
+        updatedAtMs:
+          type: integer
+          format: int64
+          nullable: true
+
+    UpdateUserPreferencesRequest:
+      type: object
+      required: [theme, timeFormat, dateFormat, defaultStatsRange, relativeTimestamps]
+      properties:
+        theme:
+          type: string
+          enum: [system, dark, light]
+        timeFormat:
+          type: string
+          enum: [24h, 12h]
+        dateFormat:
+          type: string
+          enum: [iso, mdy, dmy]
+        defaultStatsRange:
+          type: string
+          enum: [7d, 30d, 90d, all]
+        relativeTimestamps:
+          type: boolean
 
     AccountResponse:
       type: object

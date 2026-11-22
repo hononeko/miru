@@ -53,7 +53,9 @@ describe('AppShell user avatars', () => {
 		render(AppShell);
 
 		expect(screen.queryByRole('img')).toBeNull();
-		const fallbacks = screen.getAllByLabelText('alice');
+		const fallbacks = screen
+			.getAllByLabelText('alice')
+			.filter((el) => el.tagName === 'SPAN');
 		expect(fallbacks).toHaveLength(3);
 		for (const el of fallbacks) {
 			expect(el.textContent?.trim()).toBe('A');

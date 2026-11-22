@@ -3,9 +3,12 @@ import {
 	formatBandwidthKbps,
 	formatBytes,
 	formatClockMs,
+	formatDateTime,
 	formatDurationSec,
 	formatMediaTitle,
+	formatPreferencePreview,
 	formatRelativeTime,
+	formatShortDateTime,
 	getDecisionMeta,
 	safeInitial,
 	validatePassword
@@ -83,5 +86,51 @@ describe('Miru telemetry formatters', () => {
 		expect(validatePassword('ALLUPPERCASE12')).toContain('at least 1 lowercase letter');
 		expect(validatePassword('NoDigitsHereAtAll')).toContain('at least 1 digit');
 		expect(validatePassword('ValidPassword1')).toBeNull();
+	});
+
+	it('formats dates, times, short dates, relative toggle, and preference preview per user prefs', () => {
+		// Construct local date/time deterministically so tests do not depend on machine TZ
+		const sample = new Date(2026, 10, 22, 21, 5, 0).getTime(); // Nov 22, 2026 21:05 local
+		const sameDayLater = new Date(2026, 10, 22, 23, 0, 0).getTime();
+		const otherDay = new Date(2026, 10, 25, 10, 0, 0).getTime();
+
+		expect(formatDateTime(null)).toBe('—');
+		expect(formatDateTime(sample, { dateFormat: 'iso', timeFormat: '24h' })).toBe('2026-11-22 21:05');
+		expect(formatDateTime(sample, { dateFormat: 'mdy', timeFormat: '12h' })).toBe('Nov 22, 2026 9:05 PM');
+		expect(formatDateTime(sample, { dateFormat: 'dmy', timeFormat: '12h' })).toBe('22/11/2026 9:05 PM');
+
+		expect(formatShortDateTime(sample, { dateFormat: 'iso', timeFormat: '24h' }, sameDayLater)).toBe('Today 21:05');
+		expect(formatShortDateTime(sample, { dateFormat: 'iso', timeFormat: '12h' }, sameDayLater)).toBe('Today 9:05 PM');
+		expect(formatShortDateTime(sample, { dateFormat: 'iso', timeFormat: '24h' }, otherDay)).toBe('2026-11-22');
+		expect(formatShortDateTime(sample, { dateFormat: 'mdy', timeFormat: '24h' }, otherDay)).toBe('Nov 22, 2026');
+		expect(formatShortDateTime(sample, { dateFormat: 'dmy', timeFormat: '24h' }, otherDay)).toBe('22/11/2026');
+
+		expect(
+			formatRelativeTime(sample, sample + 120_000, {
+				dateFormat: 'mdy',
+				timeFormat: '12h',
+				relativeTimestamps: true
+			})
+		).toBe('2m ago');
+		expect(
+			formatRelativeTime(sample, sample + 120_000, {
+				dateFormat: 'mdy',
+				timeFormat: '12h',
+				relativeTimestamps: false
+			})
+		).toBe('Nov 22, 2026 9:05 PM');
+
+		expect(
+			formatPreferencePreview(
+				{ dateFormat: 'iso', timeFormat: '24h', relativeTimestamps: true },
+				sample
+			)
+		).toBe('2026-11-22 21:05 · 5m ago');
+		expect(
+			formatPreferencePreview(
+				{ dateFormat: 'dmy', timeFormat: '12h', relativeTimestamps: false },
+				sample
+			)
+		).toBe('22/11/2026 9:05 PM');
 	});
 });

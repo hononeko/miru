@@ -65,3 +65,15 @@ object ApiKeysTable : Table("api_keys") {
         index(isUnique = false, accountId)
     }
 }
+
+object UserPreferencesTable : Table("user_preferences") {
+    val accountId = text("account_id").references(AuthAccountsTable.id, onDelete = ReferenceOption.CASCADE)
+    val theme = text("theme").default("system")
+    val timeFormat = text("time_format").default("24h")
+    val dateFormat = text("date_format").default("iso")
+    val defaultStatsRange = text("default_stats_range").default("30d")
+    val relativeTimestamps = bool("relative_timestamps").default(true)
+    val updatedAtMs = long("updated_at_ms")
+
+    override val primaryKey = PrimaryKey(accountId)
+}

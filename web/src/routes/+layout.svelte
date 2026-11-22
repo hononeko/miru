@@ -7,6 +7,7 @@
 	import AppShell from '$components/layout/AppShell.svelte';
 	import MiruLogo from '$components/layout/MiruLogo.svelte';
 	import { authStore } from '$stores/auth.svelte';
+	import { preferencesStore } from '$stores/preferences.svelte';
 	import { streamsStore } from '$stores/streams.svelte';
 
 	type Props = {
@@ -38,11 +39,17 @@
 		}
 
 		if (authStore.authMode !== 'none' && !authStore.authenticated) {
+			preferencesStore.clearLoadedAccount();
 			streamsStore.disconnect();
 			if (pathname !== '/login') {
 				void goto('/login');
 			}
 			return;
+		}
+
+		const accountKey = authStore.principal?.accountId ?? authStore.authMode;
+		if (preferencesStore.loadedAccountId !== accountKey) {
+			void preferencesStore.loadForAccount(accountKey);
 		}
 
 		if (pathname === '/login' || pathname === '/setup') {

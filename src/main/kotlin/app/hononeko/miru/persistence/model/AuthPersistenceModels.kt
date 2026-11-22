@@ -50,3 +50,13 @@ data class ApiKeyRecord(
             "keyHash=***, role=$role, lastUsedAtMs=$lastUsedAtMs, " +
             "expiresAtMs=$expiresAtMs, revokedAtMs=$revokedAtMs, createdAtMs=$createdAtMs)"
 }
+
+data class UserPreferencesRecord(
+    val accountId: String,
+    val theme: String = "system",
+    val timeFormat: String = "24h",
+    val dateFormat: String = "iso",
+    val defaultStatsRange: String = "30d",
+    val relativeTimestamps: Boolean = true,
+    val updatedAtMs: Long,
+)

@@ -7,15 +7,25 @@
 	import StreamCard from '$components/miru/StreamCard.svelte';
 	import BarChart, { type BarPoint } from '$components/miru/BarChart.svelte';
 	import { authStore } from '$stores/auth.svelte';
+	import { preferencesStore } from '$stores/preferences.svelte';
 	import { streamsStore } from '$stores/streams.svelte';
 	import { formatBandwidthKbps, formatDurationSec, formatRelativeTime } from '$lib/utils';
 	import { Link2, Radio, Server, Tv } from 'lucide-svelte';
 
-	let range = $state<StatsRange>('30d');
+	let lastDefaultRange = preferencesStore.prefs.defaultStatsRange;
+	let range = $state<StatsRange>(lastDefaultRange);
 	let overview = $state<OverviewStatsResponse | null>(null);
 	let loadingStats = $state(true);
 	let statsError = $state<string | null>(null);
 	let plexStatus = $state<PlexConnectionStatus | null>(null);
+
+	$effect(() => {
+		const nextDefault = preferencesStore.prefs.defaultStatsRange;
+		if (nextDefault !== lastDefaultRange) {
+			lastDefaultRange = nextDefault;
+			range = nextDefault;
+		}
+	});
 
 	$effect(() => {
 		if (authStore.isAdmin) {
@@ -223,7 +233,7 @@
 			</h2>
 			{#if streamsStore.lastUpdatedAtMs}
 				<span class="font-mono text-[11px] text-fg-muted">
-					Updated {formatRelativeTime(streamsStore.lastUpdatedAtMs)}
+					Updated {formatRelativeTime(streamsStore.lastUpdatedAtMs, Date.now(), preferencesStore.prefs)}
 				</span>
 			{/if}
 		</div>

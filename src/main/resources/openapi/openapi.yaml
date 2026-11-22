@@ -20,6 +20,8 @@ tags:
     description: Local authentication, first-run admin setup, and session management
   - name: Admin
     description: Administrator-only account, media user linking, and API key management
+  - name: Artwork
+    description: Proxied media server artwork and SSRF-protected user avatar endpoints
 
 paths:
   /healthz:
@@ -463,6 +465,253 @@ paths:
                 $ref: '#/components/schemas/ProblemDetails'
         '404':
           description: API key not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/media/{ratingKey}/thumb:
+    get:
+      tags: [Artwork]
+      operationId: getMediaThumb
+      summary: Proxy media thumbnail artwork from the media server
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: ratingKey
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9_-]+$'
+        - name: w
+          in: query
+          required: false
+          description: Optional requested width in pixels (1-2000)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2000
+        - name: h
+          in: query
+          required: false
+          description: Optional requested height in pixels (1-2000)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2000
+        - name: If-None-Match
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Proxied thumbnail image bytes
+          headers:
+            ETag:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+            X-Content-Type-Options:
+              schema:
+                type: string
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '304':
+          description: Artwork matches If-None-Match ETag
+        '400':
+          description: Invalid ratingKey or dimensions
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Artwork not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '502':
+          description: Upstream media server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/media/{ratingKey}/art:
+    get:
+      tags: [Artwork]
+      operationId: getMediaArt
+      summary: Proxy media background art from the media server
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: ratingKey
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9_-]+$'
+        - name: w
+          in: query
+          required: false
+          description: Optional requested width in pixels (1-2000)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2000
+        - name: h
+          in: query
+          required: false
+          description: Optional requested height in pixels (1-2000)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2000
+        - name: If-None-Match
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Proxied background art image bytes
+          headers:
+            ETag:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+            X-Content-Type-Options:
+              schema:
+                type: string
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '304':
+          description: Artwork matches If-None-Match ETag
+        '400':
+          description: Invalid ratingKey or dimensions
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Artwork not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '502':
+          description: Upstream media server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/users/{id}/avatar:
+    get:
+      tags: [Artwork]
+      operationId: getUserAvatar
+      summary: Proxy user avatar from the media server or allowlisted HTTPS avatar host
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: If-None-Match
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Proxied user avatar image bytes
+          headers:
+            ETag:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+            X-Content-Type-Options:
+              schema:
+                type: string
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '304':
+          description: Avatar matches If-None-Match ETag
+        '400':
+          description: Invalid or disallowed avatar URL target
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden access to user avatar
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: User or user avatar not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '502':
+          description: Upstream avatar host error
           content:
             application/problem+json:
               schema:

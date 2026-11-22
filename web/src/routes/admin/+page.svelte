@@ -35,6 +35,7 @@
 	import Button from '$components/ui/Button.svelte';
 	import Sheet from '$components/ui/Sheet.svelte';
 	import { authStore } from '$stores/auth.svelte';
+	import { streamsStore } from '$stores/streams.svelte';
 	import { formatBytes, formatRelativeTime, safeInitial, validatePassword } from '$lib/utils';
 
 	type WizardStep = 'starting' | 'waiting' | 'expired' | 'discovering' | 'select' | 'saving' | 'done';
@@ -282,6 +283,7 @@
 				})
 			);
 			wizardStep = 'done';
+			void streamsStore.refresh();
 			await loadAll();
 		} catch (err) {
 			wizardError = err instanceof MiruApiError ? err.detail : 'Failed to save Plex server selection';

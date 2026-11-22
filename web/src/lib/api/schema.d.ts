@@ -811,6 +811,8 @@ export interface components {
             streams: components["schemas"]["ActiveStreamDto"][];
             /** Format: int32 */
             totalCount: number;
+            /** @description Friendly name of the currently active media server, if configured. */
+            serverName?: string | null;
         };
         ActiveStreamDto: {
             serverId: string;

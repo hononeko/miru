@@ -133,11 +133,11 @@
 		</div>
 
 		<div class="flex flex-col gap-2.5">
-			<div class="flex items-center justify-between rounded-lg border border-border bg-canvas px-3 py-2">
-				<span class="flex items-center gap-2 font-heading text-[11px] font-semibold text-fg-primary">
+			<div class="flex items-center justify-between gap-2 rounded-lg border border-border bg-canvas px-3 py-2">
+				<span class="flex min-w-0 items-center gap-2 font-heading text-[11px] font-semibold text-fg-primary">
 					<span
 						class={cn(
-							'h-2 w-2 rounded-full',
+							'h-2 w-2 shrink-0 rounded-full',
 							streamsStore.status === 'connected'
 								? 'bg-direct-play'
 								: streamsStore.status === 'offline'
@@ -145,9 +145,11 @@
 									: 'bg-hw-transcode animate-pulse'
 						)}
 					></span>
-					Telemetry
+					<span class="truncate" title={streamsStore.serverName ?? 'Telemetry'}>
+						{streamsStore.serverName ?? 'Telemetry'}
+					</span>
 				</span>
-				<span class="font-mono text-[10px] font-semibold uppercase text-fg-secondary">
+				<span class="shrink-0 font-mono text-[10px] font-semibold uppercase text-fg-secondary">
 					{streamsStore.status === 'connected' ? 'SSE' : streamsStore.status}
 				</span>
 			</div>

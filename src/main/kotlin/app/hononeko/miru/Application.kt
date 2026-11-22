@@ -158,6 +158,7 @@ private fun runServer() {
             userRepository = userRepository,
             playbackHistoryRepository = playbackHistoryRepository,
             liveTechnicalProvider = { plexRuntimeManager.sessionEngine.currentLiveTechnical() },
+            serverNameProvider = { plexRuntimeManager.currentServerName() },
         )
     val libraryRepository = ExposedLibraryRepository(databaseHandle)
     val libraryQueryService = LibraryQueryService(libraryRepository = libraryRepository)

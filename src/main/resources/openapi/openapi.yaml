@@ -2037,6 +2037,10 @@ components:
         totalCount:
           type: integer
           format: int32
+        serverName:
+          type: string
+          nullable: true
+          description: Friendly name of the currently active media server, if configured.
 
     ActiveStreamDto:
       type: object

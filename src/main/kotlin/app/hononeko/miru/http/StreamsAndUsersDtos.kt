@@ -6,6 +6,7 @@ import kotlinx.serialization.Serializable
 data class ActiveStreamsResponse(
     val streams: List<ActiveStreamDto>,
     val totalCount: Int,
+    val serverName: String? = null,
 )
 
 @Serializable

@@ -94,6 +94,7 @@ private class StreamsUsersHarness(
             userRepository = userRepo,
             playbackHistoryRepository = historyRepo,
             liveTechnicalProvider = { liveTechRef.get() },
+            serverNameProvider = { "Main Plex" },
         )
 
     override fun close() {
@@ -365,6 +366,7 @@ class StreamsAndUsersRoutesTest :
 
                     val adminBody = MiruJson.decodeFromString<ActiveStreamsResponse>(adminText)
                     adminBody.totalCount shouldBe 2
+                    adminBody.serverName shouldBe "Main Plex"
                     adminBody.streams shouldHaveSize 2
 
                     val epDto = adminBody.streams[0] // startedAtMs=12_000 > 10_000
@@ -405,6 +407,7 @@ class StreamsAndUsersRoutesTest :
                     bobResp.status shouldBe HttpStatusCode.OK
                     val bobBody = MiruJson.decodeFromString<ActiveStreamsResponse>(bobResp.bodyAsText())
                     bobBody.totalCount shouldBe 1
+                    bobBody.serverName shouldBe "Main Plex"
                     bobBody.streams.single().user.id shouldBe "mu-bob"
                 }
             }
@@ -510,6 +513,7 @@ class StreamsAndUsersRoutesTest :
                         snapshotFrame.event shouldBe "snapshot"
                         val snapshotPayload = MiruJson.decodeFromString<ActiveStreamsResponse>(snapshotFrame.data.shouldNotBeNull())
                         snapshotPayload.totalCount shouldBe 0
+                        snapshotPayload.serverName shouldBe "Main Plex"
 
                         // Wait for subscription to be registered
                         while (harness.sessionEvents.subscriptionCount.value < 1) {
@@ -625,6 +629,7 @@ class StreamsAndUsersRoutesTest :
                     withTimeout(5_000L) {
                         val snap = adminSnapshot.await()
                         snap.totalCount shouldBe 1
+                        snap.serverName shouldBe "Main Plex"
                         snap.streams.single().user.id shouldBe "mu-alice"
                     }
                     adminJob.cancel()

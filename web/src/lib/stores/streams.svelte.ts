@@ -17,6 +17,7 @@ const MAX_BACKOFF_MS = 30_000;
 export class StreamsStore {
 	streams = $state<ActiveStreamDto[]>([]);
 	status = $state<SseStatus>('offline');
+	serverName = $state<string | null>(null);
 	lastUpdatedAtMs = $state<number | null>(null);
 
 	private es: EventSource | null = null;
@@ -62,6 +63,7 @@ export class StreamsStore {
 			this.es = null;
 		}
 		this.status = 'offline';
+		this.serverName = null;
 	}
 
 	async refresh(): Promise<void> {
@@ -73,6 +75,7 @@ export class StreamsStore {
 
 	applySnapshot(payload: ActiveStreamsResponse): void {
 		this.streams = [...payload.streams].sort((a, b) => b.startedAtMs - a.startedAtMs);
+		this.serverName = payload.serverName?.trim() || null;
 		this.lastUpdatedAtMs = Date.now();
 	}
 

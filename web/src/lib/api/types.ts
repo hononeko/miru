@@ -11,6 +11,8 @@ export type AuthSource = Schemas['AuthSource'];
 export type AuthStatusResponse = Schemas['AuthStatusResponse'];
 export type AuthProvidersResponse = Schemas['AuthProvidersResponse'];
 export type PrincipalResponse = Schemas['PrincipalResponse'];
+export type UserPreferencesResponse = Schemas['UserPreferencesResponse'];
+export type UpdateUserPreferencesRequest = Schemas['UpdateUserPreferencesRequest'];
 export type AccountResponse = Schemas['AccountResponse'];
 export type AccountListResponse = Schemas['AccountListResponse'];
 export type CreateAccountRequest = Schemas['CreateAccountRequest'];
@@ -61,4 +63,7 @@ export type PlexDiscoveredServersResponse = Schemas['PlexDiscoveredServersRespon
 export type PlexSelectServerRequest = Schemas['PlexSelectServerRequest'];
 export type PlexSelectServerResponse = Schemas['PlexSelectServerResponse'];
 
-export type StatsRange = '7d' | '30d' | '90d' | 'all';
+export type StatsRange = UserPreferencesResponse['defaultStatsRange'];
+export type ThemePreference = UserPreferencesResponse['theme'];
+export type TimeFormatPreference = UserPreferencesResponse['timeFormat'];
+export type DateFormatPreference = UserPreferencesResponse['dateFormat'];

@@ -7,6 +7,7 @@
 	import Button from '$components/ui/Button.svelte';
 	import Sheet from '$components/ui/Sheet.svelte';
 	import PlayDetailContent from '$components/miru/PlayDetailContent.svelte';
+	import { preferencesStore } from '$stores/preferences.svelte';
 	import {
 		cn,
 		formatDurationSec,
@@ -294,7 +295,7 @@
 								)}
 							>
 								<td class="whitespace-nowrap px-4 py-3 font-mono text-[11px] text-fg-secondary tabular-nums">
-									{formatShortDateTime(item.stoppedAtMs)}
+									{formatShortDateTime(item.stoppedAtMs, preferencesStore.prefs)}
 								</td>
 								<td class="whitespace-nowrap px-4 py-3 font-heading text-xs font-semibold text-fg-primary">
 									{item.username || item.userId}
@@ -376,7 +377,7 @@
 					<div class="flex items-center justify-between gap-2">
 						<Badge tone={dec.tone} dot>{dec.label}</Badge>
 						<span class="font-mono text-[10px] text-fg-muted tabular-nums">
-							{formatDurationSec(item.watchedDurationSec)} · {formatShortDateTime(item.stoppedAtMs)}
+							{formatDurationSec(item.watchedDurationSec)} · {formatShortDateTime(item.stoppedAtMs, preferencesStore.prefs)}
 						</span>
 					</div>
 				</button>

@@ -47,6 +47,25 @@ fun Route.authRoutes(
                 val result = call.requireMiruPrincipal().map { it.toResponse() }
                 call.respondEither(result)
             }
+
+            get("/me/preferences") {
+                val result =
+                    either {
+                        val principal = call.requireMiruPrincipal().bind()
+                        authService.getPreferences(principal).bind()
+                    }
+                call.respondEither(result)
+            }
+
+            put("/me/preferences") {
+                val request = call.receive<UpdateUserPreferencesRequest>()
+                val result =
+                    either {
+                        val principal = call.requireMiruPrincipal().bind()
+                        authService.updatePreferences(principal, request).bind()
+                    }
+                call.respondEither(result)
+            }
         }
     }
 

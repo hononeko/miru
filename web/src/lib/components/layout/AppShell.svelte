@@ -14,7 +14,9 @@
 	} from 'lucide-svelte';
 	import MiruLogo from './MiruLogo.svelte';
 	import Badge from '$components/ui/Badge.svelte';
+	import UserPreferencesModal from '$components/miru/UserPreferencesModal.svelte';
 	import { authStore } from '$stores/auth.svelte';
+	import { preferencesStore } from '$stores/preferences.svelte';
 	import { streamsStore } from '$stores/streams.svelte';
 	import { themeStore } from '$stores/theme.svelte';
 	import { cn, safeInitial } from '$lib/utils';
@@ -24,19 +26,6 @@
 	};
 
 	let { children }: Props = $props();
-
-	let mobileUserMenuOpen = $state(false);
-
-	$effect(() => {
-		void page.url.pathname;
-		mobileUserMenuOpen = false;
-	});
-
-	function handleWindowKeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape' && mobileUserMenuOpen) {
-			mobileUserMenuOpen = false;
-		}
-	}
 
 	const navItems = $derived.by(() => {
 		const items = [
@@ -80,8 +69,6 @@
 		}
 	}
 </script>
-
-<svelte:window onclick={() => (mobileUserMenuOpen = false)} onkeydown={handleWindowKeydown} />
 
 <div class="flex min-h-dvh w-full bg-canvas text-fg-primary">
 	<!-- EXPANDED DESKTOP SIDEBAR (lg: >=1024px) -->
@@ -154,8 +141,13 @@
 				</span>
 			</div>
 
-			<div class="flex items-center justify-between rounded-lg border border-border bg-elevated px-2.5 py-2">
-				<div class="flex min-w-0 items-center gap-2">
+			<div class="flex items-center justify-between gap-1 rounded-lg border border-border bg-elevated px-2 py-1.5">
+				<button
+					type="button"
+					onclick={() => preferencesStore.openModal()}
+					aria-label="Open user preferences"
+					class="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-surface"
+				>
 					<div
 						class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary font-heading text-xs font-bold text-white"
 					>
@@ -169,15 +161,15 @@
 							{authStore.principal?.role === 'ADMIN' ? 'Admin' : 'User'}
 						</p>
 					</div>
-				</div>
-				<div class="flex items-center gap-1">
+				</button>
+				<div class="flex shrink-0 items-center gap-1">
 					<button
 						type="button"
 						onclick={() => themeStore.toggle()}
 						aria-label="Toggle color theme"
 						class="inline-flex h-7 w-7 items-center justify-center rounded-md text-fg-secondary hover:bg-surface hover:text-fg-primary cursor-pointer"
 					>
-						{#if themeStore.mode === 'dark'}
+						{#if themeStore.resolved === 'dark'}
 							<Sun class="h-3.5 w-3.5" />
 						{:else}
 							<Moon class="h-3.5 w-3.5" />
@@ -237,18 +229,29 @@
 			</nav>
 		</div>
 
-		<button
-			type="button"
-			onclick={() => themeStore.toggle()}
-			aria-label="Toggle color theme"
-			class="inline-flex h-10 w-10 items-center justify-center rounded-full text-fg-secondary hover:bg-elevated hover:text-fg-primary cursor-pointer"
-		>
-			{#if themeStore.mode === 'dark'}
-				<Sun class="h-4 w-4" />
-			{:else}
-				<Moon class="h-4 w-4" />
-			{/if}
-		</button>
+		<div class="flex flex-col items-center gap-2">
+			<button
+				type="button"
+				onclick={() => themeStore.toggle()}
+				aria-label="Toggle color theme"
+				class="inline-flex h-10 w-10 items-center justify-center rounded-full text-fg-secondary hover:bg-elevated hover:text-fg-primary cursor-pointer"
+			>
+				{#if themeStore.resolved === 'dark'}
+					<Sun class="h-4 w-4" />
+				{:else}
+					<Moon class="h-4 w-4" />
+				{/if}
+			</button>
+			<button
+				type="button"
+				onclick={() => preferencesStore.openModal()}
+				aria-label="Open user preferences"
+				title={authStore.principal?.username ?? 'User preferences'}
+				class="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full bg-primary font-heading text-xs font-bold text-white ring-2 ring-border transition-transform hover:scale-105 hover:ring-border-strong"
+			>
+				{safeInitial(authStore.principal?.username)}
+			</button>
+		</div>
 	</aside>
 
 	<!-- MAIN CONTENT COLUMN (Mobile Top Bar + Page Body + Mobile M3 Bottom Nav) -->
@@ -265,80 +268,19 @@
 				<Badge tone={sseTone} dot pulse={streamsStore.status === 'connected'} mono>
 					{sseShortLabel}
 				</Badge>
-				<div class="relative">
-					<button
-						type="button"
-						onclick={(e) => {
-							e.stopPropagation();
-							mobileUserMenuOpen = !mobileUserMenuOpen;
-						}}
-						aria-label="Account menu"
-						aria-haspopup="menu"
-						aria-expanded={mobileUserMenuOpen}
-						class="inline-flex h-8 max-w-[132px] cursor-pointer items-center gap-1.5 rounded-full border border-border bg-elevated py-0.5 pr-2.5 pl-1 font-heading text-xs font-semibold text-fg-primary transition-colors hover:border-border-strong"
+				<button
+					type="button"
+					onclick={() => preferencesStore.openModal()}
+					aria-label="Open user preferences"
+					class="inline-flex h-8 max-w-[132px] cursor-pointer items-center gap-1.5 rounded-full border border-border bg-elevated py-0.5 pr-2.5 pl-1 font-heading text-xs font-semibold text-fg-primary transition-colors hover:border-border-strong"
+				>
+					<span
+						class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-bold text-white"
 					>
-						<span
-							class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-bold text-white"
-						>
-							{safeInitial(authStore.principal?.username)}
-						</span>
-						<span class="truncate">{authStore.principal?.username ?? 'Guest'}</span>
-					</button>
-
-					{#if mobileUserMenuOpen}
-						<div
-							role="menu"
-							tabindex="-1"
-							onclick={(e) => e.stopPropagation()}
-							onkeydown={(e) => {
-								if (e.key === 'Escape') mobileUserMenuOpen = false;
-							}}
-							class="absolute right-0 z-50 mt-2 w-52 rounded-xl border border-border bg-surface p-2 shadow-lg"
-						>
-							<div class="border-b border-border px-2.5 py-2">
-								<p class="truncate font-heading text-xs font-semibold text-fg-primary">
-									{authStore.principal?.username ?? 'Guest'}
-								</p>
-								<p class="text-[10px] text-fg-muted">
-									{authStore.principal?.role === 'ADMIN' ? 'Admin' : 'User'}
-								</p>
-							</div>
-							<div class="mt-1 flex flex-col gap-0.5">
-								<button
-									type="button"
-									role="menuitem"
-									onclick={() => {
-										themeStore.toggle();
-										mobileUserMenuOpen = false;
-									}}
-									class="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-medium text-fg-secondary hover:bg-elevated hover:text-fg-primary"
-								>
-									{#if themeStore.mode === 'dark'}
-										<Sun class="h-3.5 w-3.5" />
-										Light theme
-									{:else}
-										<Moon class="h-3.5 w-3.5" />
-										Dark theme
-									{/if}
-								</button>
-								{#if authStore.authMode !== 'none' && authStore.authenticated}
-									<button
-										type="button"
-										role="menuitem"
-										onclick={() => {
-											mobileUserMenuOpen = false;
-											void handleLogout();
-										}}
-										class="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-medium text-danger hover:bg-danger-soft"
-									>
-										<LogOut class="h-3.5 w-3.5" />
-										Sign out
-									</button>
-								{/if}
-							</div>
-						</div>
-					{/if}
-				</div>
+						{safeInitial(authStore.principal?.username)}
+					</span>
+					<span class="truncate">{authStore.principal?.username ?? 'Guest'}</span>
+				</button>
 			</div>
 		</header>
 
@@ -387,3 +329,5 @@
 		</nav>
 	</div>
 </div>
+
+<UserPreferencesModal />

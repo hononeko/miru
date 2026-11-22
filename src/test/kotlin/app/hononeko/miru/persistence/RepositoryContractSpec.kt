@@ -22,6 +22,7 @@ import app.hononeko.miru.persistence.model.PlaybackHistoryRecord
 import app.hononeko.miru.persistence.model.PlayerRecord
 import app.hononeko.miru.persistence.model.StreamTechRecord
 import app.hononeko.miru.persistence.model.UserPlaybackSummary
+import app.hononeko.miru.persistence.model.UserPreferencesRecord
 import app.hononeko.miru.persistence.model.UserRecord
 import app.hononeko.miru.persistence.repository.ActiveSessionRepository
 import app.hononeko.miru.persistence.repository.ApiKeyRepository
@@ -34,10 +35,12 @@ import app.hononeko.miru.persistence.repository.ExposedAuthSessionRepository
 import app.hononeko.miru.persistence.repository.ExposedLibraryRepository
 import app.hononeko.miru.persistence.repository.ExposedMediaServerRepository
 import app.hononeko.miru.persistence.repository.ExposedPlaybackHistoryRepository
+import app.hononeko.miru.persistence.repository.ExposedUserPreferencesRepository
 import app.hononeko.miru.persistence.repository.ExposedUserRepository
 import app.hononeko.miru.persistence.repository.LibraryRepository
 import app.hononeko.miru.persistence.repository.MediaServerRepository
 import app.hononeko.miru.persistence.repository.PlaybackHistoryRepository
+import app.hononeko.miru.persistence.repository.UserPreferencesRepository
 import app.hononeko.miru.persistence.repository.UserRepository
 import app.hononeko.miru.service.HistoryAndStatsService
 import app.hononeko.miru.service.HistoryQueryParams
@@ -71,6 +74,7 @@ private class ContractContext(
     val authAccounts: AuthAccountRepository = ExposedAuthAccountRepository(handle)
     val authSessions: AuthSessionRepository = ExposedAuthSessionRepository(handle)
     val apiKeys: ApiKeyRepository = ExposedApiKeyRepository(handle)
+    val userPreferences: UserPreferencesRepository = ExposedUserPreferencesRepository(handle)
 }
 
 fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
@@ -99,6 +103,7 @@ fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
         authAccountTests { ctx }
         authSessionTests { ctx }
         apiKeyTests { ctx }
+        userPreferencesTests { ctx }
         historyAndStatsServiceTests { ctx }
         tautulliBatchAndImporterTests { ctx }
     }
@@ -998,6 +1003,55 @@ private fun FunSpecRootScope.apiKeyTests(ctxProvider: () -> ContractContext) {
 
             ctx.authAccounts.delete("acc-k2").shouldBeRight() shouldBe true
             ctx.apiKeys.findById("key-2").shouldBeRight().shouldBeNull()
+        }
+    }
+}
+
+private fun FunSpecRootScope.userPreferencesTests(ctxProvider: () -> ContractContext) {
+    context("UserPreferencesRepository") {
+        test("upserts, updates, reads back user preferences, and cascades on account deletion") {
+            val ctx = ctxProvider()
+            val account =
+                AuthAccountRecord(
+                    id = "acc-pref-1",
+                    username = "prefuser",
+                    usernameNormalized = "prefuser",
+                    passwordHash = "hash",
+                    role = "USER",
+                    createdAtMs = 1_000L,
+                    updatedAtMs = 1_000L,
+                )
+            ctx.authAccounts.insert(account).shouldBeRight()
+
+            ctx.userPreferences.findByAccountId("acc-pref-1").shouldBeRight().shouldBeNull()
+
+            val initial =
+                UserPreferencesRecord(
+                    accountId = "acc-pref-1",
+                    theme = "dark",
+                    timeFormat = "12h",
+                    dateFormat = "mdy",
+                    defaultStatsRange = "7d",
+                    relativeTimestamps = false,
+                    updatedAtMs = 2_000L,
+                )
+            ctx.userPreferences.upsert(initial).shouldBeRight() shouldBe initial
+            ctx.userPreferences.findByAccountId("acc-pref-1").shouldBeRight() shouldBe initial
+
+            val updated =
+                initial.copy(
+                    theme = "light",
+                    timeFormat = "24h",
+                    dateFormat = "dmy",
+                    defaultStatsRange = "all",
+                    relativeTimestamps = true,
+                    updatedAtMs = 5_000L,
+                )
+            ctx.userPreferences.upsert(updated).shouldBeRight() shouldBe updated
+            ctx.userPreferences.findByAccountId("acc-pref-1").shouldBeRight() shouldBe updated
+
+            ctx.authAccounts.delete("acc-pref-1").shouldBeRight() shouldBe true
+            ctx.userPreferences.findByAccountId("acc-pref-1").shouldBeRight().shouldBeNull()
         }
     }
 }

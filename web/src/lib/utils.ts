@@ -1,6 +1,42 @@
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import type { ActiveStreamDto } from '$api/types';
+import type { ActiveStreamDto, DateFormatPreference, TimeFormatPreference } from '$api/types';
+
+export interface UserDateTimePrefs {
+	timeFormat?: TimeFormatPreference;
+	dateFormat?: DateFormatPreference;
+	relativeTimestamps?: boolean;
+}
+
+const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function pad2(n: number): string {
+	return String(n).padStart(2, '0');
+}
+
+function formatDatePart(d: Date, dateFormat: DateFormatPreference = 'iso'): string {
+	const year = d.getFullYear();
+	const month = d.getMonth();
+	const day = d.getDate();
+	if (dateFormat === 'mdy') {
+		return `${MONTH_SHORT[month]} ${day}, ${year}`;
+	}
+	if (dateFormat === 'dmy') {
+		return `${pad2(day)}/${pad2(month + 1)}/${year}`;
+	}
+	return `${year}-${pad2(month + 1)}-${pad2(day)}`;
+}
+
+function formatTimePart(d: Date, timeFormat: TimeFormatPreference = '24h'): string {
+	const hours = d.getHours();
+	const minutes = pad2(d.getMinutes());
+	if (timeFormat === '12h') {
+		const period = hours >= 12 ? 'PM' : 'AM';
+		const hour12 = hours % 12 === 0 ? 12 : hours % 12;
+		return `${hour12}:${minutes} ${period}`;
+	}
+	return `${pad2(hours)}:${minutes}`;
+}
 
 export function cn(...inputs: ClassValue[]): string {
 	return twMerge(clsx(inputs));
@@ -49,8 +85,26 @@ export function formatBandwidthKbps(kbps: number | null | undefined): string {
 	return `${Math.round(kbps)} kbps`;
 }
 
-export function formatRelativeTime(timestampMs: number | null | undefined, nowMs = Date.now()): string {
+export function formatDateTime(
+	timestampMs: number | null | undefined,
+	prefs?: UserDateTimePrefs
+): string {
+	if (!timestampMs) return '—';
+	const d = new Date(timestampMs);
+	return `${formatDatePart(d, prefs?.dateFormat)} ${formatTimePart(d, prefs?.timeFormat)}`;
+}
+
+export function formatRelativeTime(
+	timestampMs: number | null | undefined,
+	nowMsOrPrefs: number | UserDateTimePrefs = Date.now(),
+	maybePrefs?: UserDateTimePrefs
+): string {
 	if (!timestampMs) return 'Never';
+	const nowMs = typeof nowMsOrPrefs === 'number' ? nowMsOrPrefs : Date.now();
+	const prefs = typeof nowMsOrPrefs === 'object' ? nowMsOrPrefs : maybePrefs;
+	if (prefs?.relativeTimestamps === false) {
+		return formatDateTime(timestampMs, prefs);
+	}
 	const diffSec = Math.max(0, Math.floor((nowMs - timestampMs) / 1000));
 	if (diffSec < 60) return `${diffSec}s ago`;
 	const diffMin = Math.floor(diffSec / 60);
@@ -59,21 +113,33 @@ export function formatRelativeTime(timestampMs: number | null | undefined, nowMs
 	if (diffHr < 24) return `${diffHr}h ago`;
 	const diffDays = Math.floor(diffHr / 24);
 	if (diffDays < 30) return `${diffDays}d ago`;
-	return new Date(timestampMs).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+	return formatDatePart(new Date(timestampMs), prefs?.dateFormat);
 }
 
-export function formatShortDateTime(timestampMs: number | null | undefined): string {
+export function formatShortDateTime(
+	timestampMs: number | null | undefined,
+	prefs?: UserDateTimePrefs,
+	nowMs = Date.now()
+): string {
 	if (!timestampMs) return '—';
 	const d = new Date(timestampMs);
-	const now = new Date();
+	const now = new Date(nowMs);
 	const sameDay =
 		d.getFullYear() === now.getFullYear() &&
 		d.getMonth() === now.getMonth() &&
 		d.getDate() === now.getDate();
 	if (sameDay) {
-		return `Today ${d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}`;
+		return `Today ${formatTimePart(d, prefs?.timeFormat)}`;
 	}
-	return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+	return formatDatePart(d, prefs?.dateFormat);
+}
+
+export function formatPreferencePreview(prefs: UserDateTimePrefs, sampleMs = Date.now()): string {
+	const absolute = formatDateTime(sampleMs, prefs);
+	if (prefs.relativeTimestamps !== false) {
+		return `${absolute} · ${formatRelativeTime(sampleMs, sampleMs + 5 * 60_000, prefs)}`;
+	}
+	return absolute;
 }
 
 export function formatFullUtc(timestampMs: number | null | undefined): string {

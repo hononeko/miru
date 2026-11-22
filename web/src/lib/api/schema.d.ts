@@ -211,6 +211,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/me/preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get current authenticated user's preferences */
+        get: operations["getUserPreferences"];
+        /** Update current authenticated user's preferences */
+        put: operations["updateUserPreferences"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/accounts": {
         parameters: {
             query?: never;
@@ -747,6 +765,30 @@ export interface components {
             role: components["schemas"]["MiruRole"];
             linkedMediaUserIds: string[];
             authSource: components["schemas"]["AuthSource"];
+        };
+        UserPreferencesResponse: {
+            /** @enum {string} */
+            theme: "system" | "dark" | "light";
+            /** @enum {string} */
+            timeFormat: "24h" | "12h";
+            /** @enum {string} */
+            dateFormat: "iso" | "mdy" | "dmy";
+            /** @enum {string} */
+            defaultStatsRange: "7d" | "30d" | "90d" | "all";
+            relativeTimestamps: boolean;
+            /** Format: int64 */
+            updatedAtMs?: number | null;
+        };
+        UpdateUserPreferencesRequest: {
+            /** @enum {string} */
+            theme: "system" | "dark" | "light";
+            /** @enum {string} */
+            timeFormat: "24h" | "12h";
+            /** @enum {string} */
+            dateFormat: "iso" | "mdy" | "dmy";
+            /** @enum {string} */
+            defaultStatsRange: "7d" | "30d" | "90d" | "all";
+            relativeTimestamps: boolean;
         };
         AccountResponse: {
             id: string;
@@ -1711,6 +1753,77 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PrincipalResponse"];
+                };
+            };
+            /** @description Missing, invalid, or expired credentials */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    getUserPreferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current user preferences (or defaults if none saved yet) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserPreferencesResponse"];
+                };
+            };
+            /** @description Missing, invalid, or expired credentials */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    updateUserPreferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateUserPreferencesRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated user preferences */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserPreferencesResponse"];
+                };
+            };
+            /** @description Invalid preference values */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
             /** @description Missing, invalid, or expired credentials */

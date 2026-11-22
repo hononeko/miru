@@ -8,6 +8,7 @@
 	import KpiCard from '$components/miru/KpiCard.svelte';
 	import BarChart, { type BarPoint } from '$components/miru/BarChart.svelte';
 	import ProxiedImage from '$components/miru/ProxiedImage.svelte';
+	import { preferencesStore } from '$stores/preferences.svelte';
 	import {
 		formatDurationSec,
 		formatMediaTitle,
@@ -16,11 +17,20 @@
 		getDecisionMeta
 	} from '$lib/utils';
 
-	let range = $state<StatsRange>('30d');
+	let lastDefaultRange = preferencesStore.prefs.defaultStatsRange;
+	let range = $state<StatsRange>(lastDefaultRange);
 	let detail = $state<UserDetailResponse | null>(null);
 	let stats = $state<UserStatsResponse | null>(null);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+
+	$effect(() => {
+		const nextDefault = preferencesStore.prefs.defaultStatsRange;
+		if (nextDefault !== lastDefaultRange) {
+			lastDefaultRange = nextDefault;
+			range = nextDefault;
+		}
+	});
 
 	const userId = $derived(page.params.id ?? '');
 
@@ -109,7 +119,7 @@
 						{/if}
 					</div>
 					<p class="text-xs text-fg-secondary">
-						External ID #{detail.user.externalUserId} · Last seen {detail.user.isStreaming ? 'Active now' : formatRelativeTime(detail.user.lastSeenAtMs)}
+						External ID #{detail.user.externalUserId} · Last seen {detail.user.isStreaming ? 'Active now' : formatRelativeTime(detail.user.lastSeenAtMs, Date.now(), preferencesStore.prefs)}
 					</p>
 				</div>
 			</div>
@@ -223,7 +233,7 @@
 									{/if}
 								</p>
 								<p class="text-[10px] text-fg-muted">
-									{play.playerName || play.playerProduct || 'Unknown client'} · {formatShortDateTime(play.stoppedAtMs)}
+									{play.playerName || play.playerProduct || 'Unknown client'} · {formatShortDateTime(play.stoppedAtMs, preferencesStore.prefs)}
 								</p>
 							</div>
 							<div class="flex items-center gap-2.5">

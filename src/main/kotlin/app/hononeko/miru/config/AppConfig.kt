@@ -1,6 +1,7 @@
 package app.hononeko.miru.config
 
 import app.hononeko.miru.auth.CredentialCrypto
+import app.hononeko.miru.auth.PasswordPolicy
 import app.hononeko.miru.domain.error.MiruError
 import arrow.core.Either
 import arrow.core.raise.either
@@ -121,7 +122,6 @@ data class DatabaseAndSessionConfig(
 
 object AppConfigLoader {
     private const val MIN_SESSION_SECRET_LENGTH = 32
-    private const val MIN_ADMIN_PASSWORD_LENGTH = 12
     private const val MIN_POLL_INTERVAL_SECONDS = 5
     private const val MAX_PORT = 65_535
     private const val MAX_PERCENT = 100
@@ -380,8 +380,10 @@ object AppConfigLoader {
             errors["MIRU_ADMIN_PASSWORD"] = "is required when MIRU_ADMIN_USERNAME is set"
         } else if (adminPassword != null && adminUsername == null) {
             errors["MIRU_ADMIN_USERNAME"] = "is required when MIRU_ADMIN_PASSWORD is set"
-        } else if (adminPassword != null && adminPassword.length < MIN_ADMIN_PASSWORD_LENGTH) {
-            errors["MIRU_ADMIN_PASSWORD"] = "must be at least $MIN_ADMIN_PASSWORD_LENGTH characters"
+        } else if (adminPassword != null) {
+            PasswordPolicy.validationError(adminPassword)?.let { message ->
+                errors["MIRU_ADMIN_PASSWORD"] = message
+            }
         }
 
         val oidc = parseOidcConfig(mode = mode, get = get, errors = errors)

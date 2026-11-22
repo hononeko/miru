@@ -30,7 +30,7 @@ import arrow.core.raise.either
 import arrow.core.right
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.HttpClientEngine
-import io.ktor.client.engine.cio.CIO
+import io.ktor.client.engine.java.Java
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
@@ -142,8 +142,9 @@ class PlexRuntimeManager(
     databaseHandle: DatabaseHandle,
     sessionConfig: SessionConfig = SessionConfig(),
     private val mediaServerRepository: MediaServerRepository = ExposedMediaServerRepository(databaseHandle),
-    private val httpClientEngineFactory: () -> HttpClientEngine = { CIO.create() },
+    private val httpClientEngineFactory: () -> HttpClientEngine = { Java.create() },
     private val wsClientFactory: (() -> HttpClient)? = null,
+    private val plexTvBaseUrl: String? = PlexMediaServerAdapter.DEFAULT_PLEX_TV_BASE_URL,
     private val clock: () -> Long = System::currentTimeMillis,
     private val idGenerator: () -> String = { UUID.randomUUID().toString() },
 ) : RealtimeLifecycle {
@@ -373,6 +374,7 @@ class PlexRuntimeManager(
             PlexMediaServerAdapter(
                 config = runtimePlexConfig,
                 httpClient = restClient,
+                plexTvBaseUrl = plexTvBaseUrl,
                 eventSource = listener?.events ?: emptyFlow(),
             )
         val sink: ActiveSessionsSink = sessionEngine

@@ -20,7 +20,7 @@ import arrow.core.flatMap
 import arrow.core.left
 import arrow.core.right
 import io.ktor.client.engine.HttpClientEngine
-import io.ktor.client.engine.cio.CIO
+import io.ktor.client.engine.java.Java
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -82,9 +82,10 @@ fun buildPlexRuntime(
     databaseHandle: DatabaseHandle? = null,
     sessionConfig: SessionConfig = SessionConfig(),
     httpClientEngine: HttpClientEngine? = null,
+    plexTvBaseUrl: String? = PlexMediaServerAdapter.DEFAULT_PLEX_TV_BASE_URL,
 ): PlexRuntime {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("plex-realtime"))
-    val restClient = createPlexHttpClient(engine = httpClientEngine ?: CIO.create())
+    val restClient = createPlexHttpClient(engine = httpClientEngine ?: Java.create())
     val wsClient = if (config.websocketEnabled) createPlexWebSocketClient() else null
 
     val listener =
@@ -99,6 +100,7 @@ fun buildPlexRuntime(
         PlexMediaServerAdapter(
             config = config,
             httpClient = restClient,
+            plexTvBaseUrl = plexTvBaseUrl,
             eventSource = listener?.events ?: emptyFlow(),
         )
     val serverIdProvider =

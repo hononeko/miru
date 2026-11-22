@@ -475,13 +475,13 @@ class OidcAuthRoutesTest :
                     noRedirectClient
                         .post("/api/v1/auth/login") {
                             contentType(ContentType.Application.Json)
-                            setBody(MiruJson.encodeToString(LoginRequest("admin", "some-password-123")))
+                            setBody(MiruJson.encodeToString(LoginRequest("admin", "Some-password-123")))
                         }.status shouldBe HttpStatusCode.Conflict
 
                     noRedirectClient
                         .post("/api/v1/auth/setup") {
                             contentType(ContentType.Application.Json)
-                            setBody(MiruJson.encodeToString(SetupAdminRequest("admin", "some-password-123")))
+                            setBody(MiruJson.encodeToString(SetupAdminRequest("admin", "Some-password-123")))
                         }.status shouldBe HttpStatusCode.Conflict
 
                     // 2. OIDC login as USER (auto-linked to mu-alice via case-insensitive email)

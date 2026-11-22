@@ -32,7 +32,9 @@ import app.hononeko.miru.persistence.repository.ExposedAuthAccountRepository
 import app.hononeko.miru.persistence.repository.ExposedAuthSessionRepository
 import app.hononeko.miru.persistence.repository.ExposedMediaServerRepository
 import app.hononeko.miru.persistence.repository.ExposedUserRepository
+import app.hononeko.miru.domain.error.MiruError
 import io.kotest.assertions.arrow.core.shouldBeLeft
+import io.kotest.matchers.types.shouldBeInstanceOf
 import io.kotest.assertions.arrow.core.shouldBeRight
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.collections.shouldContainExactly
@@ -194,7 +196,7 @@ private fun ApplicationTestBuilder.setupAuthApp(harness: TestAuthHarness) {
 class AuthRoutesTest :
     FunSpec({
         test("bootstrapAdminIfConfigured creates admin idempotently when env credentials are provided") {
-            createHarness(adminUsername = "bootadmin", adminPassword = "boot-password-1234").use { harness ->
+            createHarness(adminUsername = "bootadmin", adminPassword = "Boot-password-1234").use { harness ->
                 harness.authService.bootstrapAdminIfConfigured().shouldBeRight() shouldBe true
                 harness.authService.bootstrapAdminIfConfigured().shouldBeRight() shouldBe false
                 harness.authService.isSetupRequired().shouldBeRight() shouldBe false
@@ -219,7 +221,7 @@ class AuthRoutesTest :
                     val setupResp =
                         client.post("/api/v1/auth/setup") {
                             contentType(ContentType.Application.Json)
-                            setBody(MiruJson.encodeToString(SetupAdminRequest("other", "another-strong-password")))
+                            setBody(MiruJson.encodeToString(SetupAdminRequest("other", "Another-strong-password-1")))
                         }
                     setupResp.status shouldBe HttpStatusCode.Conflict
                 }
@@ -248,7 +250,7 @@ class AuthRoutesTest :
                                 MiruJson.encodeToString(
                                     SetupAdminRequest(
                                         username = "admin",
-                                        password = "admin-strong-password-123",
+                                        password = "Admin-strong-password-123",
                                         email = "admin@miru.local",
                                     ),
                                 ),
@@ -275,7 +277,7 @@ class AuthRoutesTest :
                     val secondSetup =
                         client.post("/api/v1/auth/setup") {
                             contentType(ContentType.Application.Json)
-                            setBody(MiruJson.encodeToString(SetupAdminRequest("admin2", "admin2-strong-password")))
+                            setBody(MiruJson.encodeToString(SetupAdminRequest("admin2", "Admin2-strong-password-1")))
                         }
                     secondSetup.status shouldBe HttpStatusCode.Conflict
                     secondSetup.contentType()?.withoutParameters() shouldBe ContentType.Application.ProblemJson
@@ -283,10 +285,32 @@ class AuthRoutesTest :
             }
         }
 
+        test("enforces password complexity requirements on setup and account creation") {
+            createHarness().use { harness ->
+                val weakPasswords =
+                    listOf(
+                        "Short1a",
+                        "alllowercase12",
+                        "ALLUPPERCASE12",
+                        "NoDigitsPasswordHere",
+                    )
+                for (weak in weakPasswords) {
+                    val setupErr = harness.authService.setupInitialAdmin("admin", weak).shouldBeLeft()
+                    setupErr.shouldBeInstanceOf<MiruError.ValidationError>().fieldErrors.keys shouldContainExactly setOf("password")
+                }
+
+                harness.authService.setupInitialAdmin("admin", "Valid-admin-pass-123").shouldBeRight()
+                for (weak in weakPasswords) {
+                    val accErr = harness.authService.createAccount("viewer", weak).shouldBeLeft()
+                    accErr.shouldBeInstanceOf<MiruError.ValidationError>().fieldErrors.keys shouldContainExactly setOf("password")
+                }
+            }
+        }
+
         test("login validates credentials, rejects disabled accounts, rejects tampered/expired cookies, and supports logout") {
             createHarness(sessionTtlMs = 30_000L).use { harness ->
-                val activePass = "active-strong-password-123"
-                val disabledPass = "disabled-strong-password-123"
+                val activePass = "Active-strong-password-123"
+                val disabledPass = "Disabled-strong-password-123"
                 harness.authService.setupInitialAdmin("admin", activePass).shouldBeRight()
                 harness.accountRepo
                     .insert(
@@ -387,7 +411,7 @@ class AuthRoutesTest :
         test("enforces ADMIN vs USER RBAC, media user linking, and self/last-admin deletion guards") {
             createHarness().use { harness ->
                 seedMediaUser(harness, userId = "mu-alice")
-                val adminLogin = harness.authService.setupInitialAdmin("admin", "admin-password-123").shouldBeRight()
+                val adminLogin = harness.authService.setupInitialAdmin("admin", "Admin-password-123").shouldBeRight()
 
                 testApplication {
                     setupAuthApp(harness)
@@ -401,7 +425,7 @@ class AuthRoutesTest :
                                 MiruJson.encodeToString(
                                     CreateAccountRequest(
                                         username = "alice",
-                                        password = "alice-password-123",
+                                        password = "Alice-password-123",
                                         email = "alice@miru.local",
                                         role = MiruRole.USER,
                                         linkedMediaUserIds = setOf("mu-alice"),
@@ -426,7 +450,7 @@ class AuthRoutesTest :
                     val aliceLogin =
                         client.post("/api/v1/auth/login") {
                             contentType(ContentType.Application.Json)
-                            setBody(MiruJson.encodeToString(LoginRequest("alice", "alice-password-123")))
+                            setBody(MiruJson.encodeToString(LoginRequest("alice", "Alice-password-123")))
                         }
                     val aliceCookie = extractCookieValue(aliceLogin.headers[HttpHeaders.SetCookie]).shouldNotBeNull()
 
@@ -501,12 +525,12 @@ class AuthRoutesTest :
 
         test("API keys support X-Api-Key and Bearer auth, role clamping, expiration, revocation, and secret redaction") {
             createHarness().use { harness ->
-                val adminLogin = harness.authService.setupInitialAdmin("admin", "admin-password-123").shouldBeRight()
+                val adminLogin = harness.authService.setupInitialAdmin("admin", "Admin-password-123").shouldBeRight()
                 val userAccount =
                     harness.authService
                         .createAccount(
                             username = "viewer",
-                            password = "viewer-password-123",
+                            password = "Viewer-password-123",
                             role = MiruRole.USER,
                         ).shouldBeRight()
 
@@ -658,8 +682,8 @@ class AuthRoutesTest :
         }
 
         test("redacts secrets from toString(), AuthConfig, persistence records, DTOs, and error responses") {
-            createHarness(adminUsername = "admin", adminPassword = "top-secret-password-999").use { harness ->
-                val rawPassword = "user-super-secret-password"
+            createHarness(adminUsername = "admin", adminPassword = "Top-secret-password-999").use { harness ->
+                val rawPassword = "User-super-secret-password1"
                 val created =
                     harness.authService
                         .createAccount(username = "secretcheck", password = rawPassword, role = MiruRole.ADMIN)
@@ -671,7 +695,7 @@ class AuthRoutesTest :
                         .shouldBeRight()
 
                 val authConfigText = harness.appConfig.auth.toString()
-                authConfigText shouldNotContain "top-secret-password-999"
+                authConfigText shouldNotContain "Top-secret-password-999"
                 authConfigText shouldNotContain harness.appConfig.auth.sessionSecret
 
                 val accountRecordText = created.account.toString()

@@ -8,7 +8,7 @@ import arrow.core.raise.either
 import arrow.core.raise.ensure
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.HttpClientEngine
-import io.ktor.client.engine.cio.CIO
+import io.ktor.client.engine.java.Java
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.forms.submitForm
 import io.ktor.client.request.get
@@ -27,7 +27,7 @@ import java.io.Closeable
 class OidcClient(
     private val config: OidcConfig,
     private val jwtVerifier: OidcJwtVerifier = OidcJwtVerifier(),
-    engine: HttpClientEngine = CIO.create(),
+    engine: HttpClientEngine = Java.create(),
     private val clock: () -> Long = { System.currentTimeMillis() },
     private val discoveryCacheTtlMs: Long = DEFAULT_DISCOVERY_CACHE_TTL_MS,
 ) : Closeable {

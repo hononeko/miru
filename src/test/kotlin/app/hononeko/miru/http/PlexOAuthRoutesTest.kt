@@ -238,7 +238,7 @@ private fun createOAuthHarness(
 }
 
 private suspend fun seedKeys(harness: OAuthTestHarness): Pair<String, String> {
-    val admin = harness.authService.setupInitialAdmin("admin", "admin-password-1234").shouldBeRight()
+    val admin = harness.authService.setupInitialAdmin("admin", "Admin-password-1234").shouldBeRight()
     val adminKey =
         harness.authService
             .createApiKey(accountId = admin.principal.accountId, name = "admin-key", role = MiruRole.ADMIN)
@@ -246,7 +246,7 @@ private suspend fun seedKeys(harness: OAuthTestHarness): Pair<String, String> {
             .rawKey
     val userAcc =
         harness.authService
-            .createAccount(username = "viewer", password = "viewer-password-1234", role = MiruRole.USER)
+            .createAccount(username = "viewer", password = "Viewer-password-1234", role = MiruRole.USER)
             .shouldBeRight()
     val userKey =
         harness.authService

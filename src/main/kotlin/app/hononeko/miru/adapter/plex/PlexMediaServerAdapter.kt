@@ -18,7 +18,7 @@ import arrow.core.raise.ensure
 import arrow.core.right
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.HttpClientEngine
-import io.ktor.client.engine.cio.CIO
+import io.ktor.client.engine.java.Java
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.ResponseException
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
@@ -47,7 +47,7 @@ private const val DEFAULT_REQUEST_TIMEOUT_MS = 15_000L
 private const val DEFAULT_CONNECT_TIMEOUT_MS = 5_000L
 
 fun createPlexHttpClient(
-    engine: HttpClientEngine = CIO.create(),
+    engine: HttpClientEngine = Java.create(),
     requestTimeoutMs: Long = DEFAULT_REQUEST_TIMEOUT_MS,
     connectTimeoutMs: Long = DEFAULT_CONNECT_TIMEOUT_MS,
 ): HttpClient =
@@ -301,7 +301,9 @@ class PlexMediaServerAdapter(
                 }
 
             PlexMapper.resolveOwnerUser(accounts = accounts, plexTvUser = plexTvUser)?.also { resolved ->
-                cachedOwner = resolved
+                if (normalizedPlexTvBaseUrl == null || resolved.externalId != LOCAL_OWNER_USER_ID) {
+                    cachedOwner = resolved
+                }
             }
         }
     }
@@ -525,14 +527,15 @@ class PlexMediaServerAdapter(
         }
     }
 
-    private companion object {
-        const val PROVIDER_NAME = "plex"
-        const val PLEX_TOKEN_HEADER = "X-Plex-Token"
-        const val LOCAL_OWNER_USER_ID = "1"
-        const val ARTWORK_ACCEPT_HEADER = "image/*, */*;q=0.8"
-        const val DEFAULT_ARTWORK_CONTENT_TYPE = "application/octet-stream"
-        const val ASCII_SPACE = 0x20
-        const val ASCII_DEL = 0x7F
-        val SECTION_KEY_REGEX = Regex("^[A-Za-z0-9_-]+$")
+    companion object {
+        const val DEFAULT_PLEX_TV_BASE_URL = "https://plex.tv"
+        private const val PROVIDER_NAME = "plex"
+        private const val PLEX_TOKEN_HEADER = "X-Plex-Token"
+        private const val LOCAL_OWNER_USER_ID = "1"
+        private const val ARTWORK_ACCEPT_HEADER = "image/*, */*;q=0.8"
+        private const val DEFAULT_ARTWORK_CONTENT_TYPE = "application/octet-stream"
+        private const val ASCII_SPACE = 0x20
+        private const val ASCII_DEL = 0x7F
+        private val SECTION_KEY_REGEX = Regex("^[A-Za-z0-9_-]+$")
     }
 }

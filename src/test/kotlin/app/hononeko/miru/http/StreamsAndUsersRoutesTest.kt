@@ -214,15 +214,15 @@ class StreamsAndUsersRoutesTest :
         test("GET /api/v1/streams enforces auth, scopes RBAC, overlays transcode metadata, and proxies artwork URLs") {
             createStreamsUsersHarness().use { harness ->
                 seedTestFixtureData(harness)
-                val adminLogin = harness.authService.setupInitialAdmin("admin", "admin-password-123").shouldBeRight()
+                val adminLogin = harness.authService.setupInitialAdmin("admin", "Admin-password-123").shouldBeRight()
                 harness.authService
                     .createAccount(
                         username = "bobuser",
-                        password = "bob-password-123",
+                        password = "Bob-password-123",
                         role = MiruRole.USER,
                         linkedMediaUserIds = setOf("mu-bob"),
                     ).shouldBeRight()
-                val bobLogin = harness.authService.login("bobuser", "bob-password-123").shouldBeRight()
+                val bobLogin = harness.authService.login("bobuser", "Bob-password-123").shouldBeRight()
 
                 val movieSession =
                     ActiveSessionRecord(
@@ -413,15 +413,15 @@ class StreamsAndUsersRoutesTest :
         test("GET /api/v1/streams/events delivers snapshot, scoped session events, ping keepalive, and cleans up on disconnect") {
             createStreamsUsersHarness().use { harness ->
                 seedTestFixtureData(harness)
-                val adminLogin = harness.authService.setupInitialAdmin("admin", "admin-password-123").shouldBeRight()
+                val adminLogin = harness.authService.setupInitialAdmin("admin", "Admin-password-123").shouldBeRight()
                 harness.authService
                     .createAccount(
                         username = "bobuser",
-                        password = "bob-password-123",
+                        password = "Bob-password-123",
                         role = MiruRole.USER,
                         linkedMediaUserIds = setOf("mu-bob"),
                     ).shouldBeRight()
-                val bobLogin = harness.authService.login("bobuser", "bob-password-123").shouldBeRight()
+                val bobLogin = harness.authService.login("bobuser", "Bob-password-123").shouldBeRight()
 
                 val aliceSession =
                     ActiveSessionRecord(
@@ -642,15 +642,15 @@ class StreamsAndUsersRoutesTest :
         test("GET /api/v1/users and GET /api/v1/users/{id} return stats, breakdowns, recent plays, and enforce RBAC and 404") {
             createStreamsUsersHarness().use { harness ->
                 seedTestFixtureData(harness)
-                val adminLogin = harness.authService.setupInitialAdmin("admin", "admin-password-123").shouldBeRight()
+                val adminLogin = harness.authService.setupInitialAdmin("admin", "Admin-password-123").shouldBeRight()
                 harness.authService
                     .createAccount(
                         username = "bobuser",
-                        password = "bob-password-123",
+                        password = "Bob-password-123",
                         role = MiruRole.USER,
                         linkedMediaUserIds = setOf("mu-bob"),
                     ).shouldBeRight()
-                val bobLogin = harness.authService.login("bobuser", "bob-password-123").shouldBeRight()
+                val bobLogin = harness.authService.login("bobuser", "Bob-password-123").shouldBeRight()
 
                 // Seed 12 history plays for Alice across movies & TV + different clients/decisions
                 for (i in 1..12) {

@@ -1856,6 +1856,7 @@ components:
           type: string
           format: password
           minLength: 12
+          description: Must be at least 12 characters and include at least 1 lowercase letter, 1 uppercase letter, and 1 digit.
         email:
           type: string
           nullable: true
@@ -1939,6 +1940,7 @@ components:
           type: string
           format: password
           minLength: 12
+          description: Must be at least 12 characters and include at least 1 lowercase letter, 1 uppercase letter, and 1 digit.
         email:
           type: string
           nullable: true

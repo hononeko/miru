@@ -156,21 +156,21 @@ private fun seedRichTautulliData(stmt: java.sql.Statement) {
     // Grouped session reference_id=500 across rows 1 and 2
     stmt.executeUpdate(
         "INSERT INTO session_history VALUES (1, 500, 1700000000, 1700000600, 'rk-ep1', 101, 'alice', " +
-            "'10.0.0.10', 30, 'Living Room TV', 'Plex for Apple TV', 'tvOS', 'atv-1', 'LAN', 'episode', 400, '2')",
+            "'10.0.0.10', 30, 'Living Room TV', 'Plex for Apple TV', 'tvOS', 'atv-1', 'LAN', 'episode', 400000, '2')",
     )
     stmt.executeUpdate(
         "INSERT INTO session_history VALUES (2, 500, 1700000700, 1700001800, 'rk-ep1', 101, 'alice', " +
-            "'10.0.0.10', 20, 'Living Room TV', 'Plex for Apple TV', 'tvOS', 'atv-1', 'LAN', 'episode', 1350, '2')",
+            "'10.0.0.10', 20, 'Living Room TV', 'Plex for Apple TV', 'tvOS', 'atv-1', 'LAN', 'episode', 1350000, '2')",
     )
     // Single direct stream row (missing from users table -> fallback stub user 205)
     stmt.executeUpdate(
         "INSERT INTO session_history VALUES (3, NULL, 1700005000, 1700006800, 'rk-mov1', 205, 'charlie', " +
-            "'203.0.113.5', 0, 'Chrome', 'Plex Web', 'Web', 'web-1', 'WAN', 'movie', 1750, '1')",
+            "'203.0.113.5', 0, 'Chrome', 'Plex Web', 'Web', 'web-1', 'WAN', 'movie', 1750000, '1')",
     )
     // Row with stopped = 0 (falls back to started) and direct play
     stmt.executeUpdate(
         "INSERT INTO session_history VALUES (4, 600, 1700008000, 0, 'rk-mov2', 102, 'bob', " +
-            "'10.0.0.11', 0, 'Shield', 'Plex for Android', 'Android', 'shield-1', 'LAN', 'movie', 500, '1')",
+            "'10.0.0.11', 0, 'Shield', 'Plex for Android', 'Android', 'shield-1', 'LAN', 'movie', 500000, '1')",
     )
     // Malformed rows: missing rating_key, stopped < started, invalid started timestamp
     stmt.executeUpdate(
@@ -188,31 +188,31 @@ private fun seedRichTautulliData(stmt: java.sql.Statement) {
 
     stmt.executeUpdate(
         "INSERT INTO session_history_metadata VALUES " +
-            "(1, 'rk-ep1', 'Pilot', 'Show - Pilot', 'Season 1', 'Frieren', 1, 1, 2023, '/thumb/ep1', 1500)",
+            "(1, 'rk-ep1', 'Pilot', 'Show - Pilot', 'Season 1', 'Frieren', 1, 1, 2023, '/thumb/ep1', 1500000)",
     )
     stmt.executeUpdate(
         "INSERT INTO session_history_metadata VALUES " +
-            "(2, 'rk-ep1', 'Pilot', 'Show - Pilot', 'Season 1', 'Frieren', 1, 1, 2023, '/thumb/ep1-v2', 1500)",
+            "(2, 'rk-ep1', 'Pilot', 'Show - Pilot', 'Season 1', 'Frieren', 1, 1, 2023, '/thumb/ep1-v2', 1500000)",
     )
     stmt.executeUpdate(
         "INSERT INTO session_history_metadata VALUES " +
-            "(3, 'rk-mov1', NULL, 'Spirited Away', NULL, NULL, NULL, NULL, 2001, '/thumb/mov1', 2000)",
+            "(3, 'rk-mov1', NULL, 'Spirited Away', NULL, NULL, NULL, NULL, 2001, '/thumb/mov1', 2000000)",
     )
     stmt.executeUpdate(
         "INSERT INTO session_history_metadata VALUES " +
-            "(4, 'rk-mov2', 'Akira', 'Akira', NULL, NULL, NULL, NULL, 1988, NULL, 2000)",
+            "(4, 'rk-mov2', 'Akira', 'Akira', NULL, NULL, NULL, NULL, 1988, NULL, 2000000)",
     )
     stmt.executeUpdate(
         "INSERT INTO session_history_metadata VALUES " +
-            "(5, NULL, 'Missing Key', NULL, NULL, NULL, NULL, NULL, 2020, NULL, 1000)",
+            "(5, NULL, 'Missing Key', NULL, NULL, NULL, NULL, NULL, 2020, NULL, 1000000)",
     )
     stmt.executeUpdate(
         "INSERT INTO session_history_metadata VALUES " +
-            "(6, 'rk-bad', 'Bad Times', NULL, NULL, NULL, NULL, NULL, 2020, NULL, 1000)",
+            "(6, 'rk-bad', 'Bad Times', NULL, NULL, NULL, NULL, NULL, 2020, NULL, 1000000)",
     )
     stmt.executeUpdate(
         "INSERT INTO session_history_metadata VALUES " +
-            "(7, 'rk-bad2', 'Bad Ts', NULL, NULL, NULL, NULL, NULL, 2020, NULL, 1000)",
+            "(7, 'rk-bad2', 'Bad Ts', NULL, NULL, NULL, NULL, NULL, 2020, NULL, 1000000)",
     )
 
     stmt.executeUpdate(
@@ -308,7 +308,7 @@ class TautulliImporterTest :
                 grouped.startedAtMs shouldBe 1_700_000_000_000L
                 grouped.stoppedAtMs shouldBe 1_700_001_800_000L
                 grouped.pausedDurationSec shouldBe 50
-                grouped.watchedDurationSec shouldBe 1_750
+                grouped.watchedDurationSec shouldBe 1_650
                 grouped.viewOffsetMs shouldBe 1_350_000L
                 grouped.media.durationMs shouldBe 1_500_000L
                 grouped.completionPercent shouldBe 90.0
@@ -503,6 +503,64 @@ class TautulliImporterTest :
                 missingFileErr.toString(StandardCharsets.UTF_8).shouldNotBeNull()
             } finally {
                 dir.toFile().deleteRecursively()
+            }
+        }
+
+        test("excludes multi-day idle gaps when merging reference_id chunks, keeps millisecond units, and skips unused Local user") {
+            createImporterHarness().use { harness ->
+                val dbFile = harness.tempDir.resolve("multiday-gap.db")
+                DriverManager.getConnection("jdbc:sqlite:${dbFile.toAbsolutePath()}").use { conn ->
+                    conn.createStatement().use { stmt ->
+                        createRichTautulliSchema(stmt)
+                        // Unused Tautulli dummy user_id=0 ("Local") should be skipped; active user kept
+                        stmt.executeUpdate("INSERT INTO users VALUES (0, 'Local', 'Local', NULL, NULL, 0)")
+                        stmt.executeUpdate("INSERT INTO users VALUES (18475316, 'Vehkiya', 'Vehkiya', 'v@example.com', NULL, 1)")
+
+                        // Same reference_id resumed 13 days later: two 600s chunks with 30s paused each => 1140s watched
+                        stmt.executeUpdate(
+                            "INSERT INTO session_history VALUES (1, 1440, 1792952215, 1792952815, 'rk-abbott', 18475316, " +
+                                "'Vehkiya', '10.0.0.10', 30, 'Apple TV', 'Plex', 'tvOS', 'atv-1', 'LAN', 'episode', 645024, '2')",
+                        )
+                        stmt.executeUpdate(
+                            "INSERT INTO session_history VALUES (2, 1440, 1794065842, 1794066442, 'rk-abbott', 18475316, " +
+                                "'Vehkiya', '10.0.0.10', 30, 'Apple TV', 'Plex', 'tvOS', 'atv-1', 'LAN', 'episode', 1290048, '2')",
+                        )
+                        stmt.executeUpdate(
+                            "INSERT INTO session_history_metadata VALUES (1, 'rk-abbott', 'Check-Ins', " +
+                                "'Abbott Elementary - Check-Ins', 'Season 4', 'Abbott Elementary', 4, 1, 2024, " +
+                                "'/thumb/1', 1290048)",
+                        )
+                        stmt.executeUpdate(
+                            "INSERT INTO session_history_metadata VALUES (2, 'rk-abbott', 'Check-Ins', " +
+                                "'Abbott Elementary - Check-Ins', 'Season 4', 'Abbott Elementary', 4, 1, 2024, " +
+                                "'/thumb/1', 1290048)",
+                        )
+                        stmt.executeUpdate(
+                            "INSERT INTO session_history_media_info VALUES " +
+                                "(1, 'direct play', NULL, NULL, 0, 0, 'h264', 'aac', '1080', NULL, NULL, NULL, 8000, 8000)",
+                        )
+                        stmt.executeUpdate(
+                            "INSERT INTO session_history_media_info VALUES " +
+                                "(2, 'direct play', NULL, NULL, 0, 0, 'h264', 'aac', '1080', NULL, NULL, NULL, 8000, 8000)",
+                        )
+                    }
+                }
+
+                val report = harness.service.import(dbFile).shouldBeRight()
+                report.usersDiscovered shouldBe 1
+                report.usersUpserted shouldBe 1
+                report.historyImported shouldBe 1
+
+                val users = harness.userRepo.findAll().shouldBeRight()
+                users.map { it.username } shouldBe listOf("Vehkiya")
+
+                val item = harness.historyRepo.query(HistoryFilter()).shouldBeRight().items.single()
+                item.watchedDurationSec shouldBe 1_140
+                item.pausedDurationSec shouldBe 60
+                item.media.durationMs shouldBe 1_290_048L
+                item.viewOffsetMs shouldBe 1_290_048L
+                item.completionPercent shouldBe 100.0
+                item.isWatched shouldBe true
             }
         }
     })

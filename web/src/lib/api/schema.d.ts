@@ -728,7 +728,10 @@ export interface components {
         };
         SetupAdminRequest: {
             username: string;
-            /** Format: password */
+            /**
+             * Format: password
+             * @description Must be at least 12 characters and include at least 1 lowercase letter, 1 uppercase letter, and 1 digit.
+             */
             password: string;
             email?: string | null;
         };
@@ -763,7 +766,10 @@ export interface components {
         };
         CreateAccountRequest: {
             username: string;
-            /** Format: password */
+            /**
+             * Format: password
+             * @description Must be at least 12 characters and include at least 1 lowercase letter, 1 uppercase letter, and 1 digit.
+             */
             password: string;
             email?: string | null;
             role?: components["schemas"]["MiruRole"];

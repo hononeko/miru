@@ -409,7 +409,7 @@ class HistoryStatsRoutesTest :
     FunSpec({
         test("rejects unauthenticated requests with 401 when auth mode is LOCAL") {
             createHistoryHarness().use { harness ->
-                harness.authService.setupInitialAdmin("admin", "admin-strong-password-123").shouldBeRight()
+                harness.authService.setupInitialAdmin("admin", "Admin-strong-password-123").shouldBeRight()
                 testApplication {
                     setupApp(harness)
                     client.get("/api/v1/history").status shouldBe HttpStatusCode.Unauthorized
@@ -422,7 +422,7 @@ class HistoryStatsRoutesTest :
 
         test("returns empty collections and zero metrics on empty dataset") {
             createHistoryHarness().use { harness ->
-                val adminLogin = harness.authService.setupInitialAdmin("admin", "admin-strong-password-123").shouldBeRight()
+                val adminLogin = harness.authService.setupInitialAdmin("admin", "Admin-strong-password-123").shouldBeRight()
                 testApplication {
                     setupApp(harness)
 
@@ -455,7 +455,7 @@ class HistoryStatsRoutesTest :
 
         test("supports all filters, sorting, pagination, and detail endpoint for ADMIN") {
             createHistoryHarness().use { harness ->
-                val adminLogin = harness.authService.setupInitialAdmin("admin", "admin-strong-password-123").shouldBeRight()
+                val adminLogin = harness.authService.setupInitialAdmin("admin", "Admin-strong-password-123").shouldBeRight()
                 seedUsersAndHistory(harness)
 
                 testApplication {
@@ -549,7 +549,7 @@ class HistoryStatsRoutesTest :
 
         test("computes overview and user stats across 7d, 30d, 90d, and all ranges") {
             createHistoryHarness().use { harness ->
-                val adminLogin = harness.authService.setupInitialAdmin("admin", "admin-strong-password-123").shouldBeRight()
+                val adminLogin = harness.authService.setupInitialAdmin("admin", "Admin-strong-password-123").shouldBeRight()
                 seedUsersAndHistory(harness)
 
                 testApplication {
@@ -646,14 +646,14 @@ class HistoryStatsRoutesTest :
 
         test("enforces USER RBAC scoping on history, detail, overview stats, and user stats") {
             createHistoryHarness().use { harness ->
-                harness.authService.setupInitialAdmin("admin", "admin-strong-password-123").shouldBeRight()
+                harness.authService.setupInitialAdmin("admin", "Admin-strong-password-123").shouldBeRight()
                 seedUsersAndHistory(harness)
 
                 val aliceAccount =
                     harness.authService
                         .createAccount(
                             username = "alice-user",
-                            password = "alice-strong-password-123",
+                            password = "Alice-strong-password-123",
                             role = MiruRole.USER,
                             linkedMediaUserIds = setOf("u-alice"),
                         ).shouldBeRight()
@@ -669,12 +669,12 @@ class HistoryStatsRoutesTest :
                     harness.authService
                         .createAccount(
                             username = "unlinked-user",
-                            password = "unlinked-strong-password-123",
+                            password = "Unlinked-strong-password-123",
                             role = MiruRole.USER,
                             linkedMediaUserIds = emptySet(),
                         ).shouldBeRight()
                 val unlinkedLogin =
-                    harness.authService.login(unlinkedAccount.account.username, "unlinked-strong-password-123").shouldBeRight()
+                    harness.authService.login(unlinkedAccount.account.username, "Unlinked-strong-password-123").shouldBeRight()
 
                 testApplication {
                     setupApp(harness)

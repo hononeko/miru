@@ -35,7 +35,7 @@
 	import Button from '$components/ui/Button.svelte';
 	import Sheet from '$components/ui/Sheet.svelte';
 	import { authStore } from '$stores/auth.svelte';
-	import { formatBytes, formatRelativeTime, safeInitial } from '$lib/utils';
+	import { formatBytes, formatRelativeTime, safeInitial, validatePassword } from '$lib/utils';
 
 	type WizardStep = 'starting' | 'waiting' | 'expired' | 'discovering' | 'select' | 'saving' | 'done';
 
@@ -58,6 +58,7 @@
 	let newPassword = $state('');
 	let newRole = $state<MiruRole>('USER');
 	let accountSubmitting = $state(false);
+	let createAccountError = $state<string | null>(null);
 
 	// Link Media Users Sheet
 	let linkTarget = $state<AccountResponse | null>(null);
@@ -329,6 +330,12 @@
 	async function handleCreateAccount(e: SubmitEvent) {
 		e.preventDefault();
 		error = null;
+		createAccountError = null;
+		const passwordError = validatePassword(newPassword);
+		if (passwordError) {
+			createAccountError = passwordError;
+			return;
+		}
 		accountSubmitting = true;
 		try {
 			unwrap(
@@ -348,7 +355,7 @@
 			newRole = 'USER';
 			await loadAll();
 		} catch (err) {
-			error = err instanceof MiruApiError ? err.detail : 'Failed to create account';
+			createAccountError = err instanceof MiruApiError ? err.detail : 'Failed to create account';
 		} finally {
 			accountSubmitting = false;
 		}
@@ -1069,8 +1076,20 @@
 </Sheet>
 
 <!-- Create Account Sheet -->
-<Sheet bind:open={createAccountOpen} onOpenChange={(v) => (createAccountOpen = v)} title="Create Local Account">
+<Sheet
+	bind:open={createAccountOpen}
+	onOpenChange={(v) => {
+		createAccountOpen = v;
+		if (!v) createAccountError = null;
+	}}
+	title="Create Local Account"
+>
 	<form onsubmit={handleCreateAccount} class="flex flex-col gap-3.5">
+		{#if createAccountError}
+			<div role="alert" class="rounded-lg border border-danger/50 bg-danger-soft px-3 py-2 text-xs text-danger">
+				{createAccountError}
+			</div>
+		{/if}
 		<label class="flex flex-col gap-1">
 			<span class="font-heading text-xs font-semibold text-fg-primary">Username</span>
 			<input
@@ -1089,7 +1108,7 @@
 			/>
 		</label>
 		<label class="flex flex-col gap-1">
-			<span class="font-heading text-xs font-semibold text-fg-primary">Password (min 12 chars)</span>
+			<span class="font-heading text-xs font-semibold text-fg-primary">Password</span>
 			<input
 				type="password"
 				required
@@ -1097,6 +1116,9 @@
 				bind:value={newPassword}
 				class="rounded-lg border border-border-strong bg-canvas px-3 py-2 font-mono text-sm text-fg-primary focus:border-cyan focus:outline-none"
 			/>
+			<span class="text-[10px] text-fg-muted">
+				At least 12 characters with 1 lowercase, 1 uppercase, and 1 digit
+			</span>
 		</label>
 		<label class="flex flex-col gap-1">
 			<span class="font-heading text-xs font-semibold text-fg-primary">Role</span>

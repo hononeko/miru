@@ -866,4 +866,60 @@ class SessionStateEngineTest :
                 }
             }
         }
+
+        test("maintains live transcode technical metadata overlay across start, update, and stop") {
+            runTest {
+                newEnv().use { env ->
+                    env.seedServer()
+                    val engine = env.createEngine(config = SessionConfig(minPlayDurationSeconds = 1))
+
+                    val initialSnapshot =
+                        sampleSnapshot(
+                            sessionKey = "tech-1",
+                            ratingKey = "mov-tech",
+                            decision = StreamDecision.TRANSCODE,
+                            isHwTranscode = true,
+                        ).let {
+                            it.copy(
+                                technical =
+                                    it.technical.copy(
+                                        transcodeVideoCodec = "h264",
+                                        transcodeAudioCodec = "aac",
+                                        container = "mkv",
+                                        transcodeContainer = "mp4",
+                                        transcodeProgress = 42.5,
+                                        transcodeSpeed = 0.8,
+                                    ),
+                            )
+                        }
+
+                    env.nowMs = 1_000L
+                    engine.reconcile(listOf(initialSnapshot), ReconcileTrigger.NOTIFICATION).shouldBeRight()
+                    val key = ActiveSessionKey(DEFAULT_SERVER_ID, "tech-1", "mov-tech")
+                    val afterStart = engine.currentLiveTechnical()[key].shouldNotBeNull()
+                    afterStart.transcodeProgress shouldBe 42.5
+                    afterStart.transcodeSpeed shouldBe 0.8
+                    afterStart.container shouldBe "mkv"
+                    afterStart.transcodeContainer shouldBe "mp4"
+
+                    val updatedSnapshot =
+                        initialSnapshot.copy(
+                            technical = initialSnapshot.technical.copy(transcodeProgress = 75.0, transcodeSpeed = 2.4),
+                        )
+                    env.nowMs = 5_000L
+                    engine.reconcile(listOf(updatedSnapshot), ReconcileTrigger.PERIODIC).shouldBeRight()
+                    val afterUpdate = engine.currentLiveTechnical()[key].shouldNotBeNull()
+                    afterUpdate.transcodeProgress shouldBe 75.0
+                    afterUpdate.transcodeSpeed shouldBe 2.4
+
+                    env.nowMs = 10_000L
+                    engine
+                        .reconcile(
+                            listOf(initialSnapshot.copy(state = PlaybackState.STOPPED, viewOffsetMs = 100_000L)),
+                            ReconcileTrigger.NOTIFICATION,
+                        ).shouldBeRight()
+                    engine.currentLiveTechnical()[key].shouldBeNull()
+                }
+            }
+        }
     })

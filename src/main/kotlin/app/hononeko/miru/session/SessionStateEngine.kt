@@ -63,6 +63,7 @@ class SessionStateEngine(
     private val logger = LoggerFactory.getLogger(SessionStateEngine::class.java)
     private val mutex = Mutex()
     private val tracked = linkedMapOf<ActiveSessionKey, TrackedSession>()
+    private val liveTechByKey = linkedMapOf<ActiveSessionKey, StreamTechnicalInfo>()
     private var recovered = false
 
     private val _sessionEvents =
@@ -75,6 +76,11 @@ class SessionStateEngine(
     suspend fun currentSessions(): List<ActiveSessionRecord> =
         mutex.withLock {
             tracked.values.map { it.record }
+        }
+
+    suspend fun currentLiveTechnical(): Map<ActiveSessionKey, StreamTechnicalInfo> =
+        mutex.withLock {
+            liveTechByKey.toMap()
         }
 
     suspend fun recoverFromPersistence(): Either<MiruError, Unit> =
@@ -167,6 +173,7 @@ class SessionStateEngine(
         if (!recovered) {
             val existing = activeSessionRepository.findByServer(serverId).bind()
             tracked.clear()
+            liveTechByKey.clear()
             for (record in existing) {
                 tracked[record.key] =
                     TrackedSession(
@@ -204,6 +211,7 @@ class SessionStateEngine(
             )
         activeSessionRepository.upsert(record).bind()
         tracked[key] = TrackedSession(record = record, pausedDurationMs = 0L, fromCrashRecovery = false)
+        liveTechByKey[key] = snapshot.technical
 
         return SessionEvent.SessionStarted(
             serverId = serverId,
@@ -261,6 +269,7 @@ class SessionStateEngine(
                 pausedDurationMs = totalPausedMs,
                 fromCrashRecovery = false,
             )
+        liveTechByKey[prev.record.key] = snapshot.technical
 
         return SessionEvent.SessionUpdated(
             serverId = serverId,
@@ -334,6 +343,7 @@ class SessionStateEngine(
     ): SessionEvent.SessionStopped {
         activeSessionRepository.deleteByKey(record.key).bind()
         tracked.remove(record.key)
+        liveTechByKey.remove(record.key)
 
         val wallSec = ((stoppedAtMs - record.startedAtMs).coerceAtLeast(0L) / MILLIS_PER_SECOND).toInt()
         val pausedSec = (pausedDurationMs / MILLIS_PER_SECOND).toInt().coerceAtMost(wallSec)

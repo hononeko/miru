@@ -22,6 +22,10 @@ tags:
     description: Administrator-only account, media user linking, and API key management
   - name: Artwork
     description: Proxied media server artwork and SSRF-protected user avatar endpoints
+  - name: Streams
+    description: Live playback sessions and real-time Server-Sent Events (SSE) stream updates
+  - name: Users
+    description: Media server users and per-user playback analytics
 
 paths:
   /healthz:
@@ -717,6 +721,123 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /api/v1/streams:
+    get:
+      tags: [Streams]
+      operationId: listActiveStreams
+      summary: List currently active media playback sessions
+      description: >-
+        Returns currently active streams scoped by the caller's RBAC permissions, including
+        in-memory live transcode metadata overlay and proxied artwork/avatar URLs.
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Active streams list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActiveStreamsResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/streams/events:
+    get:
+      tags: [Streams]
+      operationId: streamEvents
+      summary: Subscribe to real-time active stream Server-Sent Events (SSE)
+      description: >-
+        Streams an initial `snapshot` event followed by `session_started`, `session_updated`,
+        and `session_stopped` events scoped to the authenticated principal, plus periodic `: ping`
+        keepalive comments.
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Server-Sent Events stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/users:
+    get:
+      tags: [Users]
+      operationId: listUsers
+      summary: List media users with live streaming status and aggregate playback stats
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of media users visible to the authenticated principal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsersListResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/users/{id}:
+    get:
+      tags: [Users]
+      operationId: getUserDetail
+      summary: Get detailed playback statistics, active streams, and recent plays for a media user
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Media user detail summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserDetailResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Access to the requested media user is forbidden
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Media user not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
 components:
   securitySchemes:
     CookieAuth:
@@ -989,3 +1110,497 @@ components:
           $ref: '#/components/schemas/ApiKeyResponse'
         rawKey:
           type: string
+
+    ActiveStreamsResponse:
+      type: object
+      required: [streams, totalCount]
+      properties:
+        streams:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActiveStreamDto'
+        totalCount:
+          type: integer
+          format: int32
+
+    ActiveStreamDto:
+      type: object
+      required:
+        - serverId
+        - sessionKey
+        - user
+        - media
+        - player
+        - technical
+        - state
+        - viewOffsetMs
+        - progressPercent
+        - startedAtMs
+        - lastSeenAtMs
+        - pausedDurationSec
+      properties:
+        serverId:
+          type: string
+        sessionKey:
+          type: string
+        sessionId:
+          type: string
+          nullable: true
+        user:
+          $ref: '#/components/schemas/StreamUserDto'
+        media:
+          $ref: '#/components/schemas/StreamMediaDto'
+        player:
+          $ref: '#/components/schemas/StreamPlayerDto'
+        technical:
+          $ref: '#/components/schemas/StreamTechnicalDto'
+        state:
+          type: string
+        viewOffsetMs:
+          type: integer
+          format: int64
+        progressPercent:
+          type: number
+          format: double
+        startedAtMs:
+          type: integer
+          format: int64
+        lastSeenAtMs:
+          type: integer
+          format: int64
+        pausedDurationSec:
+          type: integer
+          format: int32
+
+    StreamUserDto:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+          nullable: true
+        displayName:
+          type: string
+          nullable: true
+        avatarUrl:
+          type: string
+          nullable: true
+
+    StreamMediaDto:
+      type: object
+      required: [ratingKey, mediaType, title, durationMs]
+      properties:
+        ratingKey:
+          type: string
+        mediaType:
+          type: string
+        title:
+          type: string
+        parentTitle:
+          type: string
+          nullable: true
+        grandparentTitle:
+          type: string
+          nullable: true
+        parentIndex:
+          type: integer
+          format: int32
+          nullable: true
+        mediaIndex:
+          type: integer
+          format: int32
+          nullable: true
+        year:
+          type: integer
+          format: int32
+          nullable: true
+        thumbUrl:
+          type: string
+          nullable: true
+        librarySectionKey:
+          type: string
+          nullable: true
+        durationMs:
+          type: integer
+          format: int64
+
+    StreamPlayerDto:
+      type: object
+      properties:
+        name:
+          type: string
+          nullable: true
+        platform:
+          type: string
+          nullable: true
+        product:
+          type: string
+          nullable: true
+        machineId:
+          type: string
+          nullable: true
+        ipAddress:
+          type: string
+          nullable: true
+        location:
+          type: string
+          nullable: true
+
+    StreamTechnicalDto:
+      type: object
+      required: [streamDecision, hwTranscode, throttled]
+      properties:
+        streamDecision:
+          type: string
+        videoDecision:
+          type: string
+          nullable: true
+        audioDecision:
+          type: string
+          nullable: true
+        hwTranscode:
+          type: boolean
+        videoCodec:
+          type: string
+          nullable: true
+        audioCodec:
+          type: string
+          nullable: true
+        videoResolution:
+          type: string
+          nullable: true
+        bandwidthKbps:
+          type: integer
+          format: int32
+          nullable: true
+        container:
+          type: string
+          nullable: true
+        transcodeVideoCodec:
+          type: string
+          nullable: true
+        transcodeAudioCodec:
+          type: string
+          nullable: true
+        transcodeContainer:
+          type: string
+          nullable: true
+        transcodeProgress:
+          type: number
+          format: double
+          nullable: true
+        transcodeSpeed:
+          type: number
+          format: double
+          nullable: true
+        throttled:
+          type: boolean
+
+    SessionStartedEventDto:
+      type: object
+      required: [timestampMs, stream]
+      properties:
+        timestampMs:
+          type: integer
+          format: int64
+        stream:
+          $ref: '#/components/schemas/ActiveStreamDto'
+
+    SessionUpdatedEventDto:
+      type: object
+      required: [timestampMs, stream, previousState, previousStreamDecision, streamDecisionChanged]
+      properties:
+        timestampMs:
+          type: integer
+          format: int64
+        stream:
+          $ref: '#/components/schemas/ActiveStreamDto'
+        previousState:
+          type: string
+        previousStreamDecision:
+          type: string
+        streamDecisionChanged:
+          type: boolean
+
+    SessionStoppedEventDto:
+      type: object
+      required: [timestampMs, serverId, sessionKey, ratingKey, userId, reason, mergedIntoHistory, stream]
+      properties:
+        timestampMs:
+          type: integer
+          format: int64
+        serverId:
+          type: string
+        sessionKey:
+          type: string
+        ratingKey:
+          type: string
+        userId:
+          type: string
+        reason:
+          type: string
+        mergedIntoHistory:
+          type: boolean
+        historyId:
+          type: string
+          nullable: true
+        stream:
+          $ref: '#/components/schemas/ActiveStreamDto'
+
+    UsersListResponse:
+      type: object
+      required: [users]
+      properties:
+        users:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserSummaryDto'
+
+    UserSummaryDto:
+      type: object
+      required:
+        - id
+        - serverId
+        - externalUserId
+        - username
+        - isAdmin
+        - isStreaming
+        - activeStreamCount
+        - totalPlays
+        - totalWatchDurationSec
+      properties:
+        id:
+          type: string
+        serverId:
+          type: string
+        externalUserId:
+          type: string
+        username:
+          type: string
+        displayName:
+          type: string
+          nullable: true
+        isAdmin:
+          type: boolean
+        avatarUrl:
+          type: string
+          nullable: true
+        isStreaming:
+          type: boolean
+        activeStreamCount:
+          type: integer
+          format: int32
+        lastSeenAtMs:
+          type: integer
+          format: int64
+          nullable: true
+        totalPlays:
+          type: integer
+          format: int64
+        totalWatchDurationSec:
+          type: integer
+          format: int64
+
+    UserRecentPlayDto:
+      type: object
+      required:
+        - id
+        - serverId
+        - ratingKey
+        - mediaType
+        - title
+        - durationMs
+        - viewOffsetMs
+        - watchedDurationSec
+        - pausedDurationSec
+        - completionPercent
+        - isWatched
+        - streamDecision
+        - hwTranscode
+        - startedAtMs
+        - stoppedAtMs
+      properties:
+        id:
+          type: string
+        serverId:
+          type: string
+        ratingKey:
+          type: string
+        mediaType:
+          type: string
+        title:
+          type: string
+        parentTitle:
+          type: string
+          nullable: true
+        grandparentTitle:
+          type: string
+          nullable: true
+        parentIndex:
+          type: integer
+          format: int32
+          nullable: true
+        mediaIndex:
+          type: integer
+          format: int32
+          nullable: true
+        year:
+          type: integer
+          format: int32
+          nullable: true
+        thumbUrl:
+          type: string
+          nullable: true
+        librarySectionKey:
+          type: string
+          nullable: true
+        durationMs:
+          type: integer
+          format: int64
+        viewOffsetMs:
+          type: integer
+          format: int64
+        watchedDurationSec:
+          type: integer
+          format: int32
+        pausedDurationSec:
+          type: integer
+          format: int32
+        completionPercent:
+          type: number
+          format: double
+        isWatched:
+          type: boolean
+        streamDecision:
+          type: string
+        hwTranscode:
+          type: boolean
+        videoResolution:
+          type: string
+          nullable: true
+        playerName:
+          type: string
+          nullable: true
+        playerPlatform:
+          type: string
+          nullable: true
+        playerProduct:
+          type: string
+          nullable: true
+        location:
+          type: string
+          nullable: true
+        startedAtMs:
+          type: integer
+          format: int64
+        stoppedAtMs:
+          type: integer
+          format: int64
+
+    UserUsageStatDto:
+      type: object
+      required: [name, playCount, watchDurationSec]
+      properties:
+        name:
+          type: string
+        playCount:
+          type: integer
+          format: int64
+        watchDurationSec:
+          type: integer
+          format: int64
+
+    DecisionBreakdownDto:
+      type: object
+      required:
+        - directPlay
+        - directStream
+        - transcode
+        - total
+        - directPlayPercent
+        - directStreamPercent
+        - transcodePercent
+      properties:
+        directPlay:
+          type: integer
+          format: int64
+        directStream:
+          type: integer
+          format: int64
+        transcode:
+          type: integer
+          format: int64
+        total:
+          type: integer
+          format: int64
+        directPlayPercent:
+          type: number
+          format: double
+        directStreamPercent:
+          type: number
+          format: double
+        transcodePercent:
+          type: number
+          format: double
+
+    LibraryBreakdownDto:
+      type: object
+      required: [mediaType, playCount, watchDurationSec]
+      properties:
+        librarySectionKey:
+          type: string
+          nullable: true
+        mediaType:
+          type: string
+        playCount:
+          type: integer
+          format: int64
+        watchDurationSec:
+          type: integer
+          format: int64
+
+    UserDetailResponse:
+      type: object
+      required:
+        - user
+        - activeStreams
+        - totalPlays
+        - totalWatchDurationSec
+        - recentPlays
+        - topClients
+        - topPlatforms
+        - decisionBreakdown
+        - libraryBreakdown
+      properties:
+        user:
+          $ref: '#/components/schemas/UserSummaryDto'
+        activeStreams:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActiveStreamDto'
+        totalPlays:
+          type: integer
+          format: int64
+        totalWatchDurationSec:
+          type: integer
+          format: int64
+        recentPlays:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserRecentPlayDto'
+        topClients:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserUsageStatDto'
+        topPlatforms:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserUsageStatDto'
+        decisionBreakdown:
+          $ref: '#/components/schemas/DecisionBreakdownDto'
+        libraryBreakdown:
+          type: array
+          items:
+            $ref: '#/components/schemas/LibraryBreakdownDto'

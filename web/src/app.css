@@ -1,0 +1,132 @@
+@import 'tailwindcss';
+
+/* ==========================================================================
+   Miru (見る) Design Tokens — Prism Rose & Deep Optical Cyan (#0891B2)
+   1:1 parity with Penpot Token Sets (Theme/Light & Theme/Dark).
+   Tweak primary/accent colors right here in :root / .dark at any time.
+   ========================================================================== */
+
+:root {
+	--background: #f9fafc;
+	--card: #ffffff;
+	--secondary: #f1f3f8;
+	--muted: #e2e6f0;
+	--border: #e2e6f0;
+	--ring-muted: #cbd2e1;
+
+	--foreground: #10121c;
+	--muted-fg: #4e556b;
+	--subtle-fg: #6b738a;
+
+	--primary: #be123c;
+	--primary-hover: #9f1239;
+	--primary-soft: #fff1f2;
+	--primary-fg: #ffffff;
+
+	--accent-cyan: #0891b2;
+	--accent-cyan-hi: #0e7490;
+	--accent-cyan-soft: #ecfeff;
+
+	--status-direct-play: #059669;
+	--status-direct-play-soft: #ecfdf5;
+	--status-direct-stream: #0284c7;
+	--status-direct-stream-soft: #f0f9ff;
+	--status-hw-transcode: #d97706;
+	--status-hw-transcode-soft: #fffbeb;
+	--status-sw-transcode: #ea580c;
+	--status-sw-transcode-soft: #fff7ed;
+	--destructive: #dc2626;
+	--destructive-soft: #fef2f2;
+}
+
+.dark {
+	--background: #090a0f;
+	--card: #12141e;
+	--secondary: #1a1e2b;
+	--muted: #232838;
+	--border: #272d3f;
+	--ring-muted: #3a425b;
+
+	--foreground: #f4f5fa;
+	--muted-fg: #9aa1b5;
+	--subtle-fg: #676f85;
+
+	--primary: #e12d54;
+	--primary-hover: #f45b7a;
+	--primary-soft: #2e131e;
+	--primary-fg: #ffffff;
+
+	--accent-cyan: #0891b2;
+	--accent-cyan-hi: #1cb5d8;
+	--accent-cyan-soft: #0b2530;
+
+	--status-direct-play: #10b981;
+	--status-direct-play-soft: #0d2922;
+	--status-direct-stream: #38bdf8;
+	--status-direct-stream-soft: #102838;
+	--status-hw-transcode: #f59e0b;
+	--status-hw-transcode-soft: #2e2312;
+	--status-sw-transcode: #f97316;
+	--status-sw-transcode-soft: #301e13;
+	--destructive: #ef4444;
+	--destructive-soft: #2e1416;
+}
+
+@theme inline {
+	--font-display: 'Josefin Sans', ui-sans-serif, system-ui, sans-serif;
+	--font-heading: 'Montserrat', ui-sans-serif, system-ui, sans-serif;
+	--font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+	--font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+
+	--color-canvas: var(--background);
+	--color-surface: var(--card);
+	--color-elevated: var(--secondary);
+	--color-subtle: var(--muted);
+	--color-border: var(--border);
+	--color-border-strong: var(--ring-muted);
+
+	--color-fg-primary: var(--foreground);
+	--color-fg-secondary: var(--muted-fg);
+	--color-fg-muted: var(--subtle-fg);
+
+	--color-primary: var(--primary);
+	--color-primary-hover: var(--primary-hover);
+	--color-primary-soft: var(--primary-soft);
+	--color-primary-fg: var(--primary-fg);
+
+	--color-cyan: var(--accent-cyan);
+	--color-cyan-hi: var(--accent-cyan-hi);
+	--color-cyan-soft: var(--accent-cyan-soft);
+
+	--color-direct-play: var(--status-direct-play);
+	--color-direct-play-soft: var(--status-direct-play-soft);
+	--color-direct-stream: var(--status-direct-stream);
+	--color-direct-stream-soft: var(--status-direct-stream-soft);
+	--color-hw-transcode: var(--status-hw-transcode);
+	--color-hw-transcode-soft: var(--status-hw-transcode-soft);
+	--color-sw-transcode: var(--status-sw-transcode);
+	--color-sw-transcode-soft: var(--status-sw-transcode-soft);
+	--color-danger: var(--destructive);
+	--color-danger-soft: var(--destructive-soft);
+}
+
+@layer base {
+	* {
+		border-color: var(--border);
+	}
+
+	body {
+		font-family: var(--font-sans);
+		background-color: var(--background);
+		color: var(--foreground);
+		min-height: 100dvh;
+	}
+}
+
+.tabular-nums {
+	font-variant-numeric: tabular-nums;
+}
+
+.safe-pb {
+	padding-bottom: max(0.625rem, env(safe-area-inset-bottom));
+}

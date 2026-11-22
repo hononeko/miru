@@ -16,6 +16,7 @@ data class ServerConfig(
     val host: String,
     val port: Int,
     val corsAllowedOrigins: List<String> = emptyList(),
+    val staticWebDir: String? = null,
 )
 
 sealed interface DatabaseConfig {
@@ -134,10 +135,13 @@ object AppConfigLoader {
                 .map { it.trim() }
                 .filter { it.isNotEmpty() }
 
+        val staticWebDir = get("STATIC_WEB_DIR", "miru.server.staticWebDir", null)
+
         return ServerConfig(
             host = host,
             port = port ?: 8080,
             corsAllowedOrigins = origins,
+            staticWebDir = staticWebDir,
         )
     }
 

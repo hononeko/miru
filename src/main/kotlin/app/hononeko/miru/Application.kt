@@ -19,6 +19,7 @@ import app.hononeko.miru.http.historyStatsRoutes
 import app.hononeko.miru.http.libraryRoutes
 import app.hononeko.miru.http.openApiRoutes
 import app.hononeko.miru.http.respondError
+import app.hononeko.miru.http.staticWebRoutes
 import app.hononeko.miru.http.streamsAndUsersRoutes
 import app.hononeko.miru.library.LibraryStatsCollector
 import app.hononeko.miru.persistence.DatabaseFactory
@@ -377,6 +378,7 @@ fun Application.miruModule(
                 )
             }
         }
+        staticWebRoutes(config.server.staticWebDir)
     }
 }
 

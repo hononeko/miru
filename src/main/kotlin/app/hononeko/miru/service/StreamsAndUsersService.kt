@@ -40,9 +40,11 @@ class StreamsAndUsersService(
     private val userRepository: UserRepository,
     private val playbackHistoryRepository: PlaybackHistoryRepository,
     private val liveTechnicalProvider: suspend () -> Map<ActiveSessionKey, StreamTechnicalInfo> = { emptyMap() },
+    private val serverNameProvider: suspend () -> String? = { null },
 ) {
     suspend fun listActiveStreams(principal: MiruPrincipal): Either<MiruError, ActiveStreamsResponse> =
         either {
+            val serverName = serverNameProvider()?.trim()?.takeIf { it.isNotEmpty() }
             val sessions =
                 activeSessionRepository
                     .findAll()
@@ -50,7 +52,7 @@ class StreamsAndUsersService(
                     .filter { principal.canAccessMediaUser(it.userId) }
 
             if (sessions.isEmpty()) {
-                return@either ActiveStreamsResponse(streams = emptyList(), totalCount = 0)
+                return@either ActiveStreamsResponse(streams = emptyList(), totalCount = 0, serverName = serverName)
             }
 
             val usersById = userRepository.findAll().bind().associateBy { it.id }
@@ -63,7 +65,7 @@ class StreamsAndUsersService(
                         liveTech = liveTechByKey[session.key],
                     )
                 }
-            ActiveStreamsResponse(streams = streams, totalCount = streams.size)
+            ActiveStreamsResponse(streams = streams, totalCount = streams.size, serverName = serverName)
         }
 
     suspend fun toActiveStreamDto(session: ActiveSessionRecord): Either<MiruError, ActiveStreamDto> =

@@ -165,6 +165,7 @@ class PlexRuntimeManagerTest :
                 manager.initialize().shouldBeRight() shouldBe false
                 manager.isConfigured() shouldBe false
                 manager.currentCredentialSource() shouldBe PlexCredentialSource.NOT_CONFIGURED
+                manager.currentServerName().shouldBeNull()
                 manager.serverIdProvider().shouldBeLeft().shouldBeInstanceOf<MiruError.UpstreamUnavailable>()
 
                 // Reload activates pipeline and triggers sync callback (even if callback throws)
@@ -183,6 +184,7 @@ class PlexRuntimeManagerTest :
                 // serverIdProvider resolves via checkHealth and caches id; default plex.tv lookup resolves local owner
                 val resolvedId = manager.serverIdProvider().shouldBeRight()
                 manager.serverIdProvider().shouldBeRight() shouldBe resolvedId
+                manager.currentServerName() shouldBe "Plex 1"
                 val active = manager.adapter.fetchActiveSessions().shouldBeRight().single()
                 active.user.externalId shouldBe "99887766"
                 active.user.username shouldBe "kerrlab"
@@ -196,6 +198,7 @@ class PlexRuntimeManagerTest :
                 manager.isConfigured() shouldBe false
                 manager.currentCredentialSource() shouldBe PlexCredentialSource.NOT_CONFIGURED
                 manager.currentBaseUrl().shouldBeNull()
+                manager.currentServerName().shouldBeNull()
 
                 // Encrypted DB record with missing key returns Left on initialize
                 val encrypted = CredentialCrypto.encrypt("tok-stored", TEST_ENC_KEY).shouldBeRight()
@@ -245,6 +248,11 @@ class PlexRuntimeManagerTest :
                 staticManager.isConfigured() shouldBe true
                 staticManager.currentCredentialSource() shouldBe PlexCredentialSource.ENV_OVERRIDE
                 staticManager.reloadFromStoredCredentials().shouldBeRight() shouldBe false
+                // machineId=null matches baseUrl first, then unmatched baseUrl falls back to oldest plex serverType row
+                staticManager.reload(baseUrl = "http://plex.local:32400", token = "tok-p", machineId = null)
+                staticManager.currentServerName() shouldBe "Plex 1"
+                staticManager.reload(baseUrl = "http://other.local:32400", token = "tok-o", machineId = null)
+                staticManager.currentServerName() shouldBe "Stored Plex"
                 staticManager.stop()
 
                 handle.close()

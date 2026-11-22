@@ -55,9 +55,11 @@ describe('StreamsStore SSE state transitions', () => {
 
 		store.applySnapshot({
 			totalCount: 1,
+			serverName: 'Kerrlab Plex',
 			streams: [makeStream()]
 		});
 		expect(store.totalCount).toBe(1);
+		expect(store.serverName).toBe('Kerrlab Plex');
 		expect(store.totalBandwidthKbps).toBe(24_800);
 		expect(store.lanBandwidthKbps).toBe(24_800);
 		expect(store.wanBandwidthKbps).toBe(0);
@@ -95,5 +97,13 @@ describe('StreamsStore SSE state transitions', () => {
 		});
 		expect(store.totalCount).toBe(1);
 		expect(store.streams[0].sessionKey).toBe('sess-2');
+
+		store.applySnapshot({ totalCount: 0, streams: [] });
+		expect(store.serverName).toBeNull();
+
+		store.applySnapshot({ totalCount: 0, serverName: 'Kerrlab Plex', streams: [] });
+		expect(store.serverName).toBe('Kerrlab Plex');
+		store.disconnect();
+		expect(store.serverName).toBeNull();
 	});
 });

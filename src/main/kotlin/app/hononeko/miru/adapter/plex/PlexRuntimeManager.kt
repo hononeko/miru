@@ -228,6 +228,19 @@ class PlexRuntimeManager(
 
     fun isConfigured(): Boolean = adapter.currentDelegate() != null
 
+    suspend fun currentServerName(): String? {
+        if (!isConfigured()) return null
+        val machineId = activeMachineId
+        val baseUrl = activeBaseUrl?.trimEnd('/')
+        val servers = mediaServerRepository.findAll().getOrNull().orEmpty()
+        val matched =
+            machineId?.let { mid -> servers.firstOrNull { it.machineId == mid } }
+                ?: baseUrl?.let { url -> servers.firstOrNull { it.baseUrl.trimEnd('/') == url } }
+                ?: servers.firstOrNull { it.serverType.equals("plex", ignoreCase = true) }
+                ?: servers.firstOrNull()
+        return matched?.name?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
     override fun start() {
         startupJob =
             managerScope.launch {

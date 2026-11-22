@@ -18,6 +18,7 @@ import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
+import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.MockRequestHandleScope
 import io.ktor.client.engine.mock.respond
@@ -27,6 +28,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.mockk.mockk
+import java.io.IOException
 
 private class InMemoryUserRepository(
     users: List<UserRecord>,
@@ -292,5 +294,67 @@ class ArtworkProxyServiceTest :
 
             // Exactly 1 outbound request per user (only the initial allowlisted plex.tv hop, never the blocked target)
             requests shouldHaveSize allIds.size
+        }
+
+        test("rejects malformed redirect Location, ResponseException 404/500, and IOException cleanly") {
+            val (malformedService, _) =
+                createService(
+                    users =
+                        listOf(
+                            userWithThumb("u-bad-loc", "https://plex.tv/bad-loc"),
+                            userWithThumb("u-io", "https://plex.tv/io-fail"),
+                        ),
+                ) { request ->
+                    when (request.url.encodedPath) {
+                        "/bad-loc" ->
+                            respond(
+                                content = "",
+                                status = HttpStatusCode.Found,
+                                headers = headersOf(HttpHeaders.Location, "https://[invalid host"),
+                            )
+                        "/io-fail" -> throw IOException("connection reset")
+                        else -> error("Unexpected request: ${request.url}")
+                    }
+                }
+
+            val badLocErr = malformedService.getUserAvatar(adminPrincipal, "u-bad-loc").shouldBeLeft()
+            badLocErr.shouldBeInstanceOf<MiruError.UpstreamUnavailable>().toProblemDetails().status shouldBe 502
+
+            val ioErr = malformedService.getUserAvatar(adminPrincipal, "u-io").shouldBeLeft()
+            ioErr.shouldBeInstanceOf<MiruError.UpstreamUnavailable>().toProblemDetails().status shouldBe 502
+
+            val strictClient =
+                HttpClient(
+                    MockEngine { request ->
+                        when (request.url.encodedPath) {
+                            "/not-found" -> respond("missing", HttpStatusCode.NotFound)
+                            "/server-err" -> respond("error", HttpStatusCode.InternalServerError)
+                            else -> respond("ok", HttpStatusCode.OK)
+                        }
+                    },
+                ) {
+                    expectSuccess = true
+                }
+            val strictService =
+                ArtworkProxyService(
+                    adapter = mockk(relaxed = true),
+                    userRepository =
+                        InMemoryUserRepository(
+                            listOf(
+                                userWithThumb("u-404", "https://plex.tv/not-found"),
+                                userWithThumb("u-500", "https://plex.tv/server-err"),
+                            ),
+                        ),
+                    externalAvatarClient = strictClient,
+                    cache = BoundedArtworkCache(),
+                )
+
+            strictService.getUserAvatar(adminPrincipal, "u-404").shouldBeLeft().shouldBeInstanceOf<MiruError.NotFound>()
+            strictService
+                .getUserAvatar(adminPrincipal, "u-500")
+                .shouldBeLeft()
+                .shouldBeInstanceOf<MiruError.UpstreamUnavailable>()
+                .toProblemDetails()
+                .status shouldBe 502
         }
     })

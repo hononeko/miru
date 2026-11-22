@@ -338,25 +338,21 @@ class ArtworkProxyService(
     ): Either<MiruError, HttpResponse> =
         either {
             var currentUrl = initialUrl
-            for (hop in 0..MAX_AVATAR_REDIRECT_HOPS) {
+            repeat(MAX_AVATAR_REDIRECT_HOPS) {
                 val response = executeSingleExternalGet(url = currentUrl, userId = userId).bind()
                 if (response.status.value !in AVATAR_REDIRECT_STATUS_CODES) {
                     return@either response
                 }
-                ensure(hop < MAX_AVATAR_REDIRECT_HOPS) {
-                    MiruError.UpstreamUnavailable(
-                        provider = EXTERNAL_AVATAR_PROVIDER,
-                        message = "External avatar redirect chain exceeded $MAX_AVATAR_REDIRECT_HOPS hops",
-                    )
-                }
                 currentUrl = resolveAndValidateRedirectTarget(currentUrl = currentUrl, response = response).bind()
             }
-            raise(
+            val finalResponse = executeSingleExternalGet(url = currentUrl, userId = userId).bind()
+            ensure(finalResponse.status.value !in AVATAR_REDIRECT_STATUS_CODES) {
                 MiruError.UpstreamUnavailable(
                     provider = EXTERNAL_AVATAR_PROVIDER,
                     message = "External avatar redirect chain exceeded $MAX_AVATAR_REDIRECT_HOPS hops",
-                ),
-            )
+                )
+            }
+            finalResponse
         }
 
     private suspend fun executeSingleExternalGet(

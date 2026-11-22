@@ -8,14 +8,20 @@ import app.hononeko.miru.adapter.MediaServerAdapter
 import app.hononeko.miru.adapter.MediaServerEvent
 import app.hononeko.miru.adapter.MediaUser
 import app.hononeko.miru.adapter.ServerIdentity
+import app.hononeko.miru.adapter.plex.PlexRuntimeManager
+import app.hononeko.miru.cleanupOnStartupFailure
 import app.hononeko.miru.config.DatabaseConfig
+import app.hononeko.miru.config.PlexConfig
+import app.hononeko.miru.createSyncServices
 import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.persistence.DatabaseFactory
 import app.hononeko.miru.persistence.model.MediaServerRecord
 import app.hononeko.miru.persistence.model.UserRecord
+import app.hononeko.miru.persistence.repository.ExposedLibraryRepository
 import app.hononeko.miru.persistence.repository.ExposedMediaServerRepository
 import app.hononeko.miru.persistence.repository.ExposedUserRepository
 import app.hononeko.miru.persistence.repository.UserRepository
+import app.hononeko.miru.registerLifecycleHandlers
 import arrow.core.Either
 import arrow.core.left
 import arrow.core.right
@@ -25,6 +31,7 @@ import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
+import io.ktor.server.testing.testApplication
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
@@ -291,7 +298,89 @@ class PlexUserSyncServiceTest :
                 runCurrent()
                 adapter.fetchCalls.get() shouldBe 2
 
+                // Unexpected exception during periodic sync is caught without terminating loop,
+                // and blank usernames fall back cleanly to existing username or externalId
+                adapter.nextResult = { throw IllegalStateException("unexpected boom") }
+                advanceTimeBy(1.hours)
+                runCurrent()
+
+                adapter.nextResult = {
+                    listOf(
+                        MediaUser(
+                            externalId = "42",
+                            username = "   ",
+                            displayName = "Alice",
+                            isAdmin = false,
+                        ),
+                        MediaUser(
+                            externalId = "99",
+                            username = "",
+                            displayName = "",
+                            isAdmin = false,
+                        ),
+                    ).right()
+                }
+                advanceTimeBy(1.hours)
+                runCurrent()
+
+                userRepo.findByExternalId("srv-1", "42").shouldBeRight()!!.username shouldBe "alice"
+                userRepo.findByExternalId("srv-1", "99").shouldBeRight()!!.username shouldBe "99"
+
                 service.stop()
+            }
+        }
+
+        test("Application sync wiring creates, starts, stops, and cleans up sync services cleanly") {
+            val dir = Files.createTempDirectory("miru-app-sync-wiring-")
+            val dbPath = dir.resolve("wiring.db").toString()
+            val handle = DatabaseFactory.createAndMigrate(DatabaseConfig.Sqlite(dbPath)).shouldBeRight()
+            try {
+                val mediaServerRepo = ExposedMediaServerRepository(handle)
+                val libraryRepo = ExposedLibraryRepository(handle)
+                val userRepo = ExposedUserRepository(handle)
+                val runtimeManager =
+                    PlexRuntimeManager(
+                        plexConfig = PlexConfig(baseUrl = "", token = ""),
+                        databaseHandle = handle,
+                        mediaServerRepository = mediaServerRepo,
+                    )
+
+                val syncServices = createSyncServices(runtimeManager, libraryRepo, userRepo)
+                testApplication {
+                    application {
+                        registerLifecycleHandlers(
+                            syncServices = syncServices,
+                            databaseHandle = handle,
+                            AutoCloseable { },
+                            null,
+                        )
+                    }
+                    startApplication()
+                }
+
+                // Also verify cleanupOnStartupFailure closes resources safely when startup fails
+                val handle2 = DatabaseFactory.createAndMigrate(DatabaseConfig.Sqlite(dir.resolve("wiring2.db").toString())).shouldBeRight()
+                val runtimeManager2 =
+                    PlexRuntimeManager(
+                        plexConfig = PlexConfig(baseUrl = "", token = ""),
+                        databaseHandle = handle2,
+                        mediaServerRepository = ExposedMediaServerRepository(handle2),
+                    )
+                val syncServices2 =
+                    createSyncServices(
+                        runtimeManager2,
+                        ExposedLibraryRepository(handle2),
+                        ExposedUserRepository(handle2),
+                    )
+                cleanupOnStartupFailure(
+                    syncServices = syncServices2,
+                    plexRuntimeManager = runtimeManager2,
+                    databaseHandle = handle2,
+                    AutoCloseable { throw IllegalStateException("close error") },
+                    null,
+                )
+            } finally {
+                dir.toFile().deleteRecursively()
             }
         }
     })

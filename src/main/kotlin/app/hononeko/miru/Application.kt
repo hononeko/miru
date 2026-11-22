@@ -210,17 +210,17 @@ private fun runServer() {
     }
 }
 
-private data class SyncServices(
+internal data class SyncServices(
     val libraryCollectorScope: CoroutineScope,
     val libraryStatsCollector: LibraryStatsCollector,
     val userSyncScope: CoroutineScope,
     val plexUserSyncService: PlexUserSyncService,
 )
 
-private fun createSyncServices(
+internal fun createSyncServices(
     plexRuntimeManager: PlexRuntimeManager,
-    libraryRepository: ExposedLibraryRepository,
-    userRepository: ExposedUserRepository,
+    libraryRepository: app.hononeko.miru.persistence.repository.LibraryRepository,
+    userRepository: app.hononeko.miru.persistence.repository.UserRepository,
 ): SyncServices {
     val libraryCollectorScope =
         CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("library-stats-collector"))
@@ -254,7 +254,7 @@ private fun createSyncServices(
     )
 }
 
-private fun Application.registerLifecycleHandlers(
+internal fun Application.registerLifecycleHandlers(
     syncServices: SyncServices,
     databaseHandle: DatabaseHandle,
     vararg clients: AutoCloseable?,
@@ -288,7 +288,7 @@ private fun Application.registerLifecycleHandlers(
     }
 }
 
-private fun cleanupOnStartupFailure(
+internal fun cleanupOnStartupFailure(
     syncServices: SyncServices,
     plexRuntimeManager: PlexRuntimeManager,
     databaseHandle: DatabaseHandle,

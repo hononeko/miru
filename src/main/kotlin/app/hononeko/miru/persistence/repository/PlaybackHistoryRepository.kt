@@ -6,10 +6,14 @@ import app.hononeko.miru.persistence.escapeLikePattern
 import app.hononeko.miru.persistence.exposedQuery
 import app.hononeko.miru.persistence.model.HistoryFilter
 import app.hononeko.miru.persistence.model.HistoryPage
+import app.hononeko.miru.persistence.model.HistorySortDirection
+import app.hononeko.miru.persistence.model.HistorySortField
 import app.hononeko.miru.persistence.model.PlaybackHistoryRecord
+import app.hononeko.miru.persistence.model.PlaybackHistoryStatsRow
 import app.hononeko.miru.persistence.model.UserPlaybackSummary
 import app.hononeko.miru.persistence.table.PlaybackHistoryTable
 import arrow.core.Either
+import org.jetbrains.exposed.v1.core.Expression
 import org.jetbrains.exposed.v1.core.LikePattern
 import org.jetbrains.exposed.v1.core.LongColumnType
 import org.jetbrains.exposed.v1.core.Op
@@ -62,6 +66,13 @@ interface PlaybackHistoryRepository {
     ): Either<MiruError.PersistenceError, List<PlaybackHistoryRecord>>
 
     suspend fun listByUser(userId: String): Either<MiruError.PersistenceError, List<PlaybackHistoryRecord>>
+
+    suspend fun listForStats(
+        serverId: String? = null,
+        userIds: Set<String>? = null,
+        fromMs: Long? = null,
+        toMs: Long? = null,
+    ): Either<MiruError.PersistenceError, List<PlaybackHistoryStatsRow>>
 }
 
 class ExposedPlaybackHistoryRepository(
@@ -144,11 +155,28 @@ class ExposedPlaybackHistoryRepository(
             } > 0
         }
 
-    override suspend fun query(filter: HistoryFilter): Either<MiruError.PersistenceError, HistoryPage> =
-        database.exposedQuery("playback_history_query") {
-            val safeLimit = filter.limit.coerceAtLeast(0)
-            val safeOffset = filter.offset.coerceAtLeast(0)
+    override suspend fun query(filter: HistoryFilter): Either<MiruError.PersistenceError, HistoryPage> {
+        val safeLimit = filter.limit.coerceAtLeast(0)
+        val safeOffset = filter.offset.coerceAtLeast(0)
+        if (filter.userIds != null && filter.userIds.isEmpty()) {
+            return Either.Right(HistoryPage(emptyList(), 0L, safeLimit, safeOffset))
+        }
+
+        return database.exposedQuery("playback_history_query") {
             val condition = buildFilterCondition(filter)
+            val sortOrder =
+                when (filter.sortDir) {
+                    HistorySortDirection.ASC -> SortOrder.ASC
+                    HistorySortDirection.DESC -> SortOrder.DESC
+                }
+            val sortExpression: Expression<*> =
+                when (filter.sortBy) {
+                    HistorySortField.STOPPED_AT -> PlaybackHistoryTable.stoppedAtMs
+                    HistorySortField.STARTED_AT -> PlaybackHistoryTable.startedAtMs
+                    HistorySortField.WATCHED_DURATION -> PlaybackHistoryTable.watchedDurationSec
+                    HistorySortField.COMPLETION_PERCENT -> PlaybackHistoryTable.completionPercent
+                    HistorySortField.TITLE -> PlaybackHistoryTable.title.lowerCase()
+                }
 
             val totalCount =
                 PlaybackHistoryTable
@@ -163,7 +191,7 @@ class ExposedPlaybackHistoryRepository(
                     PlaybackHistoryTable
                         .selectAll()
                         .where { condition }
-                        .orderBy(PlaybackHistoryTable.stoppedAtMs to SortOrder.DESC, PlaybackHistoryTable.id to SortOrder.ASC)
+                        .orderBy(sortExpression to sortOrder, PlaybackHistoryTable.id to SortOrder.ASC)
                         .limit(safeLimit)
                         .offset(safeOffset.toLong())
                         .map { it.toPlaybackHistoryRecord() }
@@ -176,6 +204,53 @@ class ExposedPlaybackHistoryRepository(
                 offset = safeOffset,
             )
         }
+    }
+
+    override suspend fun listForStats(
+        serverId: String?,
+        userIds: Set<String>?,
+        fromMs: Long?,
+        toMs: Long?,
+    ): Either<MiruError.PersistenceError, List<PlaybackHistoryStatsRow>> {
+        if (userIds != null && userIds.isEmpty()) {
+            return Either.Right(emptyList())
+        }
+
+        return database.exposedQuery("playback_history_list_for_stats") {
+            val predicates = mutableListOf<Op<Boolean>>()
+            serverId?.let { predicates += PlaybackHistoryTable.serverId eq it }
+            userIds?.let { predicates += PlaybackHistoryTable.userId inList it }
+            fromMs?.let { predicates += PlaybackHistoryTable.stoppedAtMs greaterEq it }
+            toMs?.let { predicates += PlaybackHistoryTable.stoppedAtMs lessEq it }
+
+            val condition =
+                if (predicates.isEmpty()) {
+                    Op.TRUE
+                } else {
+                    predicates.reduce { acc, next -> acc and next }
+                }
+
+            PlaybackHistoryTable
+                .select(
+                    PlaybackHistoryTable.userId,
+                    PlaybackHistoryTable.mediaType,
+                    PlaybackHistoryTable.ratingKey,
+                    PlaybackHistoryTable.title,
+                    PlaybackHistoryTable.parentTitle,
+                    PlaybackHistoryTable.grandparentTitle,
+                    PlaybackHistoryTable.thumbPath,
+                    PlaybackHistoryTable.librarySectionKey,
+                    PlaybackHistoryTable.watchedDurationSec,
+                    PlaybackHistoryTable.streamDecision,
+                    PlaybackHistoryTable.hwTranscode,
+                    PlaybackHistoryTable.playerPlatform,
+                    PlaybackHistoryTable.playerProduct,
+                    PlaybackHistoryTable.stoppedAtMs,
+                ).where { condition }
+                .orderBy(PlaybackHistoryTable.stoppedAtMs to SortOrder.ASC, PlaybackHistoryTable.id to SortOrder.ASC)
+                .map { it.toPlaybackHistoryStatsRow() }
+        }
+    }
 
     override suspend fun summarizeByUser(
         userIds: Set<String>?,
@@ -242,6 +317,7 @@ class ExposedPlaybackHistoryRepository(
         val predicates = mutableListOf<Op<Boolean>>()
         filter.serverId?.let { predicates += PlaybackHistoryTable.serverId eq it }
         filter.userId?.let { predicates += PlaybackHistoryTable.userId eq it }
+        filter.userIds?.takeIf { it.isNotEmpty() }?.let { predicates += PlaybackHistoryTable.userId inList it }
         filter.mediaType?.let { predicates += PlaybackHistoryTable.mediaType eq it }
         filter.librarySectionKey?.let { predicates += PlaybackHistoryTable.librarySectionKey eq it }
         filter.streamDecision?.let { predicates += PlaybackHistoryTable.streamDecision eq it }

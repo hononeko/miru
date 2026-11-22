@@ -14,6 +14,7 @@ import app.hononeko.miru.health.ReadinessService
 import app.hononeko.miru.http.artworkRoutes
 import app.hononeko.miru.http.authRoutes
 import app.hononeko.miru.http.healthRoutes
+import app.hononeko.miru.http.historyStatsRoutes
 import app.hononeko.miru.http.openApiRoutes
 import app.hononeko.miru.http.respondError
 import app.hononeko.miru.http.streamsAndUsersRoutes
@@ -26,6 +27,7 @@ import app.hononeko.miru.persistence.repository.ExposedAuthAccountRepository
 import app.hononeko.miru.persistence.repository.ExposedAuthSessionRepository
 import app.hononeko.miru.persistence.repository.ExposedPlaybackHistoryRepository
 import app.hononeko.miru.persistence.repository.ExposedUserRepository
+import app.hononeko.miru.service.HistoryAndStatsService
 import app.hononeko.miru.service.StreamsAndUsersService
 import app.hononeko.miru.session.SessionEvent
 import io.ktor.http.HttpHeaders
@@ -75,7 +77,13 @@ fun main() {
     val appConfig = loadStartupConfig()
     val databaseHandle = initDatabase(appConfig)
     val userRepository = ExposedUserRepository(databaseHandle)
+    val playbackHistoryRepository = ExposedPlaybackHistoryRepository(databaseHandle)
     val authService = initAuthService(appConfig, databaseHandle, userRepository)
+    val historyAndStatsService =
+        HistoryAndStatsService(
+            playbackHistoryRepository = playbackHistoryRepository,
+            userRepository = userRepository,
+        )
 
     val plexRuntime =
         try {
@@ -113,7 +121,7 @@ fun main() {
         StreamsAndUsersService(
             activeSessionRepository = ExposedActiveSessionRepository(databaseHandle),
             userRepository = userRepository,
-            playbackHistoryRepository = ExposedPlaybackHistoryRepository(databaseHandle),
+            playbackHistoryRepository = playbackHistoryRepository,
             liveTechnicalProvider = {
                 plexRuntime.sessionEngine?.currentLiveTechnical().orEmpty()
             },
@@ -141,6 +149,7 @@ fun main() {
                 artworkProxyService = artworkProxyService,
                 streamsAndUsersService = streamsAndUsersService,
                 sessionEvents = plexRuntime.sessionEngine?.sessionEvents,
+                historyAndStatsService = historyAndStatsService,
             )
         }
     try {
@@ -227,6 +236,7 @@ fun Application.miruModule(
     streamsAndUsersService: StreamsAndUsersService? = null,
     sessionEvents: SharedFlow<SessionEvent>? = null,
     sseKeepaliveInterval: Duration = DEFAULT_SSE_KEEPALIVE_INTERVAL,
+    historyAndStatsService: HistoryAndStatsService? = null,
 ) {
     if (realtime != null) {
         monitor.subscribe(ApplicationStarted) {
@@ -317,6 +327,13 @@ fun Application.miruModule(
                     streamsAndUsersService = streamsAndUsersService,
                     sessionEvents = sessionEvents,
                     keepaliveInterval = sseKeepaliveInterval,
+                )
+            }
+            if (historyAndStatsService != null) {
+                historyStatsRoutes(
+                    historyAndStatsService = historyAndStatsService,
+                    authService = authService,
+                    authMode = config.auth.mode,
                 )
             }
         }

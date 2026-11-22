@@ -26,6 +26,10 @@ tags:
     description: Live playback sessions and real-time Server-Sent Events (SSE) stream updates
   - name: Users
     description: Media server users and per-user playback analytics
+  - name: History
+    description: Playback history queries and play session detail records
+  - name: Stats
+    description: Global and per-user playback statistics and aggregations
 
 paths:
   /healthz:
@@ -838,6 +842,245 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /api/v1/history:
+    get:
+      tags: [History]
+      operationId: listPlaybackHistory
+      summary: Query paginated, filtered, and sorted playback history
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: userId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: mediaType
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [movie, episode, track, clip, live_tv]
+        - name: libraryId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: decision
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [direct_play, direct_stream, transcode]
+        - name: from
+          in: query
+          required: false
+          description: Inclusive ISO-8601 UTC start timestamp
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          description: Inclusive ISO-8601 UTC end timestamp
+          schema:
+            type: string
+            format: date-time
+        - name: q
+          in: query
+          required: false
+          description: Case-insensitive title, season, or series search query
+          schema:
+            type: string
+        - name: sortBy
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [stopped_at, started_at, watched_duration, completion_percent, title]
+            default: stopped_at
+        - name: sortDir
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: pageSize
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        '200':
+          description: Paginated playback history items
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistoryListResponse'
+        '400':
+          description: Invalid query parameters
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden access to requested media user
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/history/{id}:
+    get:
+      tags: [History]
+      operationId: getPlaybackHistoryDetail
+      summary: Retrieve full details for a playback history record
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Detailed playback history record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistoryDetailResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden access to record owner
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Playback history record not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/stats/overview:
+    get:
+      tags: [Stats]
+      operationId: getOverviewStats
+      summary: Retrieve overview playback statistics across accessible users
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: range
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [7d, 30d, 90d, all]
+            default: 30d
+      responses:
+        '200':
+          description: Aggregated overview playback statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OverviewStatsResponse'
+        '400':
+          description: Invalid range parameter
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/users/{id}/stats:
+    get:
+      tags: [Stats]
+      operationId: getUserStats
+      summary: Retrieve playback statistics for a specific media user
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: range
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [7d, 30d, 90d, all]
+            default: 30d
+      responses:
+        '200':
+          description: User-scoped playback statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserStatsResponse'
+        '400':
+          description: Invalid range parameter
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden access to target media user
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Media user not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
 components:
   securitySchemes:
     CookieAuth:
@@ -1604,3 +1847,454 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/LibraryBreakdownDto'
+
+    HistoryItemDto:
+      type: object
+      required:
+        - id
+        - serverId
+        - userId
+        - ratingKey
+        - mediaType
+        - title
+        - durationMs
+        - viewOffsetMs
+        - watchedDurationSec
+        - pausedDurationSec
+        - completionPercent
+        - isWatched
+        - streamDecision
+        - hwTranscode
+        - startedAtMs
+        - stoppedAtMs
+      properties:
+        id:
+          type: string
+        serverId:
+          type: string
+        userId:
+          type: string
+        username:
+          type: string
+          nullable: true
+        ratingKey:
+          type: string
+        mediaType:
+          type: string
+        title:
+          type: string
+        parentTitle:
+          type: string
+          nullable: true
+        grandparentTitle:
+          type: string
+          nullable: true
+        parentIndex:
+          type: integer
+          nullable: true
+        mediaIndex:
+          type: integer
+          nullable: true
+        year:
+          type: integer
+          nullable: true
+        thumbUrl:
+          type: string
+          nullable: true
+        librarySectionKey:
+          type: string
+          nullable: true
+        durationMs:
+          type: integer
+          format: int64
+        viewOffsetMs:
+          type: integer
+          format: int64
+        watchedDurationSec:
+          type: integer
+        pausedDurationSec:
+          type: integer
+        completionPercent:
+          type: number
+          format: double
+        isWatched:
+          type: boolean
+        streamDecision:
+          type: string
+        hwTranscode:
+          type: boolean
+        videoResolution:
+          type: string
+          nullable: true
+        playerName:
+          type: string
+          nullable: true
+        playerPlatform:
+          type: string
+          nullable: true
+        playerProduct:
+          type: string
+          nullable: true
+        startedAtMs:
+          type: integer
+          format: int64
+        stoppedAtMs:
+          type: integer
+          format: int64
+
+    HistoryListResponse:
+      type: object
+      required: [items, page, pageSize, totalCount, totalPages]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/HistoryItemDto'
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        totalCount:
+          type: integer
+          format: int64
+        totalPages:
+          type: integer
+
+    HistoryMediaDto:
+      type: object
+      required: [ratingKey, mediaType, title, durationMs]
+      properties:
+        ratingKey:
+          type: string
+        mediaType:
+          type: string
+        title:
+          type: string
+        parentTitle:
+          type: string
+          nullable: true
+        grandparentTitle:
+          type: string
+          nullable: true
+        parentIndex:
+          type: integer
+          nullable: true
+        mediaIndex:
+          type: integer
+          nullable: true
+        year:
+          type: integer
+          nullable: true
+        thumbUrl:
+          type: string
+          nullable: true
+        librarySectionKey:
+          type: string
+          nullable: true
+        durationMs:
+          type: integer
+          format: int64
+
+    HistoryStreamTechDto:
+      type: object
+      required: [streamDecision, hwTranscode]
+      properties:
+        streamDecision:
+          type: string
+        videoDecision:
+          type: string
+          nullable: true
+        audioDecision:
+          type: string
+          nullable: true
+        hwTranscode:
+          type: boolean
+        videoCodec:
+          type: string
+          nullable: true
+        audioCodec:
+          type: string
+          nullable: true
+        videoResolution:
+          type: string
+          nullable: true
+        bandwidthKbps:
+          type: integer
+          nullable: true
+
+    HistoryPlayerDto:
+      type: object
+      properties:
+        playerName:
+          type: string
+          nullable: true
+        playerPlatform:
+          type: string
+          nullable: true
+        playerProduct:
+          type: string
+          nullable: true
+        playerMachineId:
+          type: string
+          nullable: true
+        ipAddress:
+          type: string
+          nullable: true
+        location:
+          type: string
+          nullable: true
+
+    HistoryDetailResponse:
+      type: object
+      required:
+        - id
+        - serverId
+        - userId
+        - media
+        - viewOffsetMs
+        - watchedDurationSec
+        - pausedDurationSec
+        - completionPercent
+        - isWatched
+        - streamTech
+        - player
+        - startedAtMs
+        - stoppedAtMs
+      properties:
+        id:
+          type: string
+        serverId:
+          type: string
+        userId:
+          type: string
+        username:
+          type: string
+          nullable: true
+        externalImportKey:
+          type: string
+          nullable: true
+        media:
+          $ref: '#/components/schemas/HistoryMediaDto'
+        viewOffsetMs:
+          type: integer
+          format: int64
+        watchedDurationSec:
+          type: integer
+        pausedDurationSec:
+          type: integer
+        completionPercent:
+          type: number
+          format: double
+        isWatched:
+          type: boolean
+        streamTech:
+          $ref: '#/components/schemas/HistoryStreamTechDto'
+        player:
+          $ref: '#/components/schemas/HistoryPlayerDto'
+        startedAtMs:
+          type: integer
+          format: int64
+        stoppedAtMs:
+          type: integer
+          format: int64
+
+    DailyPlayStatDto:
+      type: object
+      required: [date, playCount, watchDurationSec]
+      properties:
+        date:
+          type: string
+          description: UTC date in YYYY-MM-DD format
+        playCount:
+          type: integer
+          format: int64
+        watchDurationSec:
+          type: integer
+          format: int64
+
+    TopMediaStatDto:
+      type: object
+      required: [ratingKey, title, playCount, watchDurationSec]
+      properties:
+        ratingKey:
+          type: string
+        title:
+          type: string
+        playCount:
+          type: integer
+          format: int64
+        watchDurationSec:
+          type: integer
+          format: int64
+        thumbUrl:
+          type: string
+          nullable: true
+
+    DecisionBreakdownStatDto:
+      type: object
+      required:
+        - directPlay
+        - directStream
+        - transcode
+        - hwTranscode
+        - directPlayPercent
+        - directStreamPercent
+        - transcodePercent
+        - hwTranscodePercent
+      properties:
+        directPlay:
+          type: integer
+          format: int64
+        directStream:
+          type: integer
+          format: int64
+        transcode:
+          type: integer
+          format: int64
+        hwTranscode:
+          type: integer
+          format: int64
+        directPlayPercent:
+          type: number
+          format: double
+        directStreamPercent:
+          type: number
+          format: double
+        transcodePercent:
+          type: number
+          format: double
+        hwTranscodePercent:
+          type: number
+          format: double
+
+    PlatformStatDto:
+      type: object
+      required: [platform, playCount, watchDurationSec, percent]
+      properties:
+        platform:
+          type: string
+        playCount:
+          type: integer
+          format: int64
+        watchDurationSec:
+          type: integer
+          format: int64
+        percent:
+          type: number
+          format: double
+
+    LibraryBreakdownStatDto:
+      type: object
+      required: [librarySectionKey, playCount, watchDurationSec, percent]
+      properties:
+        librarySectionKey:
+          type: string
+        playCount:
+          type: integer
+          format: int64
+        watchDurationSec:
+          type: integer
+          format: int64
+        percent:
+          type: number
+          format: double
+
+    OverviewStatsResponse:
+      type: object
+      required:
+        - range
+        - totalPlays
+        - totalWatchDurationSec
+        - activeUsers
+        - playsPerDay
+        - topMovies
+        - topShows
+        - decisionBreakdown
+      properties:
+        range:
+          type: string
+          enum: [7d, 30d, 90d, all]
+        fromMs:
+          type: integer
+          format: int64
+          nullable: true
+        totalPlays:
+          type: integer
+          format: int64
+        totalWatchDurationSec:
+          type: integer
+          format: int64
+        activeUsers:
+          type: integer
+        playsPerDay:
+          type: array
+          items:
+            $ref: '#/components/schemas/DailyPlayStatDto'
+        topMovies:
+          type: array
+          items:
+            $ref: '#/components/schemas/TopMediaStatDto'
+        topShows:
+          type: array
+          items:
+            $ref: '#/components/schemas/TopMediaStatDto'
+        decisionBreakdown:
+          $ref: '#/components/schemas/DecisionBreakdownStatDto'
+
+    UserStatsResponse:
+      type: object
+      required:
+        - userId
+        - username
+        - range
+        - totalPlays
+        - totalWatchDurationSec
+        - playsPerDay
+        - topMovies
+        - topShows
+        - decisionBreakdown
+        - topPlatforms
+        - libraryBreakdown
+      properties:
+        userId:
+          type: string
+        username:
+          type: string
+        displayName:
+          type: string
+          nullable: true
+        range:
+          type: string
+          enum: [7d, 30d, 90d, all]
+        fromMs:
+          type: integer
+          format: int64
+          nullable: true
+        totalPlays:
+          type: integer
+          format: int64
+        totalWatchDurationSec:
+          type: integer
+          format: int64
+        playsPerDay:
+          type: array
+          items:
+            $ref: '#/components/schemas/DailyPlayStatDto'
+        topMovies:
+          type: array
+          items:
+            $ref: '#/components/schemas/TopMediaStatDto'
+        topShows:
+          type: array
+          items:
+            $ref: '#/components/schemas/TopMediaStatDto'
+        decisionBreakdown:
+          $ref: '#/components/schemas/DecisionBreakdownStatDto'
+        topPlatforms:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlatformStatDto'
+        libraryBreakdown:
+          type: array
+          items:
+            $ref: '#/components/schemas/LibraryBreakdownStatDto'

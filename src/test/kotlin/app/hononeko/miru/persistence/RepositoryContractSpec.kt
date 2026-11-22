@@ -17,6 +17,7 @@ import app.hononeko.miru.persistence.model.LibrarySnapshotRecord
 import app.hononeko.miru.persistence.model.MediaItemCacheRecord
 import app.hononeko.miru.persistence.model.MediaItemTechRecord
 import app.hononeko.miru.persistence.model.MediaMetadataRecord
+import app.hononeko.miru.persistence.model.MediaPlaySummary
 import app.hononeko.miru.persistence.model.MediaServerRecord
 import app.hononeko.miru.persistence.model.PlaybackHistoryRecord
 import app.hononeko.miru.persistence.model.PlayerRecord
@@ -97,6 +98,7 @@ fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
         activeSessionTests { ctx }
         playbackHistoryTests { ctx }
         playbackHistorySummaryTests { ctx }
+        mediaPlaySummaryTests { ctx }
         playbackHistorySortAndStatsTests { ctx }
         libraryTests { ctx }
         cascadeTests { ctx }
@@ -473,6 +475,113 @@ private fun FunSpecRootScope.playbackHistorySummaryTests(ctxProvider: () -> Cont
         }
     }
 }
+
+private fun FunSpecRootScope.mediaPlaySummaryTests(ctxProvider: () -> ContractContext) {
+    context("PlaybackHistoryRepository media & series summaries") {
+        test("summarizes playback by ratingKey and series title with RBAC scoping") {
+            val ctx = ctxProvider()
+            ctx.servers.upsert(sampleServer(id = "srv-1")).shouldBeRight()
+            ctx.users.upsert(
+                sampleUser(id = "u-1", serverId = "srv-1", externalUserId = "1", username = "alice")
+                    .copy(displayName = null),
+            ).shouldBeRight()
+            ctx.users.upsert(
+                sampleUser(id = "u-2", serverId = "srv-1", externalUserId = "2", username = "bob")
+                    .copy(displayName = "Bob Builder"),
+            ).shouldBeRight()
+
+            ctx.history.summarizeByRatingKey("rk-missing").shouldBeRight() shouldBe MediaPlaySummary.EMPTY
+            ctx.history.summarizeByRatingKey("").shouldBeRight() shouldBe MediaPlaySummary.EMPTY
+            ctx.history.summarizeSeriesByTitle("Unknown Show").shouldBeRight() shouldBe MediaPlaySummary.EMPTY
+            ctx.history.summarizeSeriesByTitle("  ").shouldBeRight() shouldBe MediaPlaySummary.EMPTY
+
+            val ep1 = contractMediaPlay("ep-play-1", "u-1", "ep-54321", "episode", "Ozymandias", 1_000L, 2_000L, 1_200, 50.0, "direct_play")
+            val ep2 = contractMediaPlay("ep-play-2", "u-2", "ep-54321", "episode", "Ozymandias", 3_000L, 5_000L, 2_400, 100.0, "transcode")
+            val ep3 = contractMediaPlay("ep-play-3", "u-1", "ep-54322", "episode", "Felina", 6_000L, 7_000L, 3_000, 90.0, "direct_stream")
+            val trackNoise = contractMediaPlay("trk-noise", "u-1", "trk-1", "track", "Song", 8_000L, 9_000L, 180, 100.0, "direct_play")
+
+            ctx.history.insert(ep1).shouldBeRight()
+            ctx.history.insert(ep2).shouldBeRight()
+            ctx.history.insert(ep3).shouldBeRight()
+            ctx.history.insert(trackNoise).shouldBeRight()
+
+            val byRatingAll = ctx.history.summarizeByRatingKey("ep-54321").shouldBeRight()
+            byRatingAll.totalPlays shouldBe 2L
+            byRatingAll.uniqueUsers shouldBe 2
+            byRatingAll.lastWatchedAtMs shouldBe 5_000L
+            byRatingAll.lastWatchedUserId shouldBe "u-2"
+            byRatingAll.lastWatchedUsername shouldBe "Bob Builder"
+            byRatingAll.avgCompletionPercent shouldBe 75.0
+            byRatingAll.directPlayCount shouldBe 1L
+            byRatingAll.directStreamCount shouldBe 0L
+            byRatingAll.transcodeCount shouldBe 1L
+            byRatingAll.totalWatchDurationSec shouldBe 3_600L
+
+            val byRatingScoped = ctx.history.summarizeByRatingKey("ep-54321", allowedUserIds = setOf("u-1")).shouldBeRight()
+            byRatingScoped.totalPlays shouldBe 1L
+            byRatingScoped.uniqueUsers shouldBe 1
+            byRatingScoped.lastWatchedUsername shouldBe "alice"
+            byRatingScoped.avgCompletionPercent shouldBe 50.0
+            byRatingScoped.directPlayCount shouldBe 1L
+            byRatingScoped.transcodeCount shouldBe 0L
+
+            ctx.history.summarizeByRatingKey("ep-54321", allowedUserIds = emptySet()).shouldBeRight() shouldBe MediaPlaySummary.EMPTY
+
+            val seriesAll = ctx.history.summarizeSeriesByTitle("breaking bad").shouldBeRight()
+            seriesAll.totalPlays shouldBe 3L
+            seriesAll.uniqueUsers shouldBe 2
+            seriesAll.lastWatchedAtMs shouldBe 7_000L
+            seriesAll.lastWatchedUsername shouldBe "alice"
+            seriesAll.avgCompletionPercent shouldBe 80.0
+            seriesAll.directPlayCount shouldBe 1L
+            seriesAll.directStreamCount shouldBe 1L
+            seriesAll.transcodeCount shouldBe 1L
+            seriesAll.totalWatchDurationSec shouldBe 6_600L
+
+            val seriesScoped = ctx.history.summarizeSeriesByTitle("Breaking Bad", allowedUserIds = setOf("u-2")).shouldBeRight()
+            seriesScoped.totalPlays shouldBe 1L
+            seriesScoped.uniqueUsers shouldBe 1
+            seriesScoped.lastWatchedUsername shouldBe "Bob Builder"
+            seriesScoped.totalWatchDurationSec shouldBe 2_400L
+
+            ctx.history.summarizeSeriesByTitle("Breaking Bad", allowedUserIds = emptySet()).shouldBeRight() shouldBe MediaPlaySummary.EMPTY
+        }
+    }
+}
+
+@Suppress("LongParameterList")
+private fun contractMediaPlay(
+    id: String,
+    userId: String,
+    ratingKey: String,
+    mediaType: String,
+    title: String,
+    startedAtMs: Long,
+    stoppedAtMs: Long,
+    watchedDurationSec: Int,
+    completionPercent: Double,
+    decision: String,
+): PlaybackHistoryRecord =
+    sampleHistory(
+        id = id,
+        userId = userId,
+        ratingKey = ratingKey,
+        startedAtMs = startedAtMs,
+        stoppedAtMs = stoppedAtMs,
+    ).let {
+        it.copy(
+            media =
+                it.media.copy(
+                    mediaType = mediaType,
+                    title = title,
+                    parentTitle = if (mediaType == "episode") "Season 5" else null,
+                    grandparentTitle = "Breaking Bad",
+                ),
+            watchedDurationSec = watchedDurationSec,
+            completionPercent = completionPercent,
+            streamTech = it.streamTech.copy(streamDecision = decision),
+        )
+    }
 
 private fun FunSpecRootScope.playbackHistorySortAndStatsTests(ctxProvider: () -> ContractContext) {
     context("PlaybackHistoryRepository sorting and stats") {

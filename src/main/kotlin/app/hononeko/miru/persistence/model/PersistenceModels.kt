@@ -149,6 +149,35 @@ data class UserPlaybackSummary(
     val totalWatchDurationSec: Long,
 )
 
+data class MediaPlaySummary(
+    val totalPlays: Long,
+    val uniqueUsers: Int,
+    val lastWatchedAtMs: Long? = null,
+    val lastWatchedUserId: String? = null,
+    val lastWatchedUsername: String? = null,
+    val avgCompletionPercent: Double? = null,
+    val directPlayCount: Long,
+    val directStreamCount: Long,
+    val transcodeCount: Long,
+    val totalWatchDurationSec: Long,
+) {
+    companion object {
+        val EMPTY =
+            MediaPlaySummary(
+                totalPlays = 0L,
+                uniqueUsers = 0,
+                lastWatchedAtMs = null,
+                lastWatchedUserId = null,
+                lastWatchedUsername = null,
+                avgCompletionPercent = null,
+                directPlayCount = 0L,
+                directStreamCount = 0L,
+                transcodeCount = 0L,
+                totalWatchDurationSec = 0L,
+            )
+    }
+}
+
 data class PlaybackHistoryStatsRow(
     val userId: String,
     val mediaType: String,

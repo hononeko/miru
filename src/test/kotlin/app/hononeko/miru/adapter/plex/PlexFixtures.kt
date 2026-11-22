@@ -578,4 +578,194 @@ internal object PlexFixtures {
           }
         }
         """.trimIndent()
+
+    val movieMetadataDetailsJson =
+        """
+        {
+          "MediaContainer": {
+            "size": 1,
+            "Metadata": [
+              {
+                "ratingKey": "12345",
+                "type": "movie",
+                "title": "Spirited Away",
+                "year": 2001,
+                "originallyAvailableAt": "2001-07-20",
+                "duration": 7500000,
+                "contentRating": "PG",
+                "studio": "Studio Ghibli",
+                "summary": "A young girl wanders into a world ruled by spirits.",
+                "librarySectionID": 1,
+                "librarySectionTitle": "Movies",
+                "addedAt": 1700000000,
+                "thumb": "/library/metadata/12345/thumb/1700000000",
+                "art": "/library/metadata/12345/art/1700000000",
+                "Genre": [
+                  { "id": 1, "tag": "Animation" },
+                  { "id": 2, "tag": "Fantasy" }
+                ],
+                "Director": [
+                  { "id": 10, "tag": "Hayao Miyazaki" }
+                ],
+                "Media": [
+                  {
+                    "id": 9001,
+                    "duration": 7500000,
+                    "bitrate": 14000,
+                    "videoResolution": "1080",
+                    "videoProfile": "high",
+                    "container": "mkv",
+                    "videoCodec": "h264",
+                    "audioCodec": "dts",
+                    "audioChannels": 6,
+                    "selected": true,
+                    "Part": [
+                      {
+                        "id": 9002,
+                        "size": 11718750000,
+                        "container": "mkv",
+                        "selected": true,
+                        "Stream": [
+                          { "streamType": 1, "codec": "h264", "profile": "high", "height": 1080, "bitrate": 12500, "selected": true },
+                          { "streamType": 2, "codec": "dts", "channels": 6, "selected": true },
+                          { "streamType": 3, "codec": "srt", "language": "English", "languageTag": "en" },
+                          { "streamType": 3, "codec": "ass", "language": "Japanese", "languageTag": "ja" },
+                          { "streamType": 3, "codec": "srt", "language": "English", "languageTag": "en" }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+        """.trimIndent()
+
+    val episodeMetadataDetailsJson =
+        """
+        {
+          "MediaContainer": {
+            "size": 1,
+            "Metadata": [
+              {
+                "ratingKey": "54321",
+                "parentRatingKey": "54300",
+                "grandparentRatingKey": "54000",
+                "type": "episode",
+                "title": "Ozymandias",
+                "parentTitle": "Season 5",
+                "grandparentTitle": "Breaking Bad",
+                "parentIndex": 5,
+                "index": 14,
+                "year": 2013,
+                "originallyAvailableAt": "2013-09-15",
+                "duration": 2880000,
+                "contentRating": "TV-MA",
+                "summary": "Everyone copes with radically changed circumstances.",
+                "librarySectionID": "2",
+                "librarySectionTitle": "TV Shows",
+                "addedAt": 1700000500,
+                "thumb": "/library/metadata/54321/thumb/1700000100",
+                "parentThumb": "/library/metadata/54300/thumb/1700000050",
+                "grandparentThumb": "/library/metadata/54000/thumb/1700000010",
+                "art": "/library/metadata/54000/art/1700000010",
+                "Director": [
+                  { "tag": "Rian Johnson" }
+                ],
+                "Media": [
+                  {
+                    "bitrate": 8200,
+                    "videoResolution": "4k",
+                    "container": "mkv",
+                    "videoCodec": "hevc",
+                    "audioCodec": "eac3",
+                    "audioChannels": 6,
+                    "Part": [
+                      {
+                        "size": 8500000000,
+                        "Stream": [
+                          { "streamType": 1, "codec": "hevc", "profile": "main 10", "height": 2160 },
+                          { "streamType": 2, "codec": "eac3", "channels": 6 },
+                          { "streamType": 3, "languageCode": "eng", "displayTitle": "English (SRT)" }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+        """.trimIndent()
+
+    val seasonMetadataDetailsJson =
+        """
+        {
+          "MediaContainer": {
+            "size": 1,
+            "Metadata": [
+              {
+                "ratingKey": "54300",
+                "parentRatingKey": "54000",
+                "type": "season",
+                "title": "Season 5",
+                "parentTitle": "Breaking Bad",
+                "index": 5,
+                "year": 2012,
+                "leafCount": 16,
+                "viewedLeafCount": 14,
+                "summary": "The fifth and final season of Breaking Bad.",
+                "librarySectionID": "2",
+                "librarySectionTitle": "TV Shows",
+                "thumb": "/library/metadata/54300/thumb/1700000050",
+                "art": "/library/metadata/54000/art/1700000010"
+              }
+            ]
+          }
+        }
+        """.trimIndent()
+
+    val showMetadataDetailsJson =
+        """
+        {
+          "MediaContainer": {
+            "size": 1,
+            "Metadata": [
+              {
+                "ratingKey": "54000",
+                "type": "show",
+                "title": "Breaking Bad",
+                "year": 2008,
+                "originallyAvailableAt": "2008-01-20",
+                "contentRating": "TV-MA",
+                "studio": "AMC",
+                "summary": "A chemistry teacher turns to manufacturing methamphetamine.",
+                "librarySectionID": "2",
+                "librarySectionTitle": "TV Shows",
+                "addedAt": 1699000000,
+                "childCount": 5,
+                "leafCount": 62,
+                "viewedLeafCount": 40,
+                "thumb": "/library/metadata/54000/thumb/1700000010",
+                "art": "/library/metadata/54000/art/1700000010",
+                "Genre": [
+                  { "tag": "Crime" },
+                  { "tag": "Drama" }
+                ]
+              }
+            ]
+          }
+        }
+        """.trimIndent()
+
+    val emptyMetadataDetailsJson =
+        """
+        {
+          "MediaContainer": {
+            "size": 0,
+            "Metadata": []
+          }
+        }
+        """.trimIndent()
 }

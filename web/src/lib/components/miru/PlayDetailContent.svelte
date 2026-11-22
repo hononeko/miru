@@ -3,6 +3,7 @@
 	import Badge from '$components/ui/Badge.svelte';
 	import ProxiedImage from './ProxiedImage.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
+	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
 	import {
 		formatBandwidthKbps,
 		formatClockMs,
@@ -26,17 +27,30 @@
 <div class="flex flex-col gap-4">
 	<!-- Media Hero -->
 	<div class="flex items-start gap-3.5">
-		<ProxiedImage
-			src={detail.media.thumbUrl}
-			alt={titles.primary}
-			fallbackLabel={titles.primary}
-			variant="poster"
-			class="h-24 w-16"
-		/>
+		<button
+			type="button"
+			onclick={() => void mediaDetailsModal.open(detail.media.ratingKey)}
+			aria-label={`View media details for ${titles.primary}`}
+			class="shrink-0 cursor-pointer rounded-lg transition-transform hover:scale-[1.02] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan"
+		>
+			<ProxiedImage
+				src={detail.media.thumbUrl}
+				alt={titles.primary}
+				fallbackLabel={titles.primary}
+				variant="poster"
+				class="h-24 w-16"
+			/>
+		</button>
 		<div class="flex min-w-0 flex-1 flex-col gap-1.5">
-			<h3 class="font-display text-xl font-bold leading-tight text-fg-primary">
-				{titles.primary}
-			</h3>
+			<button
+				type="button"
+				onclick={() => void mediaDetailsModal.open(detail.media.ratingKey)}
+				class="cursor-pointer text-left hover:underline"
+			>
+				<h3 class="font-display text-xl font-bold leading-tight text-fg-primary">
+					{titles.primary}
+				</h3>
+			</button>
 			<p class="text-xs text-fg-secondary">{titles.secondary}</p>
 			<div class="mt-0.5 flex flex-wrap items-center gap-1.5">
 				<Badge tone={detail.isWatched ? 'direct-play' : 'neutral'} dot>
@@ -47,6 +61,13 @@
 						<Badge tone="primary">{detail.username}</Badge>
 					</a>
 				{/if}
+				<button
+					type="button"
+					onclick={() => void mediaDetailsModal.open(detail.media.ratingKey)}
+					class="cursor-pointer font-mono text-[11px] font-semibold text-cyan-hi hover:underline"
+				>
+					Media info →
+				</button>
 			</div>
 		</div>
 	</div>

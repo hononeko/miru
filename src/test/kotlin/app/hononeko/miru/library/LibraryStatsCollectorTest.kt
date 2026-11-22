@@ -9,6 +9,7 @@ import app.hononeko.miru.adapter.LibraryItemInfo
 import app.hononeko.miru.adapter.LibraryItemsPage
 import app.hononeko.miru.adapter.LibrarySectionInfo
 import app.hononeko.miru.adapter.LibrarySectionType
+import app.hononeko.miru.adapter.MediaItemDetails
 import app.hononeko.miru.adapter.MediaServerAdapter
 import app.hononeko.miru.adapter.MediaServerEvent
 import app.hononeko.miru.adapter.MediaType
@@ -137,6 +138,8 @@ private class FakeMediaServerAdapter(
     override suspend fun fetchActiveSessions(): Either<MiruError, List<ActiveStreamSnapshot>> = error("unused")
 
     override suspend fun fetchUsers(): Either<MiruError, List<MediaUser>> = error("unused")
+
+    override suspend fun fetchMediaDetails(ratingKey: String): Either<MiruError, MediaItemDetails> = error("unused")
 
     override suspend fun fetchArtwork(
         path: String,

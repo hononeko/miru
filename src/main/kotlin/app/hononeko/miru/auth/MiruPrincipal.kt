@@ -24,6 +24,8 @@ data class MiruPrincipal(
 ) {
     fun isAdmin(): Boolean = role == MiruRole.ADMIN
 
+    fun scopedMediaUserIds(): Set<String>? = if (isAdmin()) null else linkedMediaUserIds
+
     fun canAccessMediaUser(mediaUserId: String): Boolean =
         isAdmin() || mediaUserId in linkedMediaUserIds
 

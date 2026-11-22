@@ -4,6 +4,7 @@ import app.hononeko.miru.adapter.ActiveStreamSnapshot
 import app.hononeko.miru.adapter.ArtworkData
 import app.hononeko.miru.adapter.LibraryItemsPage
 import app.hononeko.miru.adapter.LibrarySectionInfo
+import app.hononeko.miru.adapter.MediaItemDetails
 import app.hononeko.miru.adapter.MediaServerAdapter
 import app.hononeko.miru.adapter.MediaServerEvent
 import app.hononeko.miru.adapter.MediaUser
@@ -106,6 +107,9 @@ private class FakeUserAdapter(
         width: Int?,
         height: Int?,
     ): Either<MiruError, ArtworkData> = MiruError.NotFound("Artwork", path).left()
+
+    override suspend fun fetchMediaDetails(ratingKey: String): Either<MiruError, MediaItemDetails> =
+        MiruError.NotFound("Media", ratingKey).left()
 
     override fun events(): Flow<MediaServerEvent> = emptyFlow()
 }

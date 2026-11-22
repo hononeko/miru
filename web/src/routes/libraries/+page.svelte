@@ -13,6 +13,7 @@
 	import BarChart, { type BarPoint } from '$components/miru/BarChart.svelte';
 	import ProxiedImage from '$components/miru/ProxiedImage.svelte';
 	import { authStore } from '$stores/auth.svelte';
+	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
 	import { cn, formatBytes, formatDurationSec, formatRelativeTime } from '$lib/utils';
 
 	let libraries = $state<LibrarySectionResponse[]>([]);
@@ -331,16 +332,20 @@
 				{:else}
 					<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
 						{#each recentItems as item (item.ratingKey)}
-							<div class="flex flex-col gap-1.5">
+							<button
+								type="button"
+								onclick={() => void mediaDetailsModal.open(item.ratingKey)}
+								class="group flex cursor-pointer flex-col gap-1.5 text-left"
+							>
 								<ProxiedImage
 									src={item.thumbUrl}
 									alt={item.title}
 									fallbackLabel={item.title}
 									variant="poster"
-									class="aspect-[2/3] w-full"
+									class="aspect-[2/3] w-full transition-transform group-hover:scale-[1.02]"
 								/>
-								<div class="flex items-center justify-between gap-1">
-									<p class="truncate font-heading text-xs font-semibold text-fg-primary">
+								<div class="flex w-full items-center justify-between gap-1">
+									<p class="truncate font-heading text-xs font-semibold text-fg-primary group-hover:text-cyan-hi group-hover:underline">
 										{item.title}
 									</p>
 									{#if item.videoResolution}
@@ -354,7 +359,7 @@
 										.filter(Boolean)
 										.join(' · ')}
 								</p>
-							</div>
+							</button>
 						{/each}
 					</div>
 				{/if}

@@ -418,6 +418,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/media/{ratingKey}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Retrieve rich media details, series/season context, technical specs, and Miru play summary */
+        get: operations["getMediaDetails"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/media/{ratingKey}/thumb": {
         parameters: {
             query?: never;
@@ -1395,6 +1412,92 @@ export interface components {
             machineId: string;
             baseUrl: string;
             credentialSource: components["schemas"]["PlexCredentialSource"];
+        };
+        MediaTechnicalSpecsDto: {
+            videoResolution?: string | null;
+            videoCodec?: string | null;
+            videoProfile?: string | null;
+            audioCodec?: string | null;
+            audioChannels?: number | null;
+            container?: string | null;
+            bitrateKbps?: number | null;
+            /** Format: int64 */
+            fileSizeBytes?: number | null;
+            subtitleLanguages: string[];
+        };
+        SeriesOverviewDto: {
+            ratingKey: string;
+            title: string;
+            year?: number | null;
+            studio?: string | null;
+            contentRating?: string | null;
+            summary?: string | null;
+            genres: string[];
+            seasonCount?: number | null;
+            episodeCount?: number | null;
+            thumbUrl?: string | null;
+        };
+        SeasonDetailsDto: {
+            ratingKey: string;
+            title: string;
+            seasonIndex?: number | null;
+            year?: number | null;
+            summary?: string | null;
+            episodeCount?: number | null;
+            currentEpisodeIndex?: number | null;
+            thumbUrl?: string | null;
+        };
+        MediaPlaySummaryDto: {
+            /** Format: int64 */
+            totalPlays: number;
+            uniqueUsers: number;
+            /** Format: int64 */
+            lastWatchedAtMs?: number | null;
+            lastWatchedUsername?: string | null;
+            /** Format: double */
+            avgCompletionPercent?: number | null;
+            /** Format: int64 */
+            directPlayCount: number;
+            /** Format: int64 */
+            directStreamCount: number;
+            /** Format: int64 */
+            transcodeCount: number;
+            /** Format: int64 */
+            totalWatchDurationSec: number;
+        };
+        MediaDetailsResponse: {
+            ratingKey: string;
+            mediaType: string;
+            title: string;
+            year?: number | null;
+            originallyAvailableAt?: string | null;
+            /** Format: int64 */
+            durationMs?: number | null;
+            contentRating?: string | null;
+            studio?: string | null;
+            summary?: string | null;
+            genres: string[];
+            directors: string[];
+            librarySectionId?: string | null;
+            librarySectionTitle?: string | null;
+            /** Format: int64 */
+            addedAtMs?: number | null;
+            parentRatingKey?: string | null;
+            grandparentRatingKey?: string | null;
+            parentTitle?: string | null;
+            grandparentTitle?: string | null;
+            parentIndex?: number | null;
+            index?: number | null;
+            childCount?: number | null;
+            leafCount?: number | null;
+            viewedLeafCount?: number | null;
+            thumbUrl?: string | null;
+            artUrl?: string | null;
+            technical?: components["schemas"]["MediaTechnicalSpecsDto"] | null;
+            series?: components["schemas"]["SeriesOverviewDto"] | null;
+            season?: components["schemas"]["SeasonDetailsDto"] | null;
+            playSummary: components["schemas"]["MediaPlaySummaryDto"];
+            seriesPlaySummary?: components["schemas"]["MediaPlaySummaryDto"] | null;
         };
     };
     responses: never;
@@ -2581,6 +2684,64 @@ export interface operations {
                 };
             };
             /** @description Upstream Plex.tv error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    getMediaDetails: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                ratingKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Media item details with optional series/season context and RBAC-scoped play summary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaDetailsResponse"];
+                };
+            };
+            /** @description Invalid ratingKey */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Media item not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Upstream media server error */
             502: {
                 headers: {
                     [name: string]: unknown;

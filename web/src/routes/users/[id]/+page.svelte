@@ -9,6 +9,7 @@
 	import BarChart, { type BarPoint } from '$components/miru/BarChart.svelte';
 	import ProxiedImage from '$components/miru/ProxiedImage.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
+	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
 	import {
 		formatDurationSec,
 		formatMediaTitle,
@@ -226,12 +227,18 @@
 						{@const dec = getDecisionMeta(play.streamDecision, play.hwTranscode)}
 						<div class="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-elevated px-3 py-2.5">
 							<div class="min-w-0">
-								<p class="truncate font-heading text-xs font-semibold text-fg-primary">
-									{titles.primary}
-									{#if titles.secondary}
-										<span class="font-sans font-normal text-fg-secondary"> · {titles.secondary}</span>
-									{/if}
-								</p>
+								<button
+									type="button"
+									onclick={() => void mediaDetailsModal.open(play.ratingKey)}
+									class="block max-w-full cursor-pointer text-left hover:text-cyan-hi hover:underline"
+								>
+									<p class="truncate font-heading text-xs font-semibold text-fg-primary hover:text-cyan-hi">
+										{titles.primary}
+										{#if titles.secondary}
+											<span class="font-sans font-normal text-fg-secondary"> · {titles.secondary}</span>
+										{/if}
+									</p>
+								</button>
 								<p class="text-[10px] text-fg-muted">
 									{play.playerName || play.playerProduct || 'Unknown client'} · {formatShortDateTime(play.stoppedAtMs, preferencesStore.prefs)}
 								</p>

@@ -5,7 +5,9 @@ metadata:
   labels:
     app: miru
 spec:
+  # Miru holds the live Plex connection and session state in memory: run a single replica.
   replicas: 1
+  # Recreate lets the new pod attach the ReadWriteOnce volume and SQLite database after the old one stops.
   strategy:
     type: Recreate
   selector:
@@ -15,9 +17,8 @@ spec:
     metadata:
       labels:
         app: miru
-        networking/expose-web-ui: "true"
-        # Add networking/oidc-client: "true" once MRU-20 (OIDC) lands.
     spec:
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -33,7 +34,7 @@ spec:
             - secretRef:
                 name: miru-secrets
           ports:
-            - name: web-ui
+            - name: http
               containerPort: 8080
               protocol: TCP
           resources:
@@ -46,13 +47,13 @@ spec:
           livenessProbe:
             httpGet:
               path: /healthz
-              port: web-ui
+              port: http
             initialDelaySeconds: 5
             periodSeconds: 10
           readinessProbe:
             httpGet:
               path: /readyz
-              port: web-ui
+              port: http
             initialDelaySeconds: 5
             periodSeconds: 10
           securityContext:
@@ -72,6 +73,6 @@ spec:
       volumes:
         - name: data
           persistentVolumeClaim:
-            claimName: miru-data-pvc
+            claimName: miru-data
         - name: tmp
           emptyDir: {}

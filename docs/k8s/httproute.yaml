@@ -1,19 +1,19 @@
+# Gateway API route. Point parentRefs at your Gateway and set your hostname.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: miru-route-eg
+  name: miru
 spec:
   parentRefs:
-    - name: internal-gateway
-      namespace: edge
-      sectionName: websecure
+    - name: gateway
+      namespace: gateway-system
   hostnames:
-    - "miru.kerrlab.app"
+    - "miru.example.com"
   rules:
     - matches:
         - path:
             type: PathPrefix
             value: /
       backendRefs:
-        - name: miru-service
+        - name: miru
           port: 8080

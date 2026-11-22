@@ -371,7 +371,9 @@ class PlexMediaServerAdapter(
             url = "$tvBase/api/v2/user",
             operation = "fetch plex.tv user",
             notFoundResource = "Plex.tv user",
-        ).fold(
+        ) {
+            applyPlexTvHeaders()
+        }.fold(
             ifLeft = { error ->
                 logger.warn("Optional plex.tv user lookup failed: {}", sanitizeMessage(error.message))
                 null
@@ -382,17 +384,36 @@ class PlexMediaServerAdapter(
 
     private suspend fun fetchOptionalPlexTvFriends(): List<PlexTvFriendDto> {
         val tvBase = normalizedPlexTvBaseUrl ?: return emptyList()
-        return executeJsonGet<List<PlexTvFriendDto>>(
-            url = "$tvBase/api/v2/friends",
-            operation = "fetch plex.tv friends",
-            notFoundResource = "Plex.tv friends",
-        ).fold(
+        return executeRequest(
+            url = "$tvBase/api/users",
+            acceptHeader = ContentType.Application.Xml.toString(),
+            operation = "fetch plex.tv users",
+            notFoundResource = "Plex.tv users",
+        ) {
+            applyPlexTvHeaders()
+        }.fold(
             ifLeft = { error ->
-                logger.warn("Optional plex.tv friends lookup failed: {}", sanitizeMessage(error.message))
+                logger.warn("Optional plex.tv users lookup failed: {}", sanitizeMessage(error.message))
                 emptyList()
             },
-            ifRight = { it },
+            ifRight = { response ->
+                try {
+                    val bodyText = response.bodyAsText()
+                    PlexTvUsersXmlParser.parse(bodyText)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    logger.warn("Failed to parse plex.tv users XML: {}", sanitizeMessage(e.message))
+                    emptyList()
+                }
+            },
         )
+    }
+
+    private fun HttpRequestBuilder.applyPlexTvHeaders() {
+        val clientId = config.clientIdentifier?.trim()?.takeIf { it.isNotEmpty() } ?: DEFAULT_CLIENT_IDENTIFIER
+        header(PLEX_CLIENT_ID_HEADER, clientId)
+        header(PLEX_PRODUCT_HEADER, PLEX_PRODUCT_NAME)
     }
 
     private suspend inline fun <reified T> executeJsonGet(
@@ -599,6 +620,10 @@ class PlexMediaServerAdapter(
         const val DEFAULT_PLEX_TV_BASE_URL = "https://plex.tv"
         private const val PROVIDER_NAME = "plex"
         private const val PLEX_TOKEN_HEADER = "X-Plex-Token"
+        private const val PLEX_CLIENT_ID_HEADER = "X-Plex-Client-Identifier"
+        private const val PLEX_PRODUCT_HEADER = "X-Plex-Product"
+        private const val DEFAULT_CLIENT_IDENTIFIER = "miru"
+        private const val PLEX_PRODUCT_NAME = "Miru"
         private const val LOCAL_OWNER_USER_ID = "1"
         private const val ARTWORK_ACCEPT_HEADER = "image/*, */*;q=0.8"
         private const val DEFAULT_ARTWORK_CONTENT_TYPE = "application/octet-stream"

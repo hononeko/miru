@@ -187,6 +187,36 @@ class ArtworkProxyServiceTest :
             requests shouldHaveSize 6
         }
 
+        test("follows 2-hop Gravatar default avatar redirect to i0.wp.com/plex.tv/avatars/ and caches") {
+            val photonPng = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0A)
+            val gravatarUrl =
+                "https://secure.gravatar.com/avatar/abc?d=https%3A%2F%2Fplex.tv%2Favatars%2FBC9BB7%2F47%2F3&s=80"
+            val photonUrl = "https://i0.wp.com/plex.tv/avatars/BC9BB7/47/3?ssl=1"
+
+            val (service, requests) =
+                createService(
+                    users = listOf(userWithThumb("u-photon", "https://plex.tv/users/hash4/avatar?c=400")),
+                ) { request ->
+                    when (request.url.toString()) {
+                        "https://plex.tv/users/hash4/avatar?c=400" ->
+                            respond("", HttpStatusCode.Found, headersOf(HttpHeaders.Location, gravatarUrl))
+                        gravatarUrl ->
+                            respond("", HttpStatusCode.Found, headersOf(HttpHeaders.Location, photonUrl))
+                        photonUrl ->
+                            respond(photonPng, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "image/png"))
+                        else -> error("Unexpected external request: ${request.url}")
+                    }
+                }
+
+            val avatar = service.getUserAvatar(adminPrincipal, "u-photon").shouldBeRight()
+            avatar.bytes shouldBe photonPng
+            avatar.contentType shouldBe "image/png"
+            requests shouldHaveSize 3
+
+            service.getUserAvatar(adminPrincipal, "u-photon").shouldBeRight() shouldBe avatar
+            requests shouldHaveSize 3
+        }
+
         test("allows multi-hop redirect chain up to 3 hops and rejects >3 hops with 502 UpstreamUnavailable") {
             val finalBytes = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x09)
             val (service, requests) =
@@ -257,6 +287,10 @@ class ArtworkProxyServiceTest :
                     "u-userinfo" to "https://plex.tv@evil.com/avatar.png",
                     "u-plex-origin" to "http://plex.local:32400/users/1/avatar",
                     "u-traversal" to "https://plex.tv/avatars/../secret.png",
+                    "u-photon-evil" to "https://i0.wp.com/evil.example/avatar.png",
+                    "u-photon-metadata" to "https://i0.wp.com/169.254.169.254/latest/meta-data",
+                    "u-photon-other-sub" to "https://evil.wp.com/plex.tv/avatars/BC9BB7/47/3?ssl=1",
+                    "u-photon-double-slash" to "https://i0.wp.com/plex.tv/avatars//evil",
                 )
             val users =
                 blockedTargets.keys.map { id -> userWithThumb(id, "https://plex.tv/redir/$id") } +

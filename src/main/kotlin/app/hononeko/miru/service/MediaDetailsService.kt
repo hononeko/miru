@@ -1,6 +1,7 @@
 package app.hononeko.miru.service
 
 import app.hononeko.miru.adapter.MediaServerAdapter
+import app.hononeko.miru.adapter.MediaType
 import app.hononeko.miru.auth.MiruPrincipal
 import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.http.MediaDetailsResponse
@@ -52,8 +53,15 @@ class MediaDetailsService(
                             ).bind()
                     }
 
+            val effectivePlaySummary =
+                if (details.mediaType == MediaType.SHOW && playSummary.totalPlays == 0L && seriesPlaySummary != null) {
+                    seriesPlaySummary
+                } else {
+                    playSummary
+                }
+
             details.toResponse(
-                playSummary = playSummary,
+                playSummary = effectivePlaySummary,
                 seriesPlaySummary = seriesPlaySummary,
             )
         }

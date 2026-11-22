@@ -456,6 +456,23 @@ internal object PlexFixtures {
         }
         """.trimIndent()
 
+    val accountsWithNumericGhostsJson =
+        """
+        {
+          "MediaContainer": {
+            "size": 6,
+            "Account": [
+              { "id": 0, "name": "" },
+              { "id": 1, "name": "kerrlab" },
+              { "id": 2002, "name": "" },
+              { "id": 3003, "name": "managed_kid" },
+              { "id": 503911509, "name": "" },
+              { "id": 503911510, "name": "503911510" }
+            ]
+          }
+        }
+        """.trimIndent()
+
     val plexTvUserJson =
         """
         {
@@ -480,6 +497,17 @@ internal object PlexFixtures {
             "thumb": "https://plex.tv/users/yuki/avatar"
           }
         ]
+        """.trimIndent()
+
+    val plexTvUsersXml =
+        """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <MediaContainer size="2" friendlyName="Plex" identifier="com.plexapp.plugins.myplex">
+          <User id="2002" uuid="yuki-uuid-2" title="Yuki Tanaka" username="yuki" email="yuki@example.com" thumb="https://plex.tv/users/yuki/avatar" home="0" restricted="0" />
+          <User id="3003" uuid="" title="managed_kid" username="" email="" thumb="https://plex.tv/users/managed/avatar" home="1" restricted="1" />
+          <User id="0" uuid="" title="" username="" email="" guest="1" />
+          <User id="999999" uuid="" title="" username="" email="" guest="1" />
+        </MediaContainer>
         """.trimIndent()
 
     val librarySectionsJson =

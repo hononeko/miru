@@ -57,6 +57,16 @@ val DEFAULT_ALLOWED_AVATAR_HOSTS: Set<String> =
         "secure.gravatar.com",
     )
 
+private val GRAVATAR_PHOTON_HOSTS: Set<String> =
+    setOf(
+        "i0.wp.com",
+        "i1.wp.com",
+        "i2.wp.com",
+        "i3.wp.com",
+    )
+
+private const val PHOTON_PLEX_AVATAR_PREFIX = "/plex.tv/avatars/"
+
 fun createAvatarHttpClient(
     engine: HttpClientEngine = Java.create(),
     requestTimeoutMs: Long = DEFAULT_AVATAR_REQUEST_TIMEOUT_MS,
@@ -121,6 +131,10 @@ class ArtworkProxyService(
             .map { it.trim().lowercase().trimEnd('.') }
             .filter { it.isNotEmpty() }
             .toSet()
+
+    private val gravatarPhotonFallbackEnabled: Boolean =
+        ("gravatar.com" in normalizedAllowedHosts || "secure.gravatar.com" in normalizedAllowedHosts) &&
+            "plex.tv" in normalizedAllowedHosts
 
     private fun currentPlexOrigin(): NormalizedOrigin? =
         plexBaseUrlProvider()
@@ -256,7 +270,7 @@ class ArtworkProxyService(
             ensure(!isIpLiteral(host)) {
                 invalidAvatarTargetError("External avatar host must not be an IP address")
             }
-            ensure(isAllowedAvatarHost(host)) {
+            ensure(isAllowedAvatarUrl(host = host, rawPath = uri.rawPath)) {
                 invalidAvatarTargetError("External avatar host is not in the allowlist")
             }
 
@@ -468,6 +482,18 @@ class ArtworkProxyService(
                 )
             }
         }
+
+    private fun isAllowedAvatarUrl(
+        host: String,
+        rawPath: String?,
+    ): Boolean {
+        if (isAllowedAvatarHost(host)) return true
+        if (!gravatarPhotonFallbackEnabled) return false
+        return host in GRAVATAR_PHOTON_HOSTS &&
+            rawPath != null &&
+            rawPath.startsWith(PHOTON_PLEX_AVATAR_PREFIX) &&
+            !rawPath.contains("//")
+    }
 
     private fun isAllowedAvatarHost(host: String): Boolean {
         if (!HOSTNAME_REGEX.matches(host)) return false

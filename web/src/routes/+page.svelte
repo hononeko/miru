@@ -7,6 +7,7 @@
 	import StreamCard from '$components/miru/StreamCard.svelte';
 	import BarChart, { type BarPoint } from '$components/miru/BarChart.svelte';
 	import { authStore } from '$stores/auth.svelte';
+	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
 	import { streamsStore } from '$stores/streams.svelte';
 	import { formatBandwidthKbps, formatDurationSec, formatRelativeTime } from '$lib/utils';
@@ -319,7 +320,14 @@
 				{:else}
 					<div class="flex flex-col gap-2">
 						{#each topWatched as item, idx}
-							<div class="flex items-center justify-between gap-3 rounded-lg bg-elevated px-3 py-2">
+							<button
+								type="button"
+								onclick={() =>
+									void mediaDetailsModal.open(item.ratingKey, {
+										preferSeries: item.kind === 'TV Show'
+									})}
+								class="group flex w-full cursor-pointer items-center justify-between gap-3 rounded-lg border border-transparent bg-elevated px-3 py-2 text-left transition-colors hover:border-cyan/50 hover:bg-subtle/60 focus-visible:border-cyan focus-visible:outline-none"
+							>
 								<div class="flex min-w-0 items-center gap-2.5">
 									<span
 										class={idx === 0
@@ -329,7 +337,7 @@
 										{String(idx + 1).padStart(2, '0')}
 									</span>
 									<div class="min-w-0">
-										<p class="truncate font-heading text-xs font-semibold text-fg-primary">
+										<p class="truncate font-heading text-xs font-semibold text-fg-primary transition-colors group-hover:text-cyan-hi">
 											{item.title}
 										</p>
 										<p class="text-[10px] text-fg-muted">
@@ -340,7 +348,7 @@
 								<span class="shrink-0 font-mono text-[11px] font-semibold text-fg-secondary tabular-nums">
 									{formatDurationSec(item.watchDurationSec)}
 								</span>
-							</div>
+							</button>
 						{/each}
 					</div>
 				{/if}

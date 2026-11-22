@@ -120,6 +120,12 @@ data class HistoryPage(
     val offset: Int,
 )
 
+data class UserPlaybackSummary(
+    val userId: String,
+    val totalPlays: Long,
+    val totalWatchDurationSec: Long,
+)
+
 data class LibrarySectionRecord(
     val serverId: String,
     val sectionKey: String,

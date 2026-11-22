@@ -15,6 +15,7 @@ import app.hononeko.miru.persistence.model.MediaServerRecord
 import app.hononeko.miru.persistence.model.PlaybackHistoryRecord
 import app.hononeko.miru.persistence.model.PlayerRecord
 import app.hononeko.miru.persistence.model.StreamTechRecord
+import app.hononeko.miru.persistence.model.UserPlaybackSummary
 import app.hononeko.miru.persistence.model.UserRecord
 import app.hononeko.miru.persistence.repository.ActiveSessionRepository
 import app.hononeko.miru.persistence.repository.ApiKeyRepository
@@ -75,6 +76,7 @@ fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
         userTests { ctx }
         activeSessionTests { ctx }
         playbackHistoryTests { ctx }
+        playbackHistorySummaryTests { ctx }
         libraryTests { ctx }
         cascadeTests { ctx }
         authAccountTests { ctx }
@@ -167,6 +169,14 @@ private fun FunSpecRootScope.userTests(ctxProvider: () -> ContractContext) {
             val byServer = ctx.users.findByServer("srv-1").shouldBeRight()
             byServer shouldHaveSize 1
             byServer.first().lastSeenAtMs shouldBe 3_000L
+
+            ctx.servers.upsert(sampleServer(id = "srv-2", machineId = "mach-2")).shouldBeRight()
+            val bob = sampleUser(id = "user-2", serverId = "srv-2", externalUserId = "ext-99", username = "bob")
+            val anotherAlice = sampleUser(id = "user-0", serverId = "srv-2", externalUserId = "ext-01", username = "alice")
+            ctx.users.upsert(bob).shouldBeRight()
+            ctx.users.upsert(anotherAlice).shouldBeRight()
+
+            ctx.users.findAll().shouldBeRight().map { it.id } shouldContainExactly listOf("user-0", "user-1", "user-2")
         }
     }
 }
@@ -329,6 +339,37 @@ private fun FunSpecRootScope.playbackHistoryTests(ctxProvider: () -> ContractCon
                     ).shouldBeRight()
             userParentPage.totalCount shouldBe 1L
             userParentPage.items shouldContainExactly listOf(r3)
+        }
+    }
+}
+
+private fun FunSpecRootScope.playbackHistorySummaryTests(ctxProvider: () -> ContractContext) {
+    context("PlaybackHistoryRepository aggregations") {
+        test("summarizes and lists playback history per user") {
+            val ctx = ctxProvider()
+            ctx.servers.upsert(sampleServer(id = "srv-1")).shouldBeRight()
+            ctx.users.upsert(sampleUser(id = "u-1", serverId = "srv-1", externalUserId = "1")).shouldBeRight()
+            ctx.users.upsert(sampleUser(id = "u-2", serverId = "srv-1", externalUserId = "2", username = "bob")).shouldBeRight()
+
+            val h1 = sampleHistory(id = "hist-1", userId = "u-1", ratingKey = "mov-1", startedAtMs = 1_000L, stoppedAtMs = 2_000L)
+            val h2 = sampleHistory(id = "hist-2", userId = "u-1", ratingKey = "mov-2", startedAtMs = 3_000L, stoppedAtMs = 4_000L)
+            val h3 = sampleHistory(id = "hist-3", userId = "u-2", ratingKey = "mov-3", startedAtMs = 5_000L, stoppedAtMs = 6_000L)
+            ctx.history.insert(h1.copy(watchedDurationSec = 300)).shouldBeRight()
+            ctx.history.insert(h2.copy(watchedDurationSec = 100)).shouldBeRight()
+            ctx.history.insert(h3.copy(watchedDurationSec = 150)).shouldBeRight()
+
+            ctx.history.summarizeByUser(emptySet()).shouldBeRight() shouldBe emptyMap()
+            val allSummaries = ctx.history.summarizeByUser().shouldBeRight()
+            allSummaries["u-1"] shouldBe UserPlaybackSummary(userId = "u-1", totalPlays = 2L, totalWatchDurationSec = 400L)
+            allSummaries["u-2"] shouldBe UserPlaybackSummary(userId = "u-2", totalPlays = 1L, totalWatchDurationSec = 150L)
+
+            val filteredSummaries = ctx.history.summarizeByUser(setOf("u-2", "u-missing")).shouldBeRight()
+            filteredSummaries.keys shouldContainExactly listOf("u-2")
+            filteredSummaries["u-2"] shouldBe UserPlaybackSummary(userId = "u-2", totalPlays = 1L, totalWatchDurationSec = 150L)
+
+            ctx.history.listByUser("u-1").shouldBeRight().map { it.id } shouldContainExactly listOf("hist-2", "hist-1")
+            ctx.history.listRecentByUser("u-1", limit = 1).shouldBeRight().map { it.id } shouldContainExactly listOf("hist-2")
+            ctx.history.listRecentByUser("u-1", limit = 0).shouldBeRight() shouldHaveSize 0
         }
     }
 }

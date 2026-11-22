@@ -7,22 +7,29 @@ import app.hononeko.miru.persistence.exposedQuery
 import app.hononeko.miru.persistence.model.HistoryFilter
 import app.hononeko.miru.persistence.model.HistoryPage
 import app.hononeko.miru.persistence.model.PlaybackHistoryRecord
+import app.hononeko.miru.persistence.model.UserPlaybackSummary
 import app.hononeko.miru.persistence.table.PlaybackHistoryTable
 import arrow.core.Either
 import org.jetbrains.exposed.v1.core.LikePattern
+import org.jetbrains.exposed.v1.core.LongColumnType
 import org.jetbrains.exposed.v1.core.Op
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.castTo
+import org.jetbrains.exposed.v1.core.count
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greaterEq
+import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.lessEq
 import org.jetbrains.exposed.v1.core.like
 import org.jetbrains.exposed.v1.core.lowerCase
 import org.jetbrains.exposed.v1.core.or
 import org.jetbrains.exposed.v1.core.statements.UpdateBuilder
+import org.jetbrains.exposed.v1.core.sum
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.insertIgnore
+import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.update
 
@@ -44,6 +51,17 @@ interface PlaybackHistoryRepository {
     suspend fun updateMergedSession(record: PlaybackHistoryRecord): Either<MiruError.PersistenceError, Boolean>
 
     suspend fun query(filter: HistoryFilter): Either<MiruError.PersistenceError, HistoryPage>
+
+    suspend fun summarizeByUser(
+        userIds: Set<String>? = null,
+    ): Either<MiruError.PersistenceError, Map<String, UserPlaybackSummary>>
+
+    suspend fun listRecentByUser(
+        userId: String,
+        limit: Int = 10,
+    ): Either<MiruError.PersistenceError, List<PlaybackHistoryRecord>>
+
+    suspend fun listByUser(userId: String): Either<MiruError.PersistenceError, List<PlaybackHistoryRecord>>
 }
 
 class ExposedPlaybackHistoryRepository(
@@ -157,6 +175,67 @@ class ExposedPlaybackHistoryRepository(
                 limit = safeLimit,
                 offset = safeOffset,
             )
+        }
+
+    override suspend fun summarizeByUser(
+        userIds: Set<String>?,
+    ): Either<MiruError.PersistenceError, Map<String, UserPlaybackSummary>> {
+        if (userIds != null && userIds.isEmpty()) {
+            return Either.Right(emptyMap())
+        }
+        return database.exposedQuery("playback_history_summarize_by_user") {
+            val playCountExpr = PlaybackHistoryTable.id.count()
+            val watchDurationExpr = PlaybackHistoryTable.watchedDurationSec.castTo(LongColumnType()).sum()
+            val query =
+                PlaybackHistoryTable
+                    .select(PlaybackHistoryTable.userId, playCountExpr, watchDurationExpr)
+                    .let { base ->
+                        if (userIds != null) {
+                            base.where { PlaybackHistoryTable.userId inList userIds }
+                        } else {
+                            base
+                        }
+                    }.groupBy(PlaybackHistoryTable.userId)
+
+            val summaries = linkedMapOf<String, UserPlaybackSummary>()
+            for (row in query) {
+                val uid = row[PlaybackHistoryTable.userId]
+                summaries[uid] =
+                    UserPlaybackSummary(
+                        userId = uid,
+                        totalPlays = row[playCountExpr],
+                        totalWatchDurationSec = row[watchDurationExpr] ?: 0L,
+                    )
+            }
+            summaries
+        }
+    }
+
+    override suspend fun listRecentByUser(
+        userId: String,
+        limit: Int,
+    ): Either<MiruError.PersistenceError, List<PlaybackHistoryRecord>> =
+        database.exposedQuery("playback_history_list_recent_by_user") {
+            val safeLimit = limit.coerceAtLeast(0)
+            if (safeLimit == 0) {
+                emptyList()
+            } else {
+                PlaybackHistoryTable
+                    .selectAll()
+                    .where { PlaybackHistoryTable.userId eq userId }
+                    .orderBy(PlaybackHistoryTable.stoppedAtMs to SortOrder.DESC, PlaybackHistoryTable.id to SortOrder.ASC)
+                    .limit(safeLimit)
+                    .map { it.toPlaybackHistoryRecord() }
+            }
+        }
+
+    override suspend fun listByUser(userId: String): Either<MiruError.PersistenceError, List<PlaybackHistoryRecord>> =
+        database.exposedQuery("playback_history_list_by_user") {
+            PlaybackHistoryTable
+                .selectAll()
+                .where { PlaybackHistoryTable.userId eq userId }
+                .orderBy(PlaybackHistoryTable.stoppedAtMs to SortOrder.DESC, PlaybackHistoryTable.id to SortOrder.ASC)
+                .map { it.toPlaybackHistoryRecord() }
         }
 
     private fun buildFilterCondition(filter: HistoryFilter): Op<Boolean> {

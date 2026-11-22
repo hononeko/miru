@@ -29,6 +29,8 @@ interface UserRepository {
 
     suspend fun findByServer(serverId: String): Either<MiruError.PersistenceError, List<UserRecord>>
 
+    suspend fun findAll(): Either<MiruError.PersistenceError, List<UserRecord>>
+
     suspend fun updateLastSeen(
         id: String,
         lastSeenAtMs: Long,
@@ -126,6 +128,14 @@ class ExposedUserRepository(
             UsersTable
                 .selectAll()
                 .where { UsersTable.serverId eq serverId }
+                .orderBy(UsersTable.username to SortOrder.ASC, UsersTable.id to SortOrder.ASC)
+                .map { it.toUserRecord() }
+        }
+
+    override suspend fun findAll(): Either<MiruError.PersistenceError, List<UserRecord>> =
+        database.exposedQuery("user_find_all") {
+            UsersTable
+                .selectAll()
                 .orderBy(UsersTable.username to SortOrder.ASC, UsersTable.id to SortOrder.ASC)
                 .map { it.toUserRecord() }
         }

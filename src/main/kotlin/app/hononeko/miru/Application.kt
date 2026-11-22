@@ -16,12 +16,18 @@ import app.hononeko.miru.http.authRoutes
 import app.hononeko.miru.http.healthRoutes
 import app.hononeko.miru.http.openApiRoutes
 import app.hononeko.miru.http.respondError
+import app.hononeko.miru.http.streamsAndUsersRoutes
 import app.hononeko.miru.persistence.DatabaseFactory
+import app.hononeko.miru.persistence.DatabaseHandle
 import app.hononeko.miru.persistence.DatabaseReadinessCheck
+import app.hononeko.miru.persistence.repository.ExposedActiveSessionRepository
 import app.hononeko.miru.persistence.repository.ExposedApiKeyRepository
 import app.hononeko.miru.persistence.repository.ExposedAuthAccountRepository
 import app.hononeko.miru.persistence.repository.ExposedAuthSessionRepository
+import app.hononeko.miru.persistence.repository.ExposedPlaybackHistoryRepository
 import app.hononeko.miru.persistence.repository.ExposedUserRepository
+import app.hononeko.miru.service.StreamsAndUsersService
+import app.hononeko.miru.session.SessionEvent
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.serialization.kotlinx.json.json
@@ -41,16 +47,19 @@ import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.path
 import io.ktor.server.routing.routing
 import io.ktor.server.sse.SSE
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
 import org.slf4j.bridge.SLF4JBridgeHandler
 import kotlin.system.exitProcess
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 private val logger = LoggerFactory.getLogger("app.hononeko.miru.Application")
 private val REALTIME_SHUTDOWN_TIMEOUT = 5.seconds
+private val DEFAULT_SSE_KEEPALIVE_INTERVAL = 15.seconds
 
 val MiruJson: Json =
     Json {
@@ -63,58 +72,10 @@ fun main() {
     SLF4JBridgeHandler.removeHandlersForRootLogger()
     SLF4JBridgeHandler.install()
 
-    val hoconConfig = ApplicationConfig("application.conf")
-    val appConfig =
-        AppConfigLoader
-            .load(env = System.getenv(), hocon = hoconConfig)
-            .fold(
-                ifLeft = { error ->
-                    logger.error("Startup configuration failed: {}", error.message)
-                    error.fieldErrors.forEach { (field, detail) ->
-                        logger.error("  - {}: {}", field, detail)
-                    }
-                    exitProcess(1)
-                },
-                ifRight = { it },
-            )
-
-    logger.info(
-        "Starting Miru on {}:{} (db={}, auth={})",
-        appConfig.server.host,
-        appConfig.server.port,
-        appConfig.database::class.simpleName,
-        appConfig.auth.mode,
-    )
-
-    val databaseHandle =
-        DatabaseFactory
-            .createAndMigrate(appConfig.database)
-            .fold(
-                ifLeft = { error ->
-                    logger.error("Database initialization failed: {}", error.message)
-                    exitProcess(1)
-                },
-                ifRight = { it },
-            )
-
+    val appConfig = loadStartupConfig()
+    val databaseHandle = initDatabase(appConfig)
     val userRepository = ExposedUserRepository(databaseHandle)
-    val authService =
-        AuthService(
-            accountRepository = ExposedAuthAccountRepository(databaseHandle),
-            sessionRepository = ExposedAuthSessionRepository(databaseHandle),
-            apiKeyRepository = ExposedApiKeyRepository(databaseHandle),
-            userRepository = userRepository,
-            passwordHasher = Argon2idPasswordHasher(),
-            authConfig = appConfig.auth,
-        )
-
-    runBlocking {
-        authService.bootstrapAdminIfConfigured()
-    }.onLeft { error ->
-        logger.error("Initial admin bootstrap failed: {}", error.message)
-        databaseHandle.close()
-        exitProcess(1)
-    }
+    val authService = initAuthService(appConfig, databaseHandle, userRepository)
 
     val plexRuntime =
         try {
@@ -148,7 +109,15 @@ fun main() {
             externalAvatarClient = externalAvatarClient,
             plexBaseUrl = appConfig.plex.baseUrl,
         )
-
+    val streamsAndUsersService =
+        StreamsAndUsersService(
+            activeSessionRepository = ExposedActiveSessionRepository(databaseHandle),
+            userRepository = userRepository,
+            playbackHistoryRepository = ExposedPlaybackHistoryRepository(databaseHandle),
+            liveTechnicalProvider = {
+                plexRuntime.sessionEngine?.currentLiveTechnical().orEmpty()
+            },
+        )
     val readinessChecks = listOf(NamedReadinessCheck("database", DatabaseReadinessCheck(databaseHandle)))
 
     val server =
@@ -170,6 +139,8 @@ fun main() {
                 realtime = plexRuntime.realtime,
                 authService = authService,
                 artworkProxyService = artworkProxyService,
+                streamsAndUsersService = streamsAndUsersService,
+                sessionEvents = plexRuntime.sessionEngine?.sessionEvents,
             )
         }
     try {
@@ -186,6 +157,66 @@ fun main() {
     }
 }
 
+private fun loadStartupConfig(): AppConfig {
+    val hoconConfig = ApplicationConfig("application.conf")
+    val appConfig =
+        AppConfigLoader
+            .load(env = System.getenv(), hocon = hoconConfig)
+            .fold(
+                ifLeft = { error ->
+                    logger.error("Startup configuration failed: {}", error.message)
+                    error.fieldErrors.forEach { (field, detail) ->
+                        logger.error("  - {}: {}", field, detail)
+                    }
+                    exitProcess(1)
+                },
+                ifRight = { it },
+            )
+    logger.info(
+        "Starting Miru on {}:{} (db={}, auth={})",
+        appConfig.server.host,
+        appConfig.server.port,
+        appConfig.database::class.simpleName,
+        appConfig.auth.mode,
+    )
+    return appConfig
+}
+
+private fun initDatabase(appConfig: AppConfig): DatabaseHandle =
+    DatabaseFactory
+        .createAndMigrate(appConfig.database)
+        .fold(
+            ifLeft = { error ->
+                logger.error("Database initialization failed: {}", error.message)
+                exitProcess(1)
+            },
+            ifRight = { it },
+        )
+
+private fun initAuthService(
+    appConfig: AppConfig,
+    databaseHandle: DatabaseHandle,
+    userRepository: ExposedUserRepository,
+): AuthService {
+    val authService =
+        AuthService(
+            accountRepository = ExposedAuthAccountRepository(databaseHandle),
+            sessionRepository = ExposedAuthSessionRepository(databaseHandle),
+            apiKeyRepository = ExposedApiKeyRepository(databaseHandle),
+            userRepository = userRepository,
+            passwordHasher = Argon2idPasswordHasher(),
+            authConfig = appConfig.auth,
+        )
+    runBlocking {
+        authService.bootstrapAdminIfConfigured()
+    }.onLeft { error ->
+        logger.error("Initial admin bootstrap failed: {}", error.message)
+        databaseHandle.close()
+        exitProcess(1)
+    }
+    return authService
+}
+
 fun Application.miruModule(
     config: AppConfig,
     readinessChecks: List<NamedReadinessCheck> = emptyList(),
@@ -193,6 +224,9 @@ fun Application.miruModule(
     realtime: RealtimeLifecycle? = null,
     authService: AuthService? = null,
     artworkProxyService: ArtworkProxyService? = null,
+    streamsAndUsersService: StreamsAndUsersService? = null,
+    sessionEvents: SharedFlow<SessionEvent>? = null,
+    sseKeepaliveInterval: Duration = DEFAULT_SSE_KEEPALIVE_INTERVAL,
 ) {
     if (realtime != null) {
         monitor.subscribe(ApplicationStarted) {
@@ -274,6 +308,15 @@ fun Application.miruModule(
                     artworkProxyService = artworkProxyService,
                     authService = authService,
                     authMode = config.auth.mode,
+                )
+            }
+            if (streamsAndUsersService != null) {
+                streamsAndUsersRoutes(
+                    authService = authService,
+                    authMode = config.auth.mode,
+                    streamsAndUsersService = streamsAndUsersService,
+                    sessionEvents = sessionEvents,
+                    keepaliveInterval = sseKeepaliveInterval,
                 )
             }
         }

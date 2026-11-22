@@ -9,6 +9,7 @@ import java.net.URI
 
 enum class AuthMode {
     LOCAL,
+    OIDC,
     NONE,
 }
 
@@ -51,14 +52,50 @@ data class SessionConfig(
     val watchedThresholdPercent: Int = 85,
 )
 
+data class OidcConfig(
+    val enabled: Boolean = false,
+    val issuerUrl: String = "",
+    val clientId: String = "",
+    val clientSecret: String = "",
+    val redirectUri: String = "",
+    val displayName: String = "SSO",
+    val scopes: List<String> = DEFAULT_SCOPES,
+    val groupsClaim: String = "groups",
+    val adminGroups: Set<String> = emptySet(),
+    val userGroups: Set<String> = emptySet(),
+    val autoLinkByEmail: Boolean = true,
+    val postLogoutRedirectUri: String? = null,
+) {
+    override fun toString(): String =
+        "OidcConfig(enabled=$enabled, issuerUrl=$issuerUrl, clientId=$clientId, " +
+            "clientSecret=${if (clientSecret.isNotEmpty()) "***" else ""}, redirectUri=$redirectUri, " +
+            "displayName=$displayName, scopes=$scopes, groupsClaim=$groupsClaim, " +
+            "adminGroups=$adminGroups, userGroups=$userGroups, autoLinkByEmail=$autoLinkByEmail, " +
+            "postLogoutRedirectUri=$postLogoutRedirectUri)"
+
+    companion object {
+        val DEFAULT_SCOPES = listOf("openid", "profile", "email", "groups")
+    }
+}
+
 data class AuthConfig(
     val mode: AuthMode = AuthMode.LOCAL,
     val sessionSecret: String = "",
     val adminUsername: String? = null,
     val adminPassword: String? = null,
+    val allowLocalLogin: Boolean = true,
+    val oidc: OidcConfig = OidcConfig(),
 ) {
+    val localLoginEnabled: Boolean
+        get() = mode == AuthMode.LOCAL && allowLocalLogin
+
+    val oidcEnabled: Boolean
+        get() = mode != AuthMode.NONE && oidc.enabled
+
     override fun toString(): String =
-        "AuthConfig(mode=$mode, sessionSecret=***, adminUsername=$adminUsername, adminPassword=${if (adminPassword != null) "***" else "null"})"
+        "AuthConfig(mode=$mode, sessionSecret=***, adminUsername=$adminUsername, " +
+            "adminPassword=${if (adminPassword != null) "***" else "null"}, " +
+            "allowLocalLogin=$allowLocalLogin, oidc=$oidc)"
 }
 
 data class AppConfig(
@@ -298,16 +335,23 @@ object AppConfigLoader {
         val mode =
             when (modeRaw) {
                 "local" -> AuthMode.LOCAL
+                "oidc" -> AuthMode.OIDC
                 "none" -> AuthMode.NONE
                 else -> {
-                    errors["AUTH_MODE"] = "must be 'local' or 'none', got '$modeRaw'"
+                    errors["AUTH_MODE"] = "must be 'local', 'oidc', or 'none', got '$modeRaw'"
                     AuthMode.LOCAL
                 }
             }
 
+        val allowLocalRaw = get("AUTH_ALLOW_LOCAL_LOGIN", "miru.auth.allowLocalLogin", null) ?: "true"
+        val allowLocalLogin = allowLocalRaw.toBooleanStrictOrNull()
+        if (allowLocalLogin == null) {
+            errors["AUTH_ALLOW_LOCAL_LOGIN"] = "must be 'true' or 'false'"
+        }
+
         val sessionSecret = get("AUTH_SESSION_SECRET", "miru.auth.sessionSecret", null).orEmpty()
-        if (mode == AuthMode.LOCAL && sessionSecret.length < MIN_SESSION_SECRET_LENGTH) {
-            errors["AUTH_SESSION_SECRET"] = "must be at least $MIN_SESSION_SECRET_LENGTH characters when AUTH_MODE=local"
+        if (mode != AuthMode.NONE && sessionSecret.length < MIN_SESSION_SECRET_LENGTH) {
+            errors["AUTH_SESSION_SECRET"] = "must be at least $MIN_SESSION_SECRET_LENGTH characters when AUTH_MODE != none"
         }
 
         val adminUsername = get("MIRU_ADMIN_USERNAME", "miru.auth.adminUsername", null)
@@ -321,13 +365,113 @@ object AppConfigLoader {
             errors["MIRU_ADMIN_PASSWORD"] = "must be at least $MIN_ADMIN_PASSWORD_LENGTH characters"
         }
 
+        val oidc = parseOidcConfig(mode = mode, get = get, errors = errors)
+        val effectiveAllowLocal = allowLocalLogin ?: true
+        val localLoginEnabled = mode == AuthMode.LOCAL && effectiveAllowLocal
+        val oidcEnabled = mode != AuthMode.NONE && oidc.enabled
+
+        if (mode != AuthMode.NONE && !localLoginEnabled && !oidcEnabled) {
+            errors["AUTH_ALLOW_LOCAL_LOGIN"] =
+                "at least one authentication provider (local or OIDC) must be enabled when AUTH_MODE != none"
+        }
+
         return AuthConfig(
             mode = mode,
             sessionSecret = sessionSecret,
             adminUsername = adminUsername,
             adminPassword = adminPassword,
+            allowLocalLogin = effectiveAllowLocal,
+            oidc = oidc,
         )
     }
+
+    private fun parseOidcConfig(
+        mode: AuthMode,
+        get: (String, String, String?) -> String?,
+        errors: MutableMap<String, String>,
+    ): OidcConfig {
+        val enabledRaw = get("OIDC_ENABLED", "miru.auth.oidc.enabled", null)
+        val parsedEnabled =
+            if (enabledRaw != null) {
+                enabledRaw.toBooleanStrictOrNull().also { parsed ->
+                    if (parsed == null) {
+                        errors["OIDC_ENABLED"] = "must be 'true' or 'false'"
+                    }
+                }
+            } else {
+                mode == AuthMode.OIDC
+            }
+
+        if (mode == AuthMode.OIDC && parsedEnabled == false) {
+            errors["OIDC_ENABLED"] = "must be 'true' when AUTH_MODE=oidc"
+        }
+
+        val enabled = parsedEnabled ?: (mode == AuthMode.OIDC)
+        val issuerUrl = get("OIDC_ISSUER_URL", "miru.auth.oidc.issuerUrl", null).orEmpty().trimEnd('/')
+        val clientId = get("OIDC_CLIENT_ID", "miru.auth.oidc.clientId", null).orEmpty()
+        val clientSecret = get("OIDC_CLIENT_SECRET", "miru.auth.oidc.clientSecret", null).orEmpty()
+        val redirectUri = get("OIDC_REDIRECT_URI", "miru.auth.oidc.redirectUri", null).orEmpty()
+        val displayName = get("OIDC_DISPLAY_NAME", "miru.auth.oidc.displayName", null) ?: "SSO"
+        val scopesRaw = get("OIDC_SCOPES", "miru.auth.oidc.scopes", null) ?: "openid,profile,email,groups"
+        val scopes =
+            scopesRaw
+                .split(',', ' ')
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .distinct()
+        val groupsClaim = get("OIDC_GROUPS_CLAIM", "miru.auth.oidc.groupsClaim", null) ?: "groups"
+        val adminGroups = parseCsvSet(get("OIDC_ADMIN_GROUPS", "miru.auth.oidc.adminGroups", null))
+        val userGroups = parseCsvSet(get("OIDC_USER_GROUPS", "miru.auth.oidc.userGroups", null))
+
+        val autoLinkRaw = get("OIDC_AUTO_LINK_BY_EMAIL", "miru.auth.oidc.autoLinkByEmail", null) ?: "true"
+        val autoLinkByEmail = autoLinkRaw.toBooleanStrictOrNull()
+        if (autoLinkByEmail == null) {
+            errors["OIDC_AUTO_LINK_BY_EMAIL"] = "must be 'true' or 'false'"
+        }
+
+        val postLogoutRedirectUri = get("OIDC_POST_LOGOUT_REDIRECT_URI", "miru.auth.oidc.postLogoutRedirectUri", null)
+        if (postLogoutRedirectUri != null && !isValidHttpUrl(postLogoutRedirectUri)) {
+            errors["OIDC_POST_LOGOUT_REDIRECT_URI"] = "must be a valid http:// or https:// URL"
+        }
+
+        if (mode != AuthMode.NONE && enabled) {
+            if (issuerUrl.isBlank() || !isValidHttpUrl(issuerUrl)) {
+                errors["OIDC_ISSUER_URL"] = "must be a valid http:// or https:// URL when OIDC is enabled"
+            }
+            if (clientId.isBlank()) {
+                errors["OIDC_CLIENT_ID"] = "is required when OIDC is enabled"
+            }
+            if (redirectUri.isBlank() || !isValidHttpUrl(redirectUri)) {
+                errors["OIDC_REDIRECT_URI"] = "must be a valid http:// or https:// URL when OIDC is enabled"
+            }
+            if (adminGroups.isEmpty() && userGroups.isEmpty()) {
+                errors["OIDC_ADMIN_GROUPS"] = "at least one group must be configured across OIDC_ADMIN_GROUPS or OIDC_USER_GROUPS"
+            }
+        }
+
+        return OidcConfig(
+            enabled = enabled,
+            issuerUrl = issuerUrl,
+            clientId = clientId,
+            clientSecret = clientSecret,
+            redirectUri = redirectUri,
+            displayName = displayName,
+            scopes = scopes.ifEmpty { OidcConfig.DEFAULT_SCOPES },
+            groupsClaim = groupsClaim,
+            adminGroups = adminGroups,
+            userGroups = userGroups,
+            autoLinkByEmail = autoLinkByEmail ?: true,
+            postLogoutRedirectUri = postLogoutRedirectUri,
+        )
+    }
+
+    private fun parseCsvSet(raw: String?): Set<String> =
+        raw
+            .orEmpty()
+            .split(',')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .toSet()
 
     private fun isValidHttpUrl(raw: String): Boolean =
         runCatching {

@@ -722,6 +722,72 @@ private fun FunSpecRootScope.authAccountTests(ctxProvider: () -> ContractContext
             ctx.authAccounts.delete("acc-2").shouldBeRight() shouldBe false
             ctx.authAccounts.findById("acc-2").shouldBeRight().shouldBeNull()
         }
+
+        test("persists OIDC provider and external subject, supports lookup, and updates profile") {
+            val ctx = ctxProvider()
+            val oidcUser =
+                AuthAccountRecord(
+                    id = "acc-oidc-1",
+                    username = "oidc.user",
+                    usernameNormalized = "oidc.user",
+                    email = "oidc@miru.local",
+                    passwordHash = "",
+                    role = "USER",
+                    disabled = false,
+                    authProvider = "OIDC",
+                    externalSubject = "sub-abc-123",
+                    createdAtMs = 1_000L,
+                    updatedAtMs = 1_000L,
+                )
+            val localWithNullSubject =
+                AuthAccountRecord(
+                    id = "acc-local-1",
+                    username = "local1",
+                    usernameNormalized = "local1",
+                    passwordHash = "hash-1",
+                    role = "ADMIN",
+                    createdAtMs = 1_100L,
+                    updatedAtMs = 1_100L,
+                )
+            val localWithNullSubject2 =
+                AuthAccountRecord(
+                    id = "acc-local-2",
+                    username = "local2",
+                    usernameNormalized = "local2",
+                    passwordHash = "hash-2",
+                    role = "USER",
+                    createdAtMs = 1_200L,
+                    updatedAtMs = 1_200L,
+                )
+
+            ctx.authAccounts.insert(oidcUser).shouldBeRight() shouldBe oidcUser
+            // Multiple LOCAL rows with external_subject = NULL must be allowed by partial unique index
+            ctx.authAccounts.insert(localWithNullSubject).shouldBeRight()
+            ctx.authAccounts.insert(localWithNullSubject2).shouldBeRight()
+
+            ctx.authAccounts.findByProviderAndSubject("OIDC", "sub-abc-123").shouldBeRight() shouldBe oidcUser
+            ctx.authAccounts.findByProviderAndSubject("OIDC", "missing").shouldBeRight().shouldBeNull()
+
+            val updated =
+                ctx.authAccounts
+                    .updateOidcProfile(
+                        id = "acc-oidc-1",
+                        username = "oidc.renamed",
+                        usernameNormalized = "oidc.renamed",
+                        email = "renamed@miru.local",
+                        role = "ADMIN",
+                        updatedAtMs = 5_000L,
+                    ).shouldBeRight()
+            updated shouldBe
+                oidcUser.copy(
+                    username = "oidc.renamed",
+                    usernameNormalized = "oidc.renamed",
+                    email = "renamed@miru.local",
+                    role = "ADMIN",
+                    updatedAtMs = 5_000L,
+                )
+            ctx.authAccounts.countAdmins().shouldBeRight() shouldBe 2L
+        }
     }
 }
 

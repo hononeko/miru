@@ -240,6 +240,13 @@
 		}
 	}
 
+	const activeProviderLabel = $derived.by(() => {
+		if (authStore.authMode === 'none') return 'NONE';
+		if (authStore.localEnabled && authStore.oidcEnabled) return 'LOCAL + OIDC';
+		if (authStore.oidcEnabled) return 'OIDC';
+		return 'LOCAL';
+	});
+
 	function mediaUserName(id: string): string {
 		const found = mediaUsers.find((u) => u.id === id);
 		return found ? found.displayName || found.username : id;
@@ -265,10 +272,12 @@
 				<KeyRound class="h-3.5 w-3.5" />
 				New API Key
 			</Button>
-			<Button variant="primary" size="md" onclick={() => (createAccountOpen = true)}>
-				<Plus class="h-3.5 w-3.5" />
-				Create Account
-			</Button>
+			{#if authStore.localEnabled}
+				<Button variant="primary" size="md" onclick={() => (createAccountOpen = true)}>
+					<Plus class="h-3.5 w-3.5" />
+					Create Account
+				</Button>
+			{/if}
 		</div>
 	</div>
 
@@ -282,9 +291,9 @@
 	<section class="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
 		<div class="flex flex-wrap items-center justify-between gap-2">
 			<h2 class="font-heading text-sm font-semibold text-fg-primary">
-				Local Accounts & Linked Media Users (RBAC)
+				Accounts & Linked Media Users (RBAC)
 			</h2>
-			<Badge tone="neutral" mono>AUTH_MODE = {authStore.authMode.toUpperCase()}</Badge>
+			<Badge tone="neutral" mono>AUTH = {activeProviderLabel}</Badge>
 		</div>
 
 		{#if loading}
@@ -312,6 +321,9 @@
 						</div>
 
 						<div class="flex flex-wrap items-center gap-1.5">
+							<Badge tone={acc.authProvider === 'OIDC' ? 'cyan' : 'neutral'} mono>
+								{acc.authProvider}
+							</Badge>
 							<Badge tone={acc.role === 'ADMIN' ? 'primary' : 'neutral'}>{acc.role}</Badge>
 							{#if acc.role === 'ADMIN'}
 								<Badge tone="cyan" mono>All Media Users</Badge>

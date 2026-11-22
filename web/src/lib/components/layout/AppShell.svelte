@@ -60,8 +60,11 @@
 	});
 
 	async function handleLogout() {
+		const redirectsToOidc = authStore.oidcEnabled && Boolean(authStore.oidcLogoutUrl);
 		await authStore.logout();
-		await goto('/login');
+		if (!redirectsToOidc) {
+			await goto('/login');
+		}
 	}
 </script>
 
@@ -163,7 +166,7 @@
 							<Moon class="h-3.5 w-3.5" />
 						{/if}
 					</button>
-					{#if authStore.authMode === 'local' && authStore.authenticated}
+					{#if authStore.authMode !== 'none' && authStore.authenticated}
 						<button
 							type="button"
 							onclick={handleLogout}

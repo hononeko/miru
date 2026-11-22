@@ -29,7 +29,7 @@
 
 		const pathname = page.url.pathname;
 
-		if (authStore.setupRequired) {
+		if (authStore.setupRequired && authStore.localEnabled) {
 			streamsStore.disconnect();
 			if (pathname !== '/setup') {
 				void goto('/setup');
@@ -37,7 +37,7 @@
 			return;
 		}
 
-		if (authStore.authMode === 'local' && !authStore.authenticated) {
+		if (authStore.authMode !== 'none' && !authStore.authenticated) {
 			streamsStore.disconnect();
 			if (pathname !== '/login') {
 				void goto('/login');

@@ -40,6 +40,16 @@ data class CreatedApiKey(
         "CreatedApiKey(record=$record, rawKey=***)"
 }
 
+data class AuthProvidersInfo(
+    val authMode: String,
+    val localEnabled: Boolean,
+    val oidcEnabled: Boolean,
+    val oidcDisplayName: String,
+    val oidcLoginUrl: String?,
+    val oidcLogoutUrl: String?,
+    val setupRequired: Boolean,
+)
+
 @Suppress("LongParameterList")
 class AuthService(
     private val accountRepository: AuthAccountRepository,
@@ -62,7 +72,7 @@ class AuthService(
         either {
             val adminUsername = authConfig.adminUsername
             val adminPassword = authConfig.adminPassword
-            if (authConfig.mode == AuthMode.NONE || adminUsername.isNullOrBlank() || adminPassword.isNullOrBlank()) {
+            if (!authConfig.localLoginEnabled || adminUsername.isNullOrBlank() || adminPassword.isNullOrBlank()) {
                 return@either false
             }
 
@@ -99,11 +109,22 @@ class AuthService(
 
     suspend fun isSetupRequired(): Either<MiruError, Boolean> =
         either {
-            if (authConfig.mode == AuthMode.NONE) {
-                false
-            } else {
-                accountRepository.countAdmins().bind() == 0L
-            }
+            authConfig.localLoginEnabled && accountRepository.countAdmins().bind() == 0L
+        }
+
+    suspend fun getAuthProviders(): Either<MiruError, AuthProvidersInfo> =
+        either {
+            val setupRequired = isSetupRequired().bind()
+            val oidcEnabled = authConfig.oidcEnabled
+            AuthProvidersInfo(
+                authMode = authConfig.mode.name.lowercase(),
+                localEnabled = authConfig.localLoginEnabled,
+                oidcEnabled = oidcEnabled,
+                oidcDisplayName = authConfig.oidc.displayName,
+                oidcLoginUrl = if (oidcEnabled) "/api/v1/auth/oidc/login" else null,
+                oidcLogoutUrl = if (oidcEnabled) "/api/v1/auth/oidc/logout" else null,
+                setupRequired = setupRequired,
+            )
         }
 
     suspend fun setupInitialAdmin(
@@ -112,7 +133,7 @@ class AuthService(
         email: String? = null,
     ): Either<MiruError, LoginResult> =
         either {
-            ensure(authConfig.mode == AuthMode.LOCAL) {
+            ensure(authConfig.localLoginEnabled) {
                 MiruError.Conflict("Local authentication is disabled")
             }
 
@@ -154,14 +175,14 @@ class AuthService(
         password: String,
     ): Either<MiruError, LoginResult> =
         either {
-            ensure(authConfig.mode == AuthMode.LOCAL) {
+            ensure(authConfig.localLoginEnabled) {
                 MiruError.Conflict("Local authentication is disabled")
             }
 
             val normalized = username.trim().lowercase()
             val account = accountRepository.findByNormalizedUsername(normalized).bind()
 
-            if (account == null) {
+            if (account == null || !account.authProvider.equals("LOCAL", ignoreCase = true)) {
                 passwordHasher.verify(password, dummyPasswordHash)
                 raise(MiruError.Unauthorized("Invalid username or password"))
             }
@@ -175,6 +196,17 @@ class AuthService(
             }
 
             val linkedMediaUserIds = accountRepository.findLinkedMediaUserIds(account.id).bind()
+            issueSession(account, linkedMediaUserIds).bind()
+        }
+
+    suspend fun issueSessionForAccount(
+        account: AuthAccountRecord,
+        linkedMediaUserIds: Set<String>,
+    ): Either<MiruError, LoginResult> =
+        either {
+            ensure(!account.disabled) {
+                MiruError.Unauthorized("Account is disabled")
+            }
             issueSession(account, linkedMediaUserIds).bind()
         }
 

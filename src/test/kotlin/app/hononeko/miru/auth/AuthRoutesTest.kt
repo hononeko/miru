@@ -209,7 +209,12 @@ class AuthRoutesTest :
                     val statusResp = client.get("/api/v1/auth/status")
                     statusResp.status shouldBe HttpStatusCode.OK
                     MiruJson.decodeFromString<AuthStatusResponse>(statusResp.bodyAsText()) shouldBe
-                        AuthStatusResponse(authMode = "local", setupRequired = false)
+                        AuthStatusResponse(
+                            authMode = "local",
+                            setupRequired = false,
+                            localEnabled = true,
+                            oidcEnabled = false,
+                        )
 
                     val setupResp =
                         client.post("/api/v1/auth/setup") {
@@ -228,7 +233,13 @@ class AuthRoutesTest :
 
                     val initialStatus =
                         MiruJson.decodeFromString<AuthStatusResponse>(client.get("/api/v1/auth/status").bodyAsText())
-                    initialStatus shouldBe AuthStatusResponse(authMode = "local", setupRequired = true)
+                    initialStatus shouldBe
+                        AuthStatusResponse(
+                            authMode = "local",
+                            setupRequired = true,
+                            localEnabled = true,
+                            oidcEnabled = false,
+                        )
 
                     val setupResponse =
                         client.post("/api/v1/auth/setup") {

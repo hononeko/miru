@@ -7,6 +7,8 @@ import app.hononeko.miru.artwork.ArtworkProxyService
 import app.hononeko.miru.artwork.createAvatarHttpClient
 import app.hononeko.miru.auth.Argon2idPasswordHasher
 import app.hononeko.miru.auth.AuthService
+import app.hononeko.miru.auth.oidc.OidcAuthService
+import app.hononeko.miru.auth.oidc.OidcClient
 import app.hononeko.miru.config.AppConfig
 import app.hononeko.miru.config.AppConfigLoader
 import app.hononeko.miru.domain.error.MiruError
@@ -103,7 +105,10 @@ private fun runServer() {
     val mediaServerRepository = ExposedMediaServerRepository(databaseHandle)
     val userRepository = ExposedUserRepository(databaseHandle)
     val playbackHistoryRepository = ExposedPlaybackHistoryRepository(databaseHandle)
-    val authService = initAuthService(appConfig, databaseHandle, userRepository)
+    val accountRepository = ExposedAuthAccountRepository(databaseHandle)
+    val authService = initAuthService(appConfig, databaseHandle, accountRepository, userRepository)
+    val (oidcClient, oidcAuthService) =
+        initOidcServices(appConfig, authService, accountRepository, userRepository)
     val historyAndStatsService =
         HistoryAndStatsService(
             playbackHistoryRepository = playbackHistoryRepository,
@@ -118,20 +123,9 @@ private fun runServer() {
             defaultWatchedThresholdPercent = appConfig.session.watchedThresholdPercent,
         )
 
-    val plexRuntime =
-        try {
-            buildPlexRuntime(
-                config = appConfig.plex,
-                databaseHandle = databaseHandle,
-                sessionConfig = appConfig.session,
-            )
-        } catch (e: Throwable) {
-            runCatching { databaseHandle.close() }
-                .onFailure { err -> logger.warn("Failed to close database handle after startup failure: {}", err.message) }
-            throw e
-        }
+    val plexRuntime = initPlexRuntime(appConfig, databaseHandle, oidcClient)
 
-    val externalAvatarClient = createAvatarClientOrCleanup(plexRuntime, databaseHandle)
+    val externalAvatarClient = createAvatarClientOrCleanup(plexRuntime, databaseHandle, oidcClient)
 
     val artworkProxyService =
         ArtworkProxyService(
@@ -182,9 +176,11 @@ private fun runServer() {
                 libraryCollectorScope.cancel()
             }
             monitor.subscribe(ApplicationStopped) {
-                logger.info("Closing external avatar HTTP client and database handle")
+                logger.info("Closing external avatar HTTP client, OIDC HTTP client, and database handle")
                 runCatching { externalAvatarClient.close() }
                     .onFailure { err -> logger.warn("Failed to close external avatar HTTP client on shutdown: {}", err.message) }
+                runCatching { oidcClient?.close() }
+                    .onFailure { err -> logger.warn("Failed to close OIDC HTTP client on shutdown: {}", err.message) }
                 runCatching { databaseHandle.close() }
                     .onFailure { err -> logger.warn("Failed to close database handle on shutdown: {}", err.message) }
             }
@@ -193,6 +189,7 @@ private fun runServer() {
                 readinessChecks = readinessChecks,
                 realtime = plexRuntime.realtime,
                 authService = authService,
+                oidcAuthService = oidcAuthService,
                 artworkProxyService = artworkProxyService,
                 streamsAndUsersService = streamsAndUsersService,
                 sessionEvents = plexRuntime.sessionEngine?.sessionEvents,
@@ -205,17 +202,57 @@ private fun runServer() {
     try {
         server.start(wait = true)
     } catch (e: Throwable) {
-        runBlocking {
-            withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { libraryStatsCollector.stop() }
-            withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { plexRuntime.realtime.stop() }
-        }
-        libraryCollectorScope.cancel()
-        runCatching { externalAvatarClient.close() }
-            .onFailure { err -> logger.warn("Failed to close external avatar HTTP client after server failure: {}", err.message) }
-        runCatching { databaseHandle.close() }
-            .onFailure { err -> logger.warn("Failed to close database handle after server failure: {}", err.message) }
+        cleanupAfterServerFailure(
+            libraryStatsCollector = libraryStatsCollector,
+            plexRuntime = plexRuntime,
+            libraryCollectorScope = libraryCollectorScope,
+            externalAvatarClient = externalAvatarClient,
+            oidcClient = oidcClient,
+            databaseHandle = databaseHandle,
+        )
         throw e
     }
+}
+
+private fun initPlexRuntime(
+    appConfig: AppConfig,
+    databaseHandle: DatabaseHandle,
+    oidcClient: OidcClient?,
+): app.hononeko.miru.adapter.plex.PlexRuntime =
+    try {
+        buildPlexRuntime(
+            config = appConfig.plex,
+            databaseHandle = databaseHandle,
+            sessionConfig = appConfig.session,
+        )
+    } catch (e: Throwable) {
+        runCatching { oidcClient?.close() }
+            .onFailure { err -> logger.warn("Failed to close OIDC HTTP client after startup failure: {}", err.message) }
+        runCatching { databaseHandle.close() }
+            .onFailure { err -> logger.warn("Failed to close database handle after startup failure: {}", err.message) }
+        throw e
+    }
+
+@Suppress("LongParameterList")
+private fun cleanupAfterServerFailure(
+    libraryStatsCollector: LibraryStatsCollector,
+    plexRuntime: app.hononeko.miru.adapter.plex.PlexRuntime,
+    libraryCollectorScope: CoroutineScope,
+    externalAvatarClient: io.ktor.client.HttpClient,
+    oidcClient: OidcClient?,
+    databaseHandle: DatabaseHandle,
+) {
+    runBlocking {
+        withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { libraryStatsCollector.stop() }
+        withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { plexRuntime.realtime.stop() }
+    }
+    libraryCollectorScope.cancel()
+    runCatching { externalAvatarClient.close() }
+        .onFailure { err -> logger.warn("Failed to close external avatar HTTP client after server failure: {}", err.message) }
+    runCatching { oidcClient?.close() }
+        .onFailure { err -> logger.warn("Failed to close OIDC HTTP client after server failure: {}", err.message) }
+    runCatching { databaseHandle.close() }
+        .onFailure { err -> logger.warn("Failed to close database handle after server failure: {}", err.message) }
 }
 
 private fun loadStartupConfig(): AppConfig {
@@ -257,11 +294,12 @@ private fun initDatabase(appConfig: AppConfig): DatabaseHandle =
 private fun initAuthService(
     appConfig: AppConfig,
     databaseHandle: DatabaseHandle,
+    accountRepository: ExposedAuthAccountRepository,
     userRepository: ExposedUserRepository,
 ): AuthService {
     val authService =
         AuthService(
-            accountRepository = ExposedAuthAccountRepository(databaseHandle),
+            accountRepository = accountRepository,
             sessionRepository = ExposedAuthSessionRepository(databaseHandle),
             apiKeyRepository = ExposedApiKeyRepository(databaseHandle),
             userRepository = userRepository,
@@ -278,6 +316,25 @@ private fun initAuthService(
     return authService
 }
 
+private fun initOidcServices(
+    appConfig: AppConfig,
+    authService: AuthService,
+    accountRepository: ExposedAuthAccountRepository,
+    userRepository: ExposedUserRepository,
+): Pair<OidcClient?, OidcAuthService?> {
+    if (!appConfig.auth.oidcEnabled) return null to null
+    val oidcClient = OidcClient(config = appConfig.auth.oidc)
+    val oidcAuthService =
+        OidcAuthService(
+            oidcClient = oidcClient,
+            authService = authService,
+            accountRepository = accountRepository,
+            userRepository = userRepository,
+            authConfig = appConfig.auth,
+        )
+    return oidcClient to oidcAuthService
+}
+
 @Suppress("LongParameterList")
 fun Application.miruModule(
     config: AppConfig,
@@ -285,6 +342,7 @@ fun Application.miruModule(
     appVersion: String = resolveAppVersion(),
     realtime: RealtimeLifecycle? = null,
     authService: AuthService? = null,
+    oidcAuthService: OidcAuthService? = null,
     artworkProxyService: ArtworkProxyService? = null,
     streamsAndUsersService: StreamsAndUsersService? = null,
     sessionEvents: SharedFlow<SessionEvent>? = null,
@@ -368,7 +426,11 @@ fun Application.miruModule(
         healthRoutes(readinessService = readinessService, appVersion = appVersion)
         openApiRoutes()
         if (authService != null) {
-            authRoutes(authService = authService, authMode = config.auth.mode)
+            authRoutes(
+                authService = authService,
+                authMode = config.auth.mode,
+                oidcAuthService = oidcAuthService,
+            )
             if (artworkProxyService != null) {
                 artworkRoutes(
                     artworkProxyService = artworkProxyService,
@@ -416,12 +478,15 @@ fun Application.miruModule(
 private fun createAvatarClientOrCleanup(
     plexRuntime: app.hononeko.miru.adapter.plex.PlexRuntime,
     databaseHandle: app.hononeko.miru.persistence.DatabaseHandle,
+    oidcClient: OidcClient?,
 ) = try {
     createAvatarHttpClient()
 } catch (e: Throwable) {
     runBlocking {
         withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { plexRuntime.realtime.stop() }
     }
+    runCatching { oidcClient?.close() }
+        .onFailure { err -> logger.warn("Failed to close OIDC HTTP client after startup failure: {}", err.message) }
     runCatching { databaseHandle.close() }
         .onFailure { err -> logger.warn("Failed to close database handle after startup failure: {}", err.message) }
     throw e

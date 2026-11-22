@@ -143,4 +143,95 @@ class AppConfigLoaderTest :
             val error = AppConfigLoader.load(env = env).shouldBeLeft()
             error.fieldErrors.keys shouldBe setOf("MIRU_ADMIN_PASSWORD")
         }
+
+        test("loads OIDC-only and hybrid configurations and redacts OIDC_CLIENT_SECRET") {
+            val oidcOnlyEnv =
+                baseSqliteEnv(
+                    mapOf(
+                        "AUTH_MODE" to "oidc",
+                        "AUTH_ALLOW_LOCAL_LOGIN" to "false",
+                        "OIDC_ISSUER_URL" to "https://sso.example.com/application/o/miru/",
+                        "OIDC_CLIENT_ID" to "miru-client",
+                        "OIDC_CLIENT_SECRET" to "super-secret-oidc-client-secret",
+                        "OIDC_REDIRECT_URI" to "https://miru.example.com/api/v1/auth/oidc/callback",
+                        "OIDC_DISPLAY_NAME" to "Authentik",
+                        "OIDC_SCOPES" to "openid,profile,email,groups",
+                        "OIDC_GROUPS_CLAIM" to "roles",
+                        "OIDC_ADMIN_GROUPS" to "miru-admins,infra",
+                        "OIDC_USER_GROUPS" to "miru-users",
+                        "OIDC_AUTO_LINK_BY_EMAIL" to "false",
+                        "OIDC_POST_LOGOUT_REDIRECT_URI" to "https://miru.example.com/login",
+                    ),
+                )
+
+            val config = AppConfigLoader.load(env = oidcOnlyEnv).shouldBeRight()
+            config.auth.mode shouldBe AuthMode.OIDC
+            config.auth.localLoginEnabled shouldBe false
+            config.auth.oidcEnabled shouldBe true
+            config.auth.oidc.issuerUrl shouldBe "https://sso.example.com/application/o/miru"
+            config.auth.oidc.clientId shouldBe "miru-client"
+            config.auth.oidc.displayName shouldBe "Authentik"
+            config.auth.oidc.scopes shouldBe listOf("openid", "profile", "email", "groups")
+            config.auth.oidc.groupsClaim shouldBe "roles"
+            config.auth.oidc.adminGroups shouldBe setOf("miru-admins", "infra")
+            config.auth.oidc.userGroups shouldBe setOf("miru-users")
+            config.auth.oidc.autoLinkByEmail shouldBe false
+            config.auth.oidc.postLogoutRedirectUri shouldBe "https://miru.example.com/login"
+
+            config.toString() shouldNotContain "super-secret-oidc-client-secret"
+
+            // Hybrid mode: AUTH_MODE=local + OIDC_ENABLED=true
+            val hybridEnv =
+                oidcOnlyEnv + mapOf(
+                    "AUTH_MODE" to "local",
+                    "AUTH_ALLOW_LOCAL_LOGIN" to "true",
+                    "OIDC_ENABLED" to "true",
+                )
+            val hybridConfig = AppConfigLoader.load(env = hybridEnv).shouldBeRight()
+            hybridConfig.auth.mode shouldBe AuthMode.LOCAL
+            hybridConfig.auth.localLoginEnabled shouldBe true
+            hybridConfig.auth.oidcEnabled shouldBe true
+        }
+
+        test("validates OIDC required fields and provider enablement rules") {
+            val missingOidcFields =
+                baseSqliteEnv(
+                    mapOf(
+                        "AUTH_MODE" to "oidc",
+                        "OIDC_ISSUER_URL" to "ftp://invalid",
+                        "OIDC_CLIENT_ID" to "  ",
+                        "OIDC_REDIRECT_URI" to "not-a-url",
+                        "OIDC_POST_LOGOUT_REDIRECT_URI" to "invalid-uri",
+                    ),
+                )
+            val oidcErr = AppConfigLoader.load(env = missingOidcFields).shouldBeLeft()
+            oidcErr.fieldErrors shouldContainKey "OIDC_ISSUER_URL"
+            oidcErr.fieldErrors shouldContainKey "OIDC_CLIENT_ID"
+            oidcErr.fieldErrors shouldContainKey "OIDC_REDIRECT_URI"
+            oidcErr.fieldErrors shouldContainKey "OIDC_ADMIN_GROUPS"
+            oidcErr.fieldErrors shouldContainKey "OIDC_POST_LOGOUT_REDIRECT_URI"
+
+            // AUTH_MODE=local with AUTH_ALLOW_LOCAL_LOGIN=false and OIDC disabled fails
+            val noProviderEnv =
+                baseSqliteEnv(
+                    mapOf(
+                        "AUTH_MODE" to "local",
+                        "AUTH_ALLOW_LOCAL_LOGIN" to "false",
+                        "OIDC_ENABLED" to "false",
+                    ),
+                )
+            val noProviderErr = AppConfigLoader.load(env = noProviderEnv).shouldBeLeft()
+            noProviderErr.fieldErrors shouldContainKey "AUTH_ALLOW_LOCAL_LOGIN"
+
+            // AUTH_MODE=oidc with OIDC_ENABLED=false fails
+            val disabledOidcMode =
+                baseSqliteEnv(
+                    mapOf(
+                        "AUTH_MODE" to "oidc",
+                        "OIDC_ENABLED" to "false",
+                    ),
+                )
+            val disabledErr = AppConfigLoader.load(env = disabledOidcMode).shouldBeLeft()
+            disabledErr.fieldErrors shouldContainKey "OIDC_ENABLED"
+        }
     })

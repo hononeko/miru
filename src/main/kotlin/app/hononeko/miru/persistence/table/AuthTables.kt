@@ -11,6 +11,8 @@ object AuthAccountsTable : Table("auth_accounts") {
     val passwordHash = text("password_hash")
     val role = text("role")
     val disabled = bool("disabled").default(false)
+    val authProvider = text("auth_provider").default("LOCAL")
+    val externalSubject = text("external_subject").nullable()
     val createdAtMs = long("created_at_ms")
     val updatedAtMs = long("updated_at_ms")
 

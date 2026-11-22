@@ -1,9 +1,14 @@
 import { api, MiruApiError, unwrap } from '$api/client';
-import type { AuthStatusResponse, PrincipalResponse } from '$api/types';
+import type { AuthProvidersResponse, PrincipalResponse } from '$api/types';
 
-class AuthStore {
+export class AuthStore {
 	loading = $state(true);
-	authMode = $state<'local' | 'none'>('local');
+	authMode = $state<'local' | 'oidc' | 'none'>('local');
+	localEnabled = $state(true);
+	oidcEnabled = $state(false);
+	oidcDisplayName = $state('SSO');
+	oidcLoginUrl = $state<string | null>(null);
+	oidcLogoutUrl = $state<string | null>(null);
 	setupRequired = $state(false);
 	principal = $state<PrincipalResponse | null>(null);
 	error = $state<string | null>(null);
@@ -20,11 +25,16 @@ class AuthStore {
 		this.loading = true;
 		this.error = null;
 		try {
-			const status: AuthStatusResponse = unwrap(await api.GET('/api/v1/auth/status'));
-			this.authMode = status.authMode;
-			this.setupRequired = status.setupRequired;
+			const providers: AuthProvidersResponse = unwrap(await api.GET('/api/v1/auth/providers'));
+			this.authMode = providers.authMode;
+			this.localEnabled = providers.localEnabled;
+			this.oidcEnabled = providers.oidcEnabled;
+			this.oidcDisplayName = providers.oidcDisplayName;
+			this.oidcLoginUrl = providers.oidcLoginUrl ?? null;
+			this.oidcLogoutUrl = providers.oidcLogoutUrl ?? null;
+			this.setupRequired = providers.setupRequired;
 
-			if (!status.setupRequired) {
+			if (!providers.setupRequired) {
 				const meRes = await api.GET('/api/v1/auth/me');
 				if (meRes.data) {
 					this.principal = meRes.data;
@@ -67,6 +77,13 @@ class AuthStore {
 	}
 
 	async logout(): Promise<void> {
+		if (this.oidcEnabled && this.oidcLogoutUrl) {
+			this.principal = null;
+			if (typeof window !== 'undefined') {
+				window.location.assign(this.oidcLogoutUrl);
+			}
+			return;
+		}
 		try {
 			await api.POST('/api/v1/auth/logout');
 		} finally {

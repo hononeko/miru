@@ -8,13 +8,13 @@ Built with **Kotlin 2.4 / JDK 25**, **Ktor 3**, **Arrow-kt**, and dual **SQLite 
 
 ### Desktop — Live Activity
 
-![Miru desktop dashboard showing live Plex streams, bandwidth, direct play ratio, watch time, session breakdown, plays per day, and top watched titles](docs/screenshots/dashboard-web.png)
+![Miru desktop dashboard showing live Plex streams, bandwidth, direct play ratio, watch time, session breakdown, plays per day, and top watched titles](docs/dashboard_web.png)
 
 ### Mobile PWA — Dark & Light Themes
 
 <p align="center">
-  <img src="docs/screenshots/dashboard-mobile-dark.png" alt="Miru mobile PWA dark theme showing Live Activity summary cards and active Plex streams" width="280" />
-  <img src="docs/screenshots/dashboard-mobile-light.png" alt="Miru mobile PWA light theme showing Live Activity summary cards and active Plex streams" width="280" />
+  <img src="docs/dashboard_mobile_dark.png" alt="Miru mobile PWA dark theme showing Live Activity summary cards and active Plex streams" width="280" />
+  <img src="docs/dashboard_mobile_light.png" alt="Miru mobile PWA light theme showing Live Activity summary cards and active Plex streams" width="280" />
 </p>
 
 ## Development

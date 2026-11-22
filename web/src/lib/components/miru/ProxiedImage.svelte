@@ -18,15 +18,56 @@
 	}: Props = $props();
 
 	let failedSrc = $state<string | null>(null);
+	let loadedSrc = $state<string | null>(null);
+	let imgEl = $state<HTMLImageElement | null>(null);
 
 	// Security guard: only allow same-origin Miru artwork/avatar proxy URLs
 	const safeSrc = $derived.by(() => {
 		if (!src || src === failedSrc) return null;
 		return src.startsWith('/api/v1/') ? src : null;
 	});
+
+	$effect(() => {
+		const target = safeSrc;
+		if (target && imgEl && imgEl.complete && imgEl.naturalWidth > 0) {
+			loadedSrc = target;
+		}
+	});
 </script>
 
-{#if safeSrc}
+{#if variant === 'avatar'}
+	<span
+		aria-label={safeSrc ? undefined : alt}
+		class={cn(
+			'relative inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full border border-primary/70 bg-primary-soft font-heading font-bold text-primary-hover',
+			className
+		)}
+	>
+		{#if !safeSrc || loadedSrc !== safeSrc}
+			<span aria-hidden={Boolean(safeSrc)}>{safeInitial(fallbackLabel || alt)}</span>
+		{/if}
+		{#if safeSrc}
+			<img
+				bind:this={imgEl}
+				src={safeSrc}
+				{alt}
+				loading="lazy"
+				decoding="async"
+				onload={() => {
+					loadedSrc = safeSrc;
+				}}
+				onerror={() => {
+					if (src) failedSrc = src;
+					if (loadedSrc === src) loadedSrc = null;
+				}}
+				class={cn(
+					'absolute inset-0 h-full w-full object-cover text-transparent transition-opacity duration-150',
+					loadedSrc === safeSrc ? 'bg-surface opacity-100' : 'opacity-0'
+				)}
+			/>
+		{/if}
+	</span>
+{:else if safeSrc}
 	<img
 		src={safeSrc}
 		{alt}
@@ -35,22 +76,8 @@
 		onerror={() => {
 			if (src) failedSrc = src;
 		}}
-		class={cn(
-			'object-cover shrink-0',
-			variant === 'avatar' ? 'rounded-full' : 'rounded-lg border border-border-strong bg-elevated',
-			className
-		)}
+		class={cn('shrink-0 rounded-lg border border-border-strong bg-elevated object-cover', className)}
 	/>
-{:else if variant === 'avatar'}
-	<div
-		aria-label={alt}
-		class={cn(
-			'flex shrink-0 items-center justify-center rounded-full border border-primary/70 bg-primary-soft font-heading font-bold text-primary-hover',
-			className
-		)}
-	>
-		{safeInitial(fallbackLabel || alt)}
-	</div>
 {:else}
 	<div
 		aria-label={alt}

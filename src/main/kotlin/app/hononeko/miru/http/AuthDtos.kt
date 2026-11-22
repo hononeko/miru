@@ -56,6 +56,7 @@ data class PrincipalResponse(
     val role: MiruRole,
     val linkedMediaUserIds: List<String>,
     val authSource: AuthSource,
+    val avatarUrl: String? = null,
 )
 
 @Serializable
@@ -147,7 +148,7 @@ data class UpdateUserPreferencesRequest(
     val relativeTimestamps: Boolean = true,
 )
 
-internal fun MiruPrincipal.toResponse(): PrincipalResponse =
+internal fun MiruPrincipal.toResponse(avatarUrl: String? = null): PrincipalResponse =
     PrincipalResponse(
         accountId = accountId,
         username = username,
@@ -155,6 +156,7 @@ internal fun MiruPrincipal.toResponse(): PrincipalResponse =
         role = role,
         linkedMediaUserIds = linkedMediaUserIds.sorted(),
         authSource = authSource,
+        avatarUrl = avatarUrl,
     )
 
 internal fun AuthProvidersInfo.toResponse(): AuthProvidersResponse =

@@ -44,7 +44,12 @@ fun Route.authRoutes(
         )
         authenticated(authService = authService, authMode = authMode) {
             get("/me") {
-                val result = call.requireMiruPrincipal().map { it.toResponse() }
+                val result =
+                    either {
+                        val principal = call.requireMiruPrincipal().bind()
+                        val avatarUrl = authService.resolveAvatarUrl(principal).bind()
+                        principal.toResponse(avatarUrl = avatarUrl)
+                    }
                 call.respondEither(result)
             }
 
@@ -120,12 +125,17 @@ private fun Route.publicAuthRoutes(
 
     post("/login") {
         val request = call.receive<LoginRequest>()
-        val result = authService.login(username = request.username, password = request.password)
+        val result =
+            either {
+                val loginResult = authService.login(username = request.username, password = request.password).bind()
+                val avatarUrl = authService.resolveAvatarUrl(loginResult.principal).bind()
+                loginResult to loginResult.principal.toResponse(avatarUrl = avatarUrl)
+            }
         result.fold(
             ifLeft = { call.respondError(it) },
-            ifRight = { loginResult ->
+            ifRight = { (loginResult, response) ->
                 call.appendSessionCookie(loginResult.signedToken, sessionMaxAgeSeconds)
-                call.respond(HttpStatusCode.OK, loginResult.principal.toResponse())
+                call.respond(HttpStatusCode.OK, response)
             },
         )
     }

@@ -765,6 +765,7 @@ export interface components {
             role: components["schemas"]["MiruRole"];
             linkedMediaUserIds: string[];
             authSource: components["schemas"]["AuthSource"];
+            avatarUrl?: string | null;
         };
         UserPreferencesResponse: {
             /** @enum {string} */

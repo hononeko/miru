@@ -6,6 +6,7 @@ const apiTarget = process.env.MIRU_API_URL || 'http://localhost:8080';
 
 export default defineConfig({
 	plugins: [tailwindcss(), sveltekit()],
+	resolve: process.env.VITEST ? { conditions: ['browser'] } : undefined,
 	server: {
 		port: 5173,
 		proxy: {

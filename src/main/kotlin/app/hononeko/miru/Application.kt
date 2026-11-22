@@ -45,6 +45,7 @@ import app.hononeko.miru.persistence.repository.ExposedUserRepository
 import app.hononeko.miru.service.HistoryAndStatsService
 import app.hononeko.miru.service.LibraryQueryService
 import app.hononeko.miru.service.LibrarySyncTrigger
+import app.hononeko.miru.service.PlexUserSyncService
 import app.hononeko.miru.service.StreamsAndUsersService
 import app.hononeko.miru.session.SessionEvent
 import io.ktor.http.HttpHeaders
@@ -145,7 +146,6 @@ private fun runServer() {
             mediaServerRepository = mediaServerRepository,
             runtimeManager = plexRuntimeManager,
         )
-
     val artworkProxyService =
         ArtworkProxyService(
             adapter = plexRuntimeManager.adapter,
@@ -163,18 +163,7 @@ private fun runServer() {
         )
     val libraryRepository = ExposedLibraryRepository(databaseHandle)
     val libraryQueryService = LibraryQueryService(libraryRepository = libraryRepository)
-    val libraryCollectorScope =
-        CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("library-stats-collector"))
-    val libraryStatsCollector =
-        LibraryStatsCollector(
-            adapter = plexRuntimeManager.adapter,
-            serverIdProvider = plexRuntimeManager.serverIdProvider,
-            libraryRepository = libraryRepository,
-            scope = libraryCollectorScope,
-        )
-    plexRuntimeManager.setOnReloadLibrarySync {
-        libraryStatsCollector.syncFastCounts()
-    }
+    val syncServices = createSyncServices(plexRuntimeManager, libraryRepository, userRepository)
     val readinessChecks = listOf(NamedReadinessCheck("database", DatabaseReadinessCheck(databaseHandle)))
 
     val server =
@@ -184,8 +173,7 @@ private fun runServer() {
             host = appConfig.server.host,
         ) {
             registerLifecycleHandlers(
-                libraryStatsCollector = libraryStatsCollector,
-                libraryCollectorScope = libraryCollectorScope,
+                syncServices = syncServices,
                 databaseHandle = databaseHandle,
                 plexOAuthHttpClient,
                 externalAvatarClient,
@@ -203,7 +191,7 @@ private fun runServer() {
                 sessionEvents = plexRuntimeManager.sessionEngine.sessionEvents,
                 historyAndStatsService = historyAndStatsService,
                 libraryQueryService = libraryQueryService,
-                librarySyncTrigger = libraryStatsCollector,
+                librarySyncTrigger = syncServices.libraryStatsCollector,
                 tautulliImporterService = tautulliImporterService,
                 plexOAuthService = plexOAuthService,
             )
@@ -212,9 +200,8 @@ private fun runServer() {
         server.start(wait = true)
     } catch (e: Throwable) {
         cleanupOnStartupFailure(
-            libraryStatsCollector = libraryStatsCollector,
+            syncServices = syncServices,
             plexRuntimeManager = plexRuntimeManager,
-            libraryCollectorScope = libraryCollectorScope,
             databaseHandle = databaseHandle,
             plexOAuthHttpClient,
             externalAvatarClient,
@@ -224,23 +211,70 @@ private fun runServer() {
     }
 }
 
-private fun Application.registerLifecycleHandlers(
-    libraryStatsCollector: LibraryStatsCollector,
-    libraryCollectorScope: CoroutineScope,
+internal data class SyncServices(
+    val libraryCollectorScope: CoroutineScope,
+    val libraryStatsCollector: LibraryStatsCollector,
+    val userSyncScope: CoroutineScope,
+    val plexUserSyncService: PlexUserSyncService,
+)
+
+internal fun createSyncServices(
+    plexRuntimeManager: PlexRuntimeManager,
+    libraryRepository: app.hononeko.miru.persistence.repository.LibraryRepository,
+    userRepository: app.hononeko.miru.persistence.repository.UserRepository,
+): SyncServices {
+    val libraryCollectorScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("library-stats-collector"))
+    val libraryStatsCollector =
+        LibraryStatsCollector(
+            adapter = plexRuntimeManager.adapter,
+            serverIdProvider = plexRuntimeManager.serverIdProvider,
+            libraryRepository = libraryRepository,
+            scope = libraryCollectorScope,
+        )
+    val userSyncScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("plex-user-sync"))
+    val plexUserSyncService =
+        PlexUserSyncService(
+            adapter = plexRuntimeManager.adapter,
+            serverIdProvider = plexRuntimeManager.serverIdProvider,
+            userRepository = userRepository,
+            scope = userSyncScope,
+        )
+    plexRuntimeManager.setOnReloadLibrarySync {
+        libraryStatsCollector.syncFastCounts()
+        plexUserSyncService.syncOnce().onLeft { error ->
+            logger.warn("Post-reload user sync failed: {}", error.message)
+        }
+    }
+    return SyncServices(
+        libraryCollectorScope = libraryCollectorScope,
+        libraryStatsCollector = libraryStatsCollector,
+        userSyncScope = userSyncScope,
+        plexUserSyncService = plexUserSyncService,
+    )
+}
+
+internal fun Application.registerLifecycleHandlers(
+    syncServices: SyncServices,
     databaseHandle: DatabaseHandle,
     vararg clients: AutoCloseable?,
 ) {
     monitor.subscribe(ApplicationStarted) {
-        logger.info("Starting library stats collector")
-        libraryStatsCollector.start()
+        logger.info("Starting library stats collector and Plex user sync")
+        syncServices.libraryStatsCollector.start()
+        syncServices.plexUserSyncService.start()
     }
     monitor.subscribe(ApplicationStopping) {
-        logger.info("Stopping library stats collector")
+        logger.info("Stopping library stats collector and Plex user sync")
         runBlocking {
-            withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { libraryStatsCollector.stop() }
+            withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { syncServices.libraryStatsCollector.stop() }
                 ?: logger.warn("Library stats collector did not stop within {}", REALTIME_SHUTDOWN_TIMEOUT)
+            withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { syncServices.plexUserSyncService.stop() }
+                ?: logger.warn("Plex user sync did not stop within {}", REALTIME_SHUTDOWN_TIMEOUT)
         }
-        libraryCollectorScope.cancel()
+        syncServices.libraryCollectorScope.cancel()
+        syncServices.userSyncScope.cancel()
     }
     monitor.subscribe(ApplicationStopped) {
         logger.info("Closing external HTTP clients and database handle")
@@ -255,18 +289,19 @@ private fun Application.registerLifecycleHandlers(
     }
 }
 
-private fun cleanupOnStartupFailure(
-    libraryStatsCollector: LibraryStatsCollector,
+internal fun cleanupOnStartupFailure(
+    syncServices: SyncServices,
     plexRuntimeManager: PlexRuntimeManager,
-    libraryCollectorScope: CoroutineScope,
     databaseHandle: DatabaseHandle,
     vararg clients: AutoCloseable?,
 ) {
     runBlocking {
-        withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { libraryStatsCollector.stop() }
+        withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { syncServices.libraryStatsCollector.stop() }
+        withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { syncServices.plexUserSyncService.stop() }
         withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { plexRuntimeManager.stop() }
     }
-    libraryCollectorScope.cancel()
+    syncServices.libraryCollectorScope.cancel()
+    syncServices.userSyncScope.cancel()
     clients.forEach { client ->
         if (client != null) {
             runCatching { client.close() }

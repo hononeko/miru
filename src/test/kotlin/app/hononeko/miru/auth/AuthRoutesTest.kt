@@ -738,6 +738,119 @@ class AuthRoutesTest :
             }
         }
 
+        test("/api/v1/auth/me and /login include proxy avatarUrl when linked user has thumbUrl and null otherwise") {
+            createHarness().use { harness ->
+                harness.authService.setupInitialAdmin("admin", "Admin-strong-password-123").shouldBeRight()
+                harness.serverRepo
+                    .upsert(
+                        MediaServerRecord(
+                            id = "srv-1",
+                            name = "Main Plex",
+                            serverType = "PLEX",
+                            machineId = "mach-1",
+                            baseUrl = "http://plex.local:32400",
+                            createdAtMs = 1_000L,
+                            updatedAtMs = 1_000L,
+                        ),
+                    ).shouldBeRight()
+                harness.userRepo
+                    .upsert(
+                        UserRecord(
+                            id = "media-no-thumb",
+                            serverId = "srv-1",
+                            externalUserId = "plex-10",
+                            username = "nothumb",
+                            thumbUrl = null,
+                            createdAtMs = 1_000L,
+                            updatedAtMs = 1_000L,
+                        ),
+                    ).shouldBeRight()
+                harness.userRepo
+                    .upsert(
+                        UserRecord(
+                            id = "media-with-thumb",
+                            serverId = "srv-1",
+                            externalUserId = "plex-11",
+                            username = "withthumb",
+                            thumbUrl = "https://plex.tv/users/secret-hash/avatar?X-Plex-Token=leak",
+                            createdAtMs = 1_000L,
+                            updatedAtMs = 1_000L,
+                        ),
+                    ).shouldBeRight()
+
+                harness.authService
+                    .createAccount(
+                        username = "alice",
+                        password = "Alice-strong-password-123",
+                        role = MiruRole.USER,
+                        linkedMediaUserIds = setOf("media-no-thumb", "media-with-thumb"),
+                    ).shouldBeRight()
+                harness.authService
+                    .createAccount(
+                        username = "bob",
+                        password = "Bob-strong-password-123",
+                        role = MiruRole.USER,
+                        linkedMediaUserIds = setOf("media-no-thumb"),
+                    ).shouldBeRight()
+
+                testApplication {
+                    setupAuthApp(harness)
+
+                    // User with linked user having thumbUrl gets proxy avatarUrl (never raw Plex URL/token)
+                    val aliceLogin =
+                        client.post("/api/v1/auth/login") {
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(LoginRequest("alice", "Alice-strong-password-123")))
+                        }
+                    aliceLogin.status shouldBe HttpStatusCode.OK
+                    val aliceLoginBody = aliceLogin.bodyAsText()
+                    aliceLoginBody shouldNotContain "plex.tv"
+                    aliceLoginBody shouldNotContain "secret-hash"
+                    MiruJson.decodeFromString<PrincipalResponse>(aliceLoginBody).avatarUrl shouldBe
+                        "/api/v1/users/media-with-thumb/avatar"
+
+                    val aliceCookie = extractCookieValue(aliceLogin.headers[HttpHeaders.SetCookie]).shouldNotBeNull()
+                    val aliceMe =
+                        client.get("/api/v1/auth/me") {
+                            cookie(SESSION_COOKIE_NAME, aliceCookie)
+                        }
+                    aliceMe.status shouldBe HttpStatusCode.OK
+                    val aliceMeBody = aliceMe.bodyAsText()
+                    aliceMeBody shouldNotContain "plex.tv"
+                    MiruJson.decodeFromString<PrincipalResponse>(aliceMeBody).avatarUrl shouldBe
+                        "/api/v1/users/media-with-thumb/avatar"
+
+                    // User whose linked user has no thumbUrl gets null avatarUrl
+                    val bobLogin =
+                        client.post("/api/v1/auth/login") {
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(LoginRequest("bob", "Bob-strong-password-123")))
+                        }
+                    val bobCookie = extractCookieValue(bobLogin.headers[HttpHeaders.SetCookie]).shouldNotBeNull()
+                    val bobMe =
+                        client.get("/api/v1/auth/me") {
+                            cookie(SESSION_COOKIE_NAME, bobCookie)
+                        }
+                    bobMe.status shouldBe HttpStatusCode.OK
+                    MiruJson.decodeFromString<PrincipalResponse>(bobMe.bodyAsText()).avatarUrl.shouldBeNull()
+
+                    // Unlinked admin gets null avatarUrl
+                    val adminLogin =
+                        client.post("/api/v1/auth/login") {
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(LoginRequest("admin", "Admin-strong-password-123")))
+                        }
+                    val adminCookie = extractCookieValue(adminLogin.headers[HttpHeaders.SetCookie]).shouldNotBeNull()
+                    val adminMe =
+                        client.get("/api/v1/auth/me") {
+                            cookie(SESSION_COOKIE_NAME, adminCookie)
+                        }
+                    adminMe.status shouldBe HttpStatusCode.OK
+                    MiruJson.decodeFromString<PrincipalResponse>(adminMe.bodyAsText()).avatarUrl.shouldBeNull()
+                }
+            }
+        }
+
         test("GET and PUT /api/v1/auth/me/preferences return defaults, persist per-account updates, and validate fields") {
             createHarness(adminUsername = "admin", adminPassword = "Admin-strong-password-1").use { harness ->
                 harness.authService.bootstrapAdminIfConfigured().shouldBeRight()

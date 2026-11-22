@@ -14,12 +14,13 @@
 	} from 'lucide-svelte';
 	import MiruLogo from './MiruLogo.svelte';
 	import Badge from '$components/ui/Badge.svelte';
+	import ProxiedImage from '$components/miru/ProxiedImage.svelte';
 	import UserPreferencesModal from '$components/miru/UserPreferencesModal.svelte';
 	import { authStore } from '$stores/auth.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
 	import { streamsStore } from '$stores/streams.svelte';
 	import { themeStore } from '$stores/theme.svelte';
-	import { cn, safeInitial } from '$lib/utils';
+	import { cn } from '$lib/utils';
 
 	type Props = {
 		children?: Snippet;
@@ -148,11 +149,13 @@
 					aria-label="Open user preferences"
 					class="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-surface"
 				>
-					<div
-						class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary font-heading text-xs font-bold text-white"
-					>
-						{safeInitial(authStore.principal?.username)}
-					</div>
+					<ProxiedImage
+						src={authStore.principal?.avatarUrl}
+						alt={authStore.principal?.username ?? 'Guest'}
+						fallbackLabel={authStore.principal?.username ?? 'Guest'}
+						variant="avatar"
+						class="h-7 w-7 text-xs"
+					/>
 					<div class="min-w-0">
 						<p class="truncate font-heading text-xs font-semibold text-fg-primary">
 							{authStore.principal?.username ?? 'Guest'}
@@ -247,9 +250,15 @@
 				onclick={() => preferencesStore.openModal()}
 				aria-label="Open user preferences"
 				title={authStore.principal?.username ?? 'User preferences'}
-				class="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full bg-primary font-heading text-xs font-bold text-white ring-2 ring-border transition-transform hover:scale-105 hover:ring-border-strong"
+				class="inline-flex cursor-pointer items-center justify-center rounded-full ring-2 ring-border transition-transform hover:scale-105 hover:ring-border-strong"
 			>
-				{safeInitial(authStore.principal?.username)}
+				<ProxiedImage
+					src={authStore.principal?.avatarUrl}
+					alt={authStore.principal?.username ?? 'Guest'}
+					fallbackLabel={authStore.principal?.username ?? 'Guest'}
+					variant="avatar"
+					class="h-9 w-9 text-xs"
+				/>
 			</button>
 		</div>
 	</aside>
@@ -274,11 +283,13 @@
 					aria-label="Open user preferences"
 					class="inline-flex h-8 max-w-[132px] cursor-pointer items-center gap-1.5 rounded-full border border-border bg-elevated py-0.5 pr-2.5 pl-1 font-heading text-xs font-semibold text-fg-primary transition-colors hover:border-border-strong"
 				>
-					<span
-						class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-bold text-white"
-					>
-						{safeInitial(authStore.principal?.username)}
-					</span>
+					<ProxiedImage
+						src={authStore.principal?.avatarUrl}
+						alt={authStore.principal?.username ?? 'Guest'}
+						fallbackLabel={authStore.principal?.username ?? 'Guest'}
+						variant="avatar"
+						class="h-6 w-6 text-[11px]"
+					/>
 					<span class="truncate">{authStore.principal?.username ?? 'Guest'}</span>
 				</button>
 			</div>

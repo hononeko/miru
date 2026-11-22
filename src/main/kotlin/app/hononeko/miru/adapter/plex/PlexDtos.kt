@@ -273,6 +273,7 @@ data class PlexAccountsContainer(
 data class PlexAccountDto(
     val id: Long,
     val name: String? = null,
+    val thumb: String? = null,
 )
 
 @Serializable

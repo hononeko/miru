@@ -2,6 +2,7 @@ package app.hononeko.miru
 
 import app.hononeko.miru.adapter.plex.RealtimeLifecycle
 import app.hononeko.miru.adapter.plex.buildPlexRuntime
+import app.hononeko.miru.adapter.plex.createLazyServerIdProvider
 import app.hononeko.miru.artwork.ArtworkProxyService
 import app.hononeko.miru.artwork.createAvatarHttpClient
 import app.hononeko.miru.auth.Argon2idPasswordHasher
@@ -15,9 +16,11 @@ import app.hononeko.miru.http.artworkRoutes
 import app.hononeko.miru.http.authRoutes
 import app.hononeko.miru.http.healthRoutes
 import app.hononeko.miru.http.historyStatsRoutes
+import app.hononeko.miru.http.libraryRoutes
 import app.hononeko.miru.http.openApiRoutes
 import app.hononeko.miru.http.respondError
 import app.hononeko.miru.http.streamsAndUsersRoutes
+import app.hononeko.miru.library.LibraryStatsCollector
 import app.hononeko.miru.persistence.DatabaseFactory
 import app.hononeko.miru.persistence.DatabaseHandle
 import app.hononeko.miru.persistence.DatabaseReadinessCheck
@@ -25,9 +28,13 @@ import app.hononeko.miru.persistence.repository.ExposedActiveSessionRepository
 import app.hononeko.miru.persistence.repository.ExposedApiKeyRepository
 import app.hononeko.miru.persistence.repository.ExposedAuthAccountRepository
 import app.hononeko.miru.persistence.repository.ExposedAuthSessionRepository
+import app.hononeko.miru.persistence.repository.ExposedLibraryRepository
+import app.hononeko.miru.persistence.repository.ExposedMediaServerRepository
 import app.hononeko.miru.persistence.repository.ExposedPlaybackHistoryRepository
 import app.hononeko.miru.persistence.repository.ExposedUserRepository
 import app.hononeko.miru.service.HistoryAndStatsService
+import app.hononeko.miru.service.LibraryQueryService
+import app.hononeko.miru.service.LibrarySyncTrigger
 import app.hononeko.miru.service.StreamsAndUsersService
 import app.hononeko.miru.session.SessionEvent
 import io.ktor.http.HttpHeaders
@@ -49,6 +56,11 @@ import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.path
 import io.ktor.server.routing.routing
 import io.ktor.server.sse.SSE
+import kotlinx.coroutines.CoroutineName
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
@@ -98,17 +110,7 @@ fun main() {
             throw e
         }
 
-    val externalAvatarClient =
-        try {
-            createAvatarHttpClient()
-        } catch (e: Throwable) {
-            runBlocking {
-                withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { plexRuntime.realtime.stop() }
-            }
-            runCatching { databaseHandle.close() }
-                .onFailure { err -> logger.warn("Failed to close database handle after startup failure: {}", err.message) }
-            throw e
-        }
+    val externalAvatarClient = createAvatarClientOrCleanup(plexRuntime, databaseHandle)
 
     val artworkProxyService =
         ArtworkProxyService(
@@ -126,6 +128,18 @@ fun main() {
                 plexRuntime.sessionEngine?.currentLiveTechnical().orEmpty()
             },
         )
+    val libraryRepository = ExposedLibraryRepository(databaseHandle)
+    val libraryQueryService = LibraryQueryService(libraryRepository = libraryRepository)
+    val libraryCollectorScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("library-stats-collector"))
+    val libraryStatsCollector =
+        createLibraryStatsCollector(
+            appConfig = appConfig,
+            databaseHandle = databaseHandle,
+            plexRuntime = plexRuntime,
+            libraryRepository = libraryRepository,
+            scope = libraryCollectorScope,
+        )
     val readinessChecks = listOf(NamedReadinessCheck("database", DatabaseReadinessCheck(databaseHandle)))
 
     val server =
@@ -134,6 +148,18 @@ fun main() {
             port = appConfig.server.port,
             host = appConfig.server.host,
         ) {
+            monitor.subscribe(ApplicationStarted) {
+                logger.info("Starting library stats collector")
+                libraryStatsCollector.start()
+            }
+            monitor.subscribe(ApplicationStopping) {
+                logger.info("Stopping library stats collector")
+                runBlocking {
+                    withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { libraryStatsCollector.stop() }
+                        ?: logger.warn("Library stats collector did not stop within {}", REALTIME_SHUTDOWN_TIMEOUT)
+                }
+                libraryCollectorScope.cancel()
+            }
             monitor.subscribe(ApplicationStopped) {
                 logger.info("Closing external avatar HTTP client and database handle")
                 runCatching { externalAvatarClient.close() }
@@ -150,14 +176,18 @@ fun main() {
                 streamsAndUsersService = streamsAndUsersService,
                 sessionEvents = plexRuntime.sessionEngine?.sessionEvents,
                 historyAndStatsService = historyAndStatsService,
+                libraryQueryService = libraryQueryService,
+                librarySyncTrigger = libraryStatsCollector,
             )
         }
     try {
         server.start(wait = true)
     } catch (e: Throwable) {
         runBlocking {
+            withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { libraryStatsCollector.stop() }
             withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { plexRuntime.realtime.stop() }
         }
+        libraryCollectorScope.cancel()
         runCatching { externalAvatarClient.close() }
             .onFailure { err -> logger.warn("Failed to close external avatar HTTP client after server failure: {}", err.message) }
         runCatching { databaseHandle.close() }
@@ -237,6 +267,8 @@ fun Application.miruModule(
     sessionEvents: SharedFlow<SessionEvent>? = null,
     sseKeepaliveInterval: Duration = DEFAULT_SSE_KEEPALIVE_INTERVAL,
     historyAndStatsService: HistoryAndStatsService? = null,
+    libraryQueryService: LibraryQueryService? = null,
+    librarySyncTrigger: LibrarySyncTrigger? = null,
 ) {
     if (realtime != null) {
         monitor.subscribe(ApplicationStarted) {
@@ -336,8 +368,52 @@ fun Application.miruModule(
                     authMode = config.auth.mode,
                 )
             }
+            if (libraryQueryService != null) {
+                libraryRoutes(
+                    libraryQueryService = libraryQueryService,
+                    librarySyncTrigger = librarySyncTrigger,
+                    authService = authService,
+                    authMode = config.auth.mode,
+                )
+            }
         }
     }
+}
+
+private fun createAvatarClientOrCleanup(
+    plexRuntime: app.hononeko.miru.adapter.plex.PlexRuntime,
+    databaseHandle: app.hononeko.miru.persistence.DatabaseHandle,
+) = try {
+    createAvatarHttpClient()
+} catch (e: Throwable) {
+    runBlocking {
+        withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { plexRuntime.realtime.stop() }
+    }
+    runCatching { databaseHandle.close() }
+        .onFailure { err -> logger.warn("Failed to close database handle after startup failure: {}", err.message) }
+    throw e
+}
+
+private fun createLibraryStatsCollector(
+    appConfig: AppConfig,
+    databaseHandle: app.hononeko.miru.persistence.DatabaseHandle,
+    plexRuntime: app.hononeko.miru.adapter.plex.PlexRuntime,
+    libraryRepository: ExposedLibraryRepository,
+    scope: CoroutineScope,
+): LibraryStatsCollector {
+    val serverIdProvider =
+        plexRuntime.serverIdProvider
+            ?: createLazyServerIdProvider(
+                adapter = plexRuntime.adapter,
+                baseUrl = appConfig.plex.baseUrl,
+                mediaServerRepository = ExposedMediaServerRepository(databaseHandle),
+            )
+    return LibraryStatsCollector(
+        adapter = plexRuntime.adapter,
+        serverIdProvider = serverIdProvider,
+        libraryRepository = libraryRepository,
+        scope = scope,
+    )
 }
 
 private fun resolveAppVersion(): String =

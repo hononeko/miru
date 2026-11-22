@@ -28,6 +28,15 @@ import org.jetbrains.exposed.v1.jdbc.upsert
 interface LibraryRepository {
     suspend fun upsertSection(section: LibrarySectionRecord): Either<MiruError.PersistenceError, Unit>
 
+    suspend fun findAllSections(): Either<MiruError.PersistenceError, List<LibrarySectionRecord>>
+
+    suspend fun findSection(
+        serverId: String,
+        sectionKey: String,
+    ): Either<MiruError.PersistenceError, LibrarySectionRecord?>
+
+    suspend fun findSectionsByKey(sectionKey: String): Either<MiruError.PersistenceError, List<LibrarySectionRecord>>
+
     suspend fun findSectionsByServer(serverId: String): Either<MiruError.PersistenceError, List<LibrarySectionRecord>>
 
     suspend fun insertSnapshot(snapshot: LibrarySnapshotRecord): Either<MiruError.PersistenceError, Unit>
@@ -80,6 +89,39 @@ class ExposedLibraryRepository(
                     it[updatedAtMs] = section.updatedAtMs
                 }
             }.map { }
+
+    override suspend fun findAllSections(): Either<MiruError.PersistenceError, List<LibrarySectionRecord>> =
+        database.exposedQuery("library_find_all_sections") {
+            LibrarySectionsTable
+                .selectAll()
+                .orderBy(
+                    LibrarySectionsTable.serverId to SortOrder.ASC,
+                    LibrarySectionsTable.title to SortOrder.ASC,
+                    LibrarySectionsTable.sectionKey to SortOrder.ASC,
+                ).map { it.toLibrarySectionRecord() }
+        }
+
+    override suspend fun findSection(
+        serverId: String,
+        sectionKey: String,
+    ): Either<MiruError.PersistenceError, LibrarySectionRecord?> =
+        database.exposedQuery("library_find_section") {
+            LibrarySectionsTable
+                .selectAll()
+                .where {
+                    (LibrarySectionsTable.serverId eq serverId) and (LibrarySectionsTable.sectionKey eq sectionKey)
+                }.singleOrNull()
+                ?.toLibrarySectionRecord()
+        }
+
+    override suspend fun findSectionsByKey(sectionKey: String): Either<MiruError.PersistenceError, List<LibrarySectionRecord>> =
+        database.exposedQuery("library_find_sections_by_key") {
+            LibrarySectionsTable
+                .selectAll()
+                .where { LibrarySectionsTable.sectionKey eq sectionKey }
+                .orderBy(LibrarySectionsTable.serverId to SortOrder.ASC)
+                .map { it.toLibrarySectionRecord() }
+        }
 
     override suspend fun findSectionsByServer(serverId: String): Either<MiruError.PersistenceError, List<LibrarySectionRecord>> =
         database.exposedQuery("library_find_sections_by_server") {

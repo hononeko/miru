@@ -31,6 +31,8 @@ tags:
   - name: Stats
     description: Global and per-user playback statistics and aggregations
 
+  - name: Libraries
+    description: Library section statistics, growth snapshots, recently added media, and manual sync triggers
 paths:
   /healthz:
     get:
@@ -1076,6 +1078,228 @@ paths:
                 $ref: '#/components/schemas/ProblemDetails'
         '404':
           description: Media user not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/libraries:
+    get:
+      tags: [Libraries]
+      operationId: listLibraries
+      summary: List library sections with item counts, storage totals, and sync timestamps
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: serverId
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of library sections
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LibraryListResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/libraries/{id}/stats:
+    get:
+      tags: [Libraries]
+      operationId: getLibraryStats
+      summary: Get library section stats, codec/resolution breakdown, and growth snapshot history
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: serverId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 365
+            default: 90
+      responses:
+        '200':
+          description: Library section stats and growth snapshots
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LibraryStatsResponse'
+        '400':
+          description: Invalid query parameters
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Library section not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Ambiguous section key across multiple servers
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/libraries/{id}/recent:
+    get:
+      tags: [Libraries]
+      operationId: getLibraryRecentlyAdded
+      summary: Get recently added media items for a library section
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: serverId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+      responses:
+        '200':
+          description: Recently added media items
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecentMediaListResponse'
+        '400':
+          description: Invalid query parameters
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Library section not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Ambiguous section key across multiple servers
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/libraries/sync:
+    post:
+      tags: [Libraries]
+      operationId: triggerLibrarySync
+      summary: Trigger an immediate fast or deep library sync (admin only)
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: deep
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: true
+        - name: sectionKey
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Library sync completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LibrarySyncResponse'
+        '400':
+          description: Invalid query parameters
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Library section not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '502':
+          description: Upstream media server error
           content:
             application/problem+json:
               schema:
@@ -2298,3 +2522,171 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/LibraryBreakdownStatDto'
+
+    LibrarySectionResponse:
+      type: object
+      required: [id, serverId, sectionKey, title, sectionType, itemCount, childCount, leafCount, totalSizeBytes, totalDurationMs, updatedAtMs]
+      properties:
+        id:
+          type: string
+        serverId:
+          type: string
+        sectionKey:
+          type: string
+        title:
+          type: string
+        sectionType:
+          type: string
+        itemCount:
+          type: integer
+        childCount:
+          type: integer
+        leafCount:
+          type: integer
+        totalSizeBytes:
+          type: integer
+          format: int64
+        totalDurationMs:
+          type: integer
+          format: int64
+        lastSyncedAtMs:
+          type: integer
+          format: int64
+          nullable: true
+        updatedAtMs:
+          type: integer
+          format: int64
+
+    LibraryListResponse:
+      type: object
+      required: [libraries]
+      properties:
+        libraries:
+          type: array
+          items:
+            $ref: '#/components/schemas/LibrarySectionResponse'
+
+    LibrarySnapshotResponse:
+      type: object
+      required: [id, capturedAtMs, itemCount, childCount, leafCount, totalSizeBytes, totalDurationMs]
+      properties:
+        id:
+          type: string
+        capturedAtMs:
+          type: integer
+          format: int64
+        itemCount:
+          type: integer
+        childCount:
+          type: integer
+        leafCount:
+          type: integer
+        totalSizeBytes:
+          type: integer
+          format: int64
+        totalDurationMs:
+          type: integer
+          format: int64
+
+    LibraryStatsResponse:
+      type: object
+      required: [section, byResolution, byVideoCodec, byAudioCodec, snapshots]
+      properties:
+        section:
+          $ref: '#/components/schemas/LibrarySectionResponse'
+        byResolution:
+          type: object
+          additionalProperties:
+            type: integer
+        byVideoCodec:
+          type: object
+          additionalProperties:
+            type: integer
+        byAudioCodec:
+          type: object
+          additionalProperties:
+            type: integer
+        snapshots:
+          type: array
+          items:
+            $ref: '#/components/schemas/LibrarySnapshotResponse'
+
+    RecentMediaItemResponse:
+      type: object
+      required: [ratingKey, sectionKey, mediaType, title, addedAtMs]
+      properties:
+        ratingKey:
+          type: string
+        sectionKey:
+          type: string
+        mediaType:
+          type: string
+        title:
+          type: string
+        parentTitle:
+          type: string
+          nullable: true
+        grandparentTitle:
+          type: string
+          nullable: true
+        year:
+          type: integer
+          nullable: true
+        thumbUrl:
+          type: string
+          nullable: true
+        durationMs:
+          type: integer
+          format: int64
+          nullable: true
+        fileSizeBytes:
+          type: integer
+          format: int64
+          nullable: true
+        videoResolution:
+          type: string
+          nullable: true
+        videoCodec:
+          type: string
+          nullable: true
+        audioCodec:
+          type: string
+          nullable: true
+        addedAtMs:
+          type: integer
+          format: int64
+
+    RecentMediaListResponse:
+      type: object
+      required: [sectionId, items]
+      properties:
+        sectionId:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecentMediaItemResponse'
+
+    LibrarySyncMode:
+      type: string
+      enum: [FAST, DEEP]
+
+    LibrarySyncResponse:
+      type: object
+      required: [mode, syncedSections, failedSections, totalItemsSynced, snapshotsCreated, prunedItems, syncedAtMs]
+      properties:
+        mode:
+          $ref: '#/components/schemas/LibrarySyncMode'
+        syncedSections:
+          type: integer
+        failedSections:
+          type: integer
+        totalItemsSynced:
+          type: integer
+        snapshotsCreated:
+          type: integer
+        prunedItems:
+          type: integer
+        syncedAtMs:
+          type: integer
+          format: int64

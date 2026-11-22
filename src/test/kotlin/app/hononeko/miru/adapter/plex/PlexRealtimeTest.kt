@@ -70,6 +70,7 @@ private class StubMediaServerAdapter(
         sectionKey: String,
         start: Int,
         size: Int,
+        mediaTypeCode: Int?,
     ): Either<MiruError, LibraryItemsPage> = error("unused")
 
     override suspend fun fetchArtwork(

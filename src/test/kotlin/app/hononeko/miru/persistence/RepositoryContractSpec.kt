@@ -552,6 +552,24 @@ private fun FunSpecRootScope.libraryTests(ctxProvider: () -> ContractContext) {
             sections.first().itemCount shouldBe 125
             sections.first().totalSizeBytes shouldBe 12_000_000_000L
 
+            ctx.servers.upsert(sampleServer(id = "srv-2", machineId = "mach-2")).shouldBeRight()
+            val sec2OnSrv2 =
+                movies.copy(
+                    serverId = "srv-2",
+                    sectionKey = "sec-1",
+                    title = "Movies 2",
+                    itemCount = 50,
+                    updatedAtMs = 12_000L,
+                )
+            ctx.library.upsertSection(sec2OnSrv2).shouldBeRight()
+
+            ctx.library.findSection("srv-1", "sec-1").shouldBeRight()?.itemCount shouldBe 125
+            ctx.library.findSection("srv-1", "missing").shouldBeRight().shouldBeNull()
+            ctx.library.findSectionsByKey("sec-1").shouldBeRight().map { it.serverId } shouldContainExactly listOf("srv-1", "srv-2")
+            ctx.library.findSectionsByKey("missing").shouldBeRight() shouldHaveSize 0
+            ctx.library.findAllSections().shouldBeRight().map { it.serverId to it.sectionKey } shouldContainExactly
+                listOf("srv-1" to "sec-1", "srv-2" to "sec-1")
+
             val snap1 = sampleSnapshot(id = "sn-1", sectionKey = "sec-1", capturedAtMs = 1_000L, itemCount = 100)
             val snap2 = sampleSnapshot(id = "sn-2", sectionKey = "sec-1", capturedAtMs = 3_000L, itemCount = 125)
             val snap3 = sampleSnapshot(id = "sn-3", sectionKey = "sec-1", capturedAtMs = 2_000L, itemCount = 110)

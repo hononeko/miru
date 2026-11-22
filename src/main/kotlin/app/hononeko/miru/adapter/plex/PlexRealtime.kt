@@ -73,6 +73,7 @@ class PlexRuntime(
     val adapter: MediaServerAdapter,
     val realtime: PlexRealtime,
     val sessionEngine: SessionStateEngine? = null,
+    val serverIdProvider: (suspend () -> Either<MiruError, String>)? = null,
 )
 
 fun buildPlexRuntime(
@@ -100,19 +101,21 @@ fun buildPlexRuntime(
             httpClient = restClient,
             eventSource = listener?.events ?: emptyFlow(),
         )
+    val serverIdProvider =
+        databaseHandle?.let { handle ->
+            createLazyServerIdProvider(
+                adapter = adapter,
+                baseUrl = config.baseUrl,
+                mediaServerRepository = ExposedMediaServerRepository(handle),
+            )
+        }
     val sessionEngine =
-        if (sink == null && databaseHandle != null) {
-            val mediaServerRepository = ExposedMediaServerRepository(databaseHandle)
+        if (sink == null && databaseHandle != null && serverIdProvider != null) {
             val userRepository = ExposedUserRepository(databaseHandle)
             val activeSessionRepository = ExposedActiveSessionRepository(databaseHandle)
             val playbackHistoryRepository = ExposedPlaybackHistoryRepository(databaseHandle)
             SessionStateEngine(
-                serverIdProvider =
-                    createLazyServerIdProvider(
-                        adapter = adapter,
-                        baseUrl = config.baseUrl,
-                        mediaServerRepository = mediaServerRepository,
-                    ),
+                serverIdProvider = serverIdProvider,
                 userRepository = userRepository,
                 activeSessionRepository = activeSessionRepository,
                 playbackHistoryRepository = playbackHistoryRepository,
@@ -142,7 +145,12 @@ fun buildPlexRuntime(
                     .onFailure { logger.debug("Failed to close Plex HTTP client: {}", it.message) }
             },
         )
-    return PlexRuntime(adapter = adapter, realtime = realtime, sessionEngine = sessionEngine)
+    return PlexRuntime(
+        adapter = adapter,
+        realtime = realtime,
+        sessionEngine = sessionEngine,
+        serverIdProvider = serverIdProvider,
+    )
 }
 
 internal fun createLazyServerIdProvider(

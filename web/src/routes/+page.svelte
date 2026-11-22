@@ -1,19 +1,29 @@
 <script lang="ts">
 	import { api, MiruApiError, unwrap } from '$api/client';
-	import type { OverviewStatsResponse, StatsRange } from '$api/types';
+	import type { OverviewStatsResponse, PlexConnectionStatus, StatsRange } from '$api/types';
 	import Badge from '$components/ui/Badge.svelte';
 	import RangeTabs from '$components/ui/RangeTabs.svelte';
 	import KpiCard from '$components/miru/KpiCard.svelte';
 	import StreamCard from '$components/miru/StreamCard.svelte';
 	import BarChart, { type BarPoint } from '$components/miru/BarChart.svelte';
+	import { authStore } from '$stores/auth.svelte';
 	import { streamsStore } from '$stores/streams.svelte';
 	import { formatBandwidthKbps, formatDurationSec, formatRelativeTime } from '$lib/utils';
-	import { Radio, Tv } from 'lucide-svelte';
+	import { Link2, Radio, Server, Tv } from 'lucide-svelte';
 
 	let range = $state<StatsRange>('30d');
 	let overview = $state<OverviewStatsResponse | null>(null);
 	let loadingStats = $state(true);
 	let statsError = $state<string | null>(null);
+	let plexStatus = $state<PlexConnectionStatus | null>(null);
+
+	$effect(() => {
+		if (authStore.isAdmin) {
+			void api.GET('/api/v1/admin/plex/status').then((res) => {
+				if (res.data) plexStatus = res.data;
+			}).catch(() => {});
+		}
+	});
 
 	async function loadOverview(selectedRange: StatsRange) {
 		loadingStats = true;
@@ -136,6 +146,25 @@
 	</div>
 
 	<!-- KPI Strip -->
+	{#if authStore.isAdmin && plexStatus?.credentialSource === 'NOT_CONFIGURED'}
+		<div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-cyan/40 bg-cyan-soft/50 px-4 py-3 text-xs">
+			<div class="flex items-center gap-2.5">
+				<Server class="h-4 w-4 shrink-0 text-cyan-hi" />
+				<div>
+					<p class="font-heading font-semibold text-fg-primary">Connect your Plex Media Server</p>
+					<p class="text-fg-secondary">Sign in with Plex PIN OAuth in Admin to start tracking live streams and history.</p>
+				</div>
+			</div>
+			<a
+				href="/admin"
+				class="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 font-heading text-xs font-semibold text-white hover:bg-primary-hover"
+			>
+				<Link2 class="h-3.5 w-3.5" />
+				Connect in Admin
+			</a>
+		</div>
+	{/if}
+
 	<section class="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4" aria-label="Key telemetry metrics">
 		<KpiCard
 			label="Active Streams"

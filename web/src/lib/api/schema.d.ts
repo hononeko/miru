@@ -315,6 +315,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/plex/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get current Plex connection status and credential source */
+        get: operations["getPlexConnectionStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/plex/oauth/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start a Plex PIN OAuth session */
+        post: operations["startPlexOAuth"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/plex/oauth/poll/{pinId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Poll Plex PIN OAuth authorization status */
+        get: operations["pollPlexOAuth"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/plex/oauth/servers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Discover Plex Media Servers accessible to the authorized PIN session */
+        get: operations["discoverPlexServers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/plex/oauth/select": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Persist encrypted Plex credentials for the selected server and hot-reload runtime */
+        post: operations["selectPlexServer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/media/{ratingKey}/thumb": {
         parameters: {
             query?: never;
@@ -1196,6 +1281,70 @@ export interface components {
             malformedRows: number;
             warnings: string[];
         };
+        /** @enum {string} */
+        PlexCredentialSource: "ENV_OVERRIDE" | "STORED_ENCRYPTED" | "NOT_CONFIGURED";
+        /** @enum {string} */
+        PlexOAuthPinStatus: "PENDING" | "AUTHORIZED" | "EXPIRED";
+        PlexConnectionStatus: {
+            configured: boolean;
+            credentialSource: components["schemas"]["PlexCredentialSource"];
+            encryptionKeyConfigured: boolean;
+            serverName?: string | null;
+            machineId?: string | null;
+            baseUrl?: string | null;
+            reachable: boolean;
+            statusMessage?: string | null;
+        };
+        PlexOAuthStartResponse: {
+            /** Format: int64 */
+            pinId: number;
+            authUrl: string;
+            /** Format: int64 */
+            expiresAtMs: number;
+        };
+        PlexOAuthPollResponse: {
+            /** Format: int64 */
+            pinId: number;
+            status: components["schemas"]["PlexOAuthPinStatus"];
+            /** Format: int64 */
+            expiresAtMs: number;
+        };
+        PlexConnectionOptionDto: {
+            uri: string;
+            protocol: string;
+            local: boolean;
+            relay: boolean;
+            ipv6: boolean;
+        };
+        PlexDiscoveredServerDto: {
+            name: string;
+            machineId: string;
+            productVersion?: string | null;
+            platform?: string | null;
+            owned: boolean;
+            presence: boolean;
+            connections: components["schemas"]["PlexConnectionOptionDto"][];
+        };
+        PlexDiscoveredServersResponse: {
+            /** Format: int64 */
+            pinId: number;
+            servers: components["schemas"]["PlexDiscoveredServerDto"][];
+        };
+        PlexSelectServerRequest: {
+            /** Format: int64 */
+            pinId?: number | null;
+            machineId: string;
+            connectionUri: string;
+        };
+        PlexSelectServerResponse: {
+            saved: boolean;
+            hotReloaded: boolean;
+            envOverrideActive: boolean;
+            serverName: string;
+            machineId: string;
+            baseUrl: string;
+            credentialSource: components["schemas"]["PlexCredentialSource"];
+        };
     };
     responses: never;
     parameters: never;
@@ -1996,6 +2145,321 @@ export interface operations {
             };
             /** @description Target media server not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    getPlexConnectionStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Plex connection status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlexConnectionStatus"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    startPlexOAuth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Plex PIN OAuth session created */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlexOAuthStartResponse"];
+                };
+            };
+            /** @description Validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Upstream Plex.tv error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    pollPlexOAuth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pinId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current PIN authorization status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlexOAuthPollResponse"];
+                };
+            };
+            /** @description Invalid PIN identifier */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description OAuth PIN session not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Upstream Plex.tv error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    discoverPlexServers: {
+        parameters: {
+            query?: {
+                pinId?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Discovered Plex servers and prioritized connection URIs (tokens omitted) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlexDiscoveredServersResponse"];
+                };
+            };
+            /** @description Invalid PIN identifier */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Authorized OAuth session not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description OAuth PIN session is not authorized or has expired */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Upstream Plex.tv error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    selectPlexServer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlexSelectServerRequest"];
+            };
+        };
+        responses: {
+            /** @description Server credentials saved and runtime status returned */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlexSelectServerResponse"];
+                };
+            };
+            /** @description Validation error or missing MIRU_ENCRYPTION_KEY */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description OAuth session or Plex server not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description OAuth PIN session is not authorized or has expired */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Upstream Plex.tv error */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };

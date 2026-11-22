@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { RefreshCw } from 'lucide-svelte';
+	import { Link2, RefreshCw, Server } from 'lucide-svelte';
 	import { api, MiruApiError, unwrap } from '$api/client';
 	import type {
 		LibrarySectionResponse,
 		LibraryStatsResponse,
+		PlexConnectionStatus,
 		RecentMediaItemResponse
 	} from '$api/types';
 	import Badge from '$components/ui/Badge.svelte';
@@ -23,6 +24,15 @@
 	let syncing = $state(false);
 	let syncNotice = $state<string | null>(null);
 	let error = $state<string | null>(null);
+	let plexStatus = $state<PlexConnectionStatus | null>(null);
+
+	$effect(() => {
+		if (authStore.isAdmin) {
+			void api.GET('/api/v1/admin/plex/status').then((res) => {
+				if (res.data) plexStatus = res.data;
+			}).catch(() => {});
+		}
+	});
 
 	async function loadLibraries() {
 		loadingList = true;
@@ -152,6 +162,25 @@
 			{/if}
 		</div>
 	</div>
+
+	{#if authStore.isAdmin && plexStatus?.credentialSource === 'NOT_CONFIGURED'}
+		<div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-cyan/40 bg-cyan-soft/50 px-4 py-3 text-xs">
+			<div class="flex items-center gap-2.5">
+				<Server class="h-4 w-4 shrink-0 text-cyan-hi" />
+				<div>
+					<p class="font-heading font-semibold text-fg-primary">No Plex server connected</p>
+					<p class="text-fg-secondary">Connect Plex via PIN OAuth in Admin before syncing library sections.</p>
+				</div>
+			</div>
+			<a
+				href="/admin"
+				class="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 font-heading text-xs font-semibold text-white hover:bg-primary-hover"
+			>
+				<Link2 class="h-3.5 w-3.5" />
+				Connect in Admin
+			</a>
+		</div>
+	{/if}
 
 	{#if syncNotice}
 		<div class="rounded-xl border border-direct-play/50 bg-direct-play-soft px-4 py-2.5 text-xs text-direct-play">

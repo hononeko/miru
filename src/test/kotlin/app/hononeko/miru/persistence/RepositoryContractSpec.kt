@@ -53,6 +53,7 @@ import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.string.shouldNotContain
 import java.nio.file.Files
 import java.nio.file.Path
 import java.sql.DriverManager
@@ -137,6 +138,82 @@ private fun FunSpecRootScope.mediaServerTests(ctxProvider: () -> ContractContext
             ctx.servers.delete("srv-1").shouldBeRight() shouldBe true
             ctx.servers.delete("srv-1").shouldBeRight() shouldBe false
             ctx.servers.findById("srv-1").shouldBeRight().shouldBeNull()
+        }
+
+        test("persists encryptedToken and clientIdentifier, preserves them across null upserts, and supports updateCredentials") {
+            val ctx = ctxProvider()
+            val withCreds =
+                sampleServer(
+                    id = "srv-cred",
+                    name = "OAuth Plex",
+                    machineId = "mach-cred",
+                    createdAtMs = 100L,
+                    updatedAtMs = 100L,
+                ).copy(
+                    encryptedToken = "v1:ivdata.ciphertextdata",
+                    clientIdentifier = "miru-client-xyz",
+                )
+            withCreds.toString() shouldNotContain "v1:ivdata.ciphertextdata"
+
+            ctx.servers.upsert(withCreds).shouldBeRight() shouldBe withCreds
+            ctx.servers.findById("srv-cred").shouldBeRight() shouldBe withCreds
+
+            // Routine health/metadata upsert by same id with null creds must preserve stored credentials
+            val metadataUpsertById =
+                sampleServer(
+                    id = "srv-cred",
+                    name = "Refreshed Plex",
+                    machineId = "mach-cred",
+                    createdAtMs = 100L,
+                    updatedAtMs = 200L,
+                ).copy(baseUrl = "https://plex.new:32400")
+            val preservedById = ctx.servers.upsert(metadataUpsertById).shouldBeRight()
+            preservedById.name shouldBe "Refreshed Plex"
+            preservedById.encryptedToken shouldBe "v1:ivdata.ciphertextdata"
+            preservedById.clientIdentifier shouldBe "miru-client-xyz"
+
+            // Routine upsert matching machineId with different id and null creds must also preserve stored credentials
+            val metadataUpsertByMachine =
+                sampleServer(
+                    id = "srv-other-id",
+                    name = "Machine Upsert",
+                    machineId = "mach-cred",
+                    createdAtMs = 999L,
+                    updatedAtMs = 300L,
+                )
+            val preservedByMachine = ctx.servers.upsert(metadataUpsertByMachine).shouldBeRight()
+            preservedByMachine.id shouldBe "srv-cred"
+            preservedByMachine.encryptedToken shouldBe "v1:ivdata.ciphertextdata"
+            preservedByMachine.clientIdentifier shouldBe "miru-client-xyz"
+
+            // Explicit updateCredentials replaces/clears stored credentials
+            val rotated =
+                ctx.servers
+                    .updateCredentials(
+                        id = "srv-cred",
+                        name = "Rotated Plex",
+                        baseUrl = "http://10.0.0.5:32400",
+                        encryptedToken = "v1:newiv.newct",
+                        clientIdentifier = "miru-client-rotated",
+                        updatedAtMs = 400L,
+                    ).shouldBeRight()
+                    .shouldNotBeNull()
+            rotated.name shouldBe "Rotated Plex"
+            rotated.baseUrl shouldBe "http://10.0.0.5:32400"
+            rotated.encryptedToken shouldBe "v1:newiv.newct"
+            rotated.clientIdentifier shouldBe "miru-client-rotated"
+            rotated.updatedAtMs shouldBe 400L
+
+            ctx.servers
+                .updateCredentials(
+                    id = "missing-srv",
+                    name = "Missing",
+                    baseUrl = "http://localhost:32400",
+                    encryptedToken = null,
+                    clientIdentifier = null,
+                    updatedAtMs = 500L,
+                ).shouldBeRight()
+                .shouldBeNull()
         }
     }
 }

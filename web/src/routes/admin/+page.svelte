@@ -1,11 +1,31 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { Copy, Check, KeyRound, Plus, Trash2, Link2, Upload, FileSpreadsheet, ChevronDown } from 'lucide-svelte';
+	import { onDestroy, onMount } from 'svelte';
+	import {
+		AlertTriangle,
+		Check,
+		CheckCircle2,
+		ChevronDown,
+		Copy,
+		ExternalLink,
+		FileSpreadsheet,
+		KeyRound,
+		Link2,
+		Loader2,
+		Plus,
+		RefreshCw,
+		Server,
+		Trash2,
+		Upload
+	} from 'lucide-svelte';
 	import { api, MiruApiError, unwrap } from '$api/client';
 	import type {
 		AccountResponse,
 		ApiKeyResponse,
 		MiruRole,
+		PlexConnectionOptionDto,
+		PlexConnectionStatus,
+		PlexDiscoveredServerDto,
+		PlexSelectServerResponse,
 		ProblemDetails,
 		ReadinessResponse,
 		TautulliImportResponse,
@@ -17,10 +37,13 @@
 	import { authStore } from '$stores/auth.svelte';
 	import { formatBytes, formatRelativeTime, safeInitial } from '$lib/utils';
 
+	type WizardStep = 'starting' | 'waiting' | 'expired' | 'discovering' | 'select' | 'saving' | 'done';
+
 	let accounts = $state<AccountResponse[]>([]);
 	let apiKeys = $state<ApiKeyResponse[]>([]);
 	let mediaUsers = $state<UserSummaryDto[]>([]);
 	let readiness = $state<ReadinessResponse | null>(null);
+	let plexStatus = $state<PlexConnectionStatus | null>(null);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
@@ -91,20 +114,53 @@
 		}
 	}
 
+	// Plex PIN OAuth Wizard Sheet
+	let plexWizardOpen = $state(false);
+	let wizardStep = $state<WizardStep>('starting');
+	let wizardError = $state<string | null>(null);
+	let oauthPinId = $state<number | null>(null);
+	let oauthAuthUrl = $state<string>('');
+	let oauthExpiresAtMs = $state<number>(0);
+	let authUrlCopied = $state(false);
+	let nowTickMs = $state<number>(Date.now());
+	let discoveredServers = $state<PlexDiscoveredServerDto[]>([]);
+	let selectedMachineId = $state<string>('');
+	let selectedConnectionUri = $state<string>('');
+	let selectResult = $state<PlexSelectServerResponse | null>(null);
+
+	let pollTimerId: ReturnType<typeof setInterval> | null = null;
+	let countdownTimerId: ReturnType<typeof setInterval> | null = null;
+
+	function stopOAuthTimers() {
+		if (pollTimerId !== null) {
+			clearInterval(pollTimerId);
+			pollTimerId = null;
+		}
+		if (countdownTimerId !== null) {
+			clearInterval(countdownTimerId);
+			countdownTimerId = null;
+		}
+	}
+
+	onDestroy(() => {
+		stopOAuthTimers();
+	});
 	async function loadAll() {
 		loading = true;
 		error = null;
 		try {
-			const [accRes, keyRes, usrRes, readyRes] = await Promise.all([
+			const [accRes, keyRes, usrRes, readyRes, plexRes] = await Promise.all([
 				api.GET('/api/v1/admin/accounts'),
 				api.GET('/api/v1/admin/api-keys'),
 				api.GET('/api/v1/users'),
-				api.GET('/readyz')
+				api.GET('/readyz'),
+				api.GET('/api/v1/admin/plex/status')
 			]);
 			accounts = unwrap(accRes).accounts;
 			apiKeys = unwrap(keyRes).apiKeys;
 			mediaUsers = usrRes.data?.users ?? [];
 			readiness = readyRes.data ?? null;
+			plexStatus = plexRes.data ?? null;
 		} catch (e) {
 			error = e instanceof MiruApiError ? e.detail : 'Failed to load admin console';
 		} finally {
@@ -115,6 +171,160 @@
 	onMount(() => {
 		void loadAll();
 	});
+
+	function handleWizardOpenChange(open: boolean) {
+		plexWizardOpen = open;
+		if (!open) {
+			stopOAuthTimers();
+		}
+	}
+
+	async function startPlexOAuthWizard() {
+		stopOAuthTimers();
+		plexWizardOpen = true;
+		wizardStep = 'starting';
+		wizardError = null;
+		authUrlCopied = false;
+		discoveredServers = [];
+		selectedMachineId = '';
+		selectedConnectionUri = '';
+		selectResult = null;
+
+		try {
+			const started = unwrap(await api.POST('/api/v1/admin/plex/oauth/start'));
+			oauthPinId = started.pinId;
+			oauthAuthUrl = started.authUrl;
+			oauthExpiresAtMs = started.expiresAtMs;
+			nowTickMs = Date.now();
+			wizardStep = 'waiting';
+
+			window.open(started.authUrl, '_blank', 'noopener,noreferrer');
+
+			countdownTimerId = setInterval(() => {
+				nowTickMs = Date.now();
+				if (nowTickMs >= oauthExpiresAtMs && wizardStep === 'waiting') {
+					stopOAuthTimers();
+					wizardStep = 'expired';
+				}
+			}, 1000);
+
+			pollTimerId = setInterval(() => {
+				void pollPinOnce();
+			}, 2000);
+		} catch (err) {
+			wizardError = err instanceof MiruApiError ? err.detail : 'Failed to start Plex sign-in';
+			wizardStep = 'expired';
+		}
+	}
+
+	async function pollPinOnce() {
+		if (oauthPinId === null || wizardStep !== 'waiting') return;
+		try {
+			const poll = unwrap(
+				await api.GET('/api/v1/admin/plex/oauth/poll/{pinId}', {
+					params: { path: { pinId: oauthPinId } }
+				})
+			);
+			oauthExpiresAtMs = poll.expiresAtMs;
+			if (poll.status === 'AUTHORIZED') {
+				stopOAuthTimers();
+				await loadDiscoveredServers(oauthPinId);
+			} else if (poll.status === 'EXPIRED') {
+				stopOAuthTimers();
+				wizardStep = 'expired';
+			}
+		} catch (err) {
+			stopOAuthTimers();
+			wizardError = err instanceof MiruApiError ? err.detail : 'Failed to poll Plex authorization';
+			wizardStep = 'expired';
+		}
+	}
+
+	async function loadDiscoveredServers(pinId: number) {
+		wizardStep = 'discovering';
+		wizardError = null;
+		try {
+			const res = unwrap(
+				await api.GET('/api/v1/admin/plex/oauth/servers', {
+					params: { query: { pinId } }
+				})
+			);
+			discoveredServers = res.servers;
+			if (res.servers.length > 0) {
+				selectedMachineId = res.servers[0].machineId;
+				selectedConnectionUri = res.servers[0].connections[0]?.uri ?? '';
+			}
+			wizardStep = 'select';
+		} catch (err) {
+			wizardError = err instanceof MiruApiError ? err.detail : 'Failed to discover Plex servers';
+			wizardStep = 'expired';
+		}
+	}
+
+	function chooseServer(server: PlexDiscoveredServerDto) {
+		selectedMachineId = server.machineId;
+		selectedConnectionUri = server.connections[0]?.uri ?? '';
+	}
+
+	async function handleConfirmServerSelection() {
+		if (!selectedMachineId || !selectedConnectionUri.trim()) return;
+		wizardStep = 'saving';
+		wizardError = null;
+		try {
+			selectResult = unwrap(
+				await api.POST('/api/v1/admin/plex/oauth/select', {
+					body: {
+						pinId: oauthPinId,
+						machineId: selectedMachineId,
+						connectionUri: selectedConnectionUri.trim()
+					}
+				})
+			);
+			wizardStep = 'done';
+			await loadAll();
+		} catch (err) {
+			wizardError = err instanceof MiruApiError ? err.detail : 'Failed to save Plex server selection';
+			wizardStep = 'select';
+		}
+	}
+
+	async function copyAuthUrl() {
+		if (!oauthAuthUrl) return;
+		try {
+			await navigator.clipboard.writeText(oauthAuthUrl);
+			authUrlCopied = true;
+		} catch {
+			// ignore clipboard permission issues
+		}
+	}
+
+	const remainingCountdown = $derived.by(() => {
+		const remainingSec = Math.max(0, Math.floor((oauthExpiresAtMs - nowTickMs) / 1000));
+		const mins = Math.floor(remainingSec / 60);
+		const secs = remainingSec % 60;
+		return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+	});
+
+	const selectedServer = $derived(
+		discoveredServers.find((s) => s.machineId === selectedMachineId) ?? null
+	);
+
+	function connectionLabel(conn: PlexConnectionOptionDto): string {
+		if (conn.relay) return 'RELAY';
+		if (conn.local) return 'LOCAL LAN';
+		return 'REMOTE';
+	}
+
+	function credentialSourceLabel(status: PlexConnectionStatus): string {
+		switch (status.credentialSource) {
+			case 'ENV_OVERRIDE':
+				return 'ENV OVERRIDE';
+			case 'STORED_ENCRYPTED':
+				return 'STORED · ENCRYPTED';
+			case 'NOT_CONFIGURED':
+				return 'NOT CONFIGURED';
+		}
+	}
 
 	async function handleCreateAccount(e: SubmitEvent) {
 		e.preventDefault();
@@ -264,7 +474,7 @@
 				Admin & Access Control
 			</h1>
 			<p class="mt-0.5 text-xs text-fg-secondary sm:text-sm">
-				Manage local Miru accounts, RBAC Plex media-user links, and headless API keys
+				Manage Plex server connection, local Miru accounts, RBAC links, and headless API keys
 			</p>
 		</div>
 		<div class="flex items-center gap-2">
@@ -286,6 +496,91 @@
 			{error}
 		</div>
 	{/if}
+
+	<!-- Media Server · Plex Connection -->
+	<section class="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
+		<div class="flex flex-wrap items-center justify-between gap-2">
+			<div class="flex items-center gap-2">
+				<Server class="h-4 w-4 text-primary" />
+				<h2 class="font-heading text-sm font-semibold text-fg-primary">
+					Media Server · Plex Connection
+				</h2>
+			</div>
+			{#if plexStatus}
+				<div class="flex flex-wrap items-center gap-1.5">
+					<Badge
+						tone={plexStatus.reachable ? 'direct-play' : plexStatus.configured ? 'hw-transcode' : 'neutral'}
+						dot
+						mono
+					>
+						{plexStatus.reachable ? 'CONNECTED' : plexStatus.configured ? 'UNREACHABLE' : 'NOT CONFIGURED'}
+					</Badge>
+					<Badge
+						tone={plexStatus.credentialSource === 'ENV_OVERRIDE'
+							? 'cyan'
+							: plexStatus.credentialSource === 'STORED_ENCRYPTED'
+								? 'primary'
+								: 'neutral'}
+						mono
+					>
+						{credentialSourceLabel(plexStatus)}
+					</Badge>
+				</div>
+			{/if}
+		</div>
+
+		{#if plexStatus}
+			{#if plexStatus.credentialSource === 'ENV_OVERRIDE'}
+				<div class="flex items-start gap-2.5 rounded-xl border border-cyan/40 bg-cyan-soft/50 px-3.5 py-2.5 text-xs text-fg-secondary">
+					<AlertTriangle class="mt-0.5 h-4 w-4 shrink-0 text-cyan-hi" />
+					<div>
+						<p class="font-heading font-semibold text-cyan-hi">Environment override active (PLEX_URL / PLEX_TOKEN)</p>
+						<p class="mt-0.5 text-[11px]">
+							You can still run Plex OAuth to save encrypted credentials in the database, but Miru will continue using environment variables until they are removed.
+						</p>
+					</div>
+				</div>
+			{/if}
+
+			{#if !plexStatus.encryptionKeyConfigured}
+				<div class="flex items-start gap-2.5 rounded-xl border border-hw-transcode/50 bg-hw-transcode-soft px-3.5 py-2.5 text-xs text-fg-secondary">
+					<AlertTriangle class="mt-0.5 h-4 w-4 shrink-0 text-hw-transcode" />
+					<div>
+						<p class="font-heading font-semibold text-hw-transcode">MIRU_ENCRYPTION_KEY is not configured</p>
+						<p class="mt-0.5 text-[11px]">
+							Set <code class="font-mono text-fg-primary">MIRU_ENCRYPTION_KEY</code> (at least 32 characters) in your environment to save Plex OAuth credentials encrypted at rest.
+						</p>
+					</div>
+				</div>
+			{/if}
+
+			<div class="flex flex-col gap-3 rounded-xl border border-border bg-elevated p-3.5 sm:flex-row sm:items-center sm:justify-between">
+				<div class="min-w-0">
+					<p class="font-heading text-sm font-semibold text-fg-primary">
+						{plexStatus.serverName || (plexStatus.configured ? 'Plex Media Server' : 'No Plex server connected')}
+					</p>
+					<p class="mt-0.5 truncate font-mono text-[11px] text-fg-muted">
+						{#if plexStatus.baseUrl}
+							{plexStatus.baseUrl}{plexStatus.machineId ? ` · ${plexStatus.machineId}` : ''}
+						{:else}
+							Use Plex PIN OAuth to sign in and auto-discover your server without extracting X-Plex-Token manually.
+						{/if}
+					</p>
+					{#if plexStatus.statusMessage && !plexStatus.reachable}
+						<p class="mt-1 text-[11px] text-fg-secondary">{plexStatus.statusMessage}</p>
+					{/if}
+				</div>
+				<div class="flex shrink-0 items-center gap-2">
+					<Button variant="primary" size="md" onclick={startPlexOAuthWizard}>
+						<Link2 class="h-3.5 w-3.5" />
+						{plexStatus.configured ? 'Reconnect Plex' : 'Connect with Plex'}
+					</Button>
+				</div>
+			</div>
+		{:else if loading}
+			<p class="py-4 text-center font-mono text-xs text-fg-muted">Checking Plex connection…</p>
+		{/if}
+	</section>
 
 	<!-- Accounts & Linked Media Users -->
 	<section class="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
@@ -564,6 +859,214 @@
 		</section>
 	{/if}
 </div>
+
+<!-- Plex PIN OAuth Wizard Sheet -->
+<Sheet
+	bind:open={plexWizardOpen}
+	onOpenChange={handleWizardOpenChange}
+	title="Connect Plex Media Server"
+	description="Sign in with Plex PIN OAuth to auto-retrieve credentials and discover servers"
+>
+	<div class="flex flex-col gap-4">
+		{#if wizardError}
+			<div role="alert" class="rounded-xl border border-danger/50 bg-danger-soft px-3.5 py-2.5 text-xs text-danger">
+				{wizardError}
+			</div>
+		{/if}
+
+		{#if wizardStep === 'starting' || wizardStep === 'discovering' || wizardStep === 'saving'}
+			<div class="flex flex-col items-center justify-center gap-3 py-8 text-center">
+				<Loader2 class="h-6 w-6 animate-spin text-primary" />
+				<p class="font-heading text-sm font-semibold text-fg-primary">
+					{#if wizardStep === 'starting'}
+						Creating Plex OAuth PIN…
+					{:else if wizardStep === 'discovering'}
+						Discovering Plex servers…
+					{:else}
+						Saving encrypted credentials & reloading…
+					{/if}
+				</p>
+			</div>
+		{:else if wizardStep === 'waiting'}
+			<div class="flex flex-col gap-3 rounded-xl border border-border bg-elevated p-4">
+				<div class="flex items-center justify-between gap-2">
+					<span class="inline-flex items-center gap-2 font-heading text-xs font-semibold text-fg-primary">
+						<Loader2 class="h-3.5 w-3.5 animate-spin text-cyan-hi" />
+						Waiting for Plex authorization…
+					</span>
+					<Badge tone="cyan" mono>{remainingCountdown}</Badge>
+				</div>
+				<p class="text-xs text-fg-secondary">
+					Complete sign-in in the Plex tab that opened. If popups are blocked or you are on mobile, use the link below:
+				</p>
+				<div class="flex flex-col gap-2">
+					<a
+						href={oauthAuthUrl}
+						target="_blank"
+						rel="noopener noreferrer"
+						class="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-white hover:bg-primary-hover"
+					>
+						<ExternalLink class="h-3.5 w-3.5" />
+						Open app.plex.tv Sign-In
+					</a>
+					<Button variant="outline" size="sm" onclick={copyAuthUrl} class="w-full">
+						{#if authUrlCopied}
+							<Check class="h-3.5 w-3.5" /> Link Copied
+						{:else}
+							<Copy class="h-3.5 w-3.5" /> Copy Fallback Sign-In URL
+						{/if}
+					</Button>
+				</div>
+				<p class="break-all rounded-lg bg-canvas px-2.5 py-2 font-mono text-[10px] text-fg-muted">
+					{oauthAuthUrl}
+				</p>
+			</div>
+			<Button variant="ghost" size="md" onclick={() => handleWizardOpenChange(false)} class="w-full">
+				Cancel
+			</Button>
+		{:else if wizardStep === 'expired'}
+			<div class="flex flex-col items-center gap-3 rounded-xl border border-border bg-elevated p-5 text-center">
+				<AlertTriangle class="h-6 w-6 text-hw-transcode" />
+				<div>
+					<p class="font-heading text-sm font-semibold text-fg-primary">Plex Sign-In Expired or Interrupted</p>
+					<p class="mt-1 text-xs text-fg-secondary">
+						Start a fresh PIN session to authorize Miru with your Plex account.
+					</p>
+				</div>
+				<div class="flex w-full gap-2">
+					<Button variant="outline" size="md" onclick={() => handleWizardOpenChange(false)} class="flex-1">
+						Close
+					</Button>
+					<Button variant="primary" size="md" onclick={startPlexOAuthWizard} class="flex-1">
+						<RefreshCw class="h-3.5 w-3.5" />
+						Retry
+					</Button>
+				</div>
+			</div>
+		{:else if wizardStep === 'select'}
+			{#if discoveredServers.length === 0}
+				<div class="flex flex-col items-center gap-3 rounded-xl border border-border bg-elevated p-5 text-center">
+					<p class="font-heading text-sm font-semibold text-fg-primary">No Plex Servers Found</p>
+					<p class="text-xs text-fg-secondary">
+						This Plex account does not have any accessible Plex Media Server resources.
+					</p>
+					<Button variant="primary" size="md" onclick={startPlexOAuthWizard} class="w-full">
+						Try Another Account
+					</Button>
+				</div>
+			{:else}
+				<div class="flex flex-col gap-3">
+					<div class="flex flex-col gap-2">
+						<span class="font-heading text-xs font-semibold text-fg-primary">1. Select Plex Server</span>
+						{#each discoveredServers as srv (srv.machineId)}
+							{@const active = srv.machineId === selectedMachineId}
+							<button
+								type="button"
+								onclick={() => chooseServer(srv)}
+								class={`flex flex-col gap-1 rounded-xl border p-3 text-left transition-colors cursor-pointer ${
+									active ? 'border-cyan bg-cyan-soft/70 ring-1 ring-cyan' : 'border-border bg-elevated hover:border-border-strong'
+								}`}
+							>
+								<div class="flex items-center justify-between gap-2">
+									<span class="font-heading text-sm font-semibold text-fg-primary">{srv.name}</span>
+									<div class="flex items-center gap-1">
+										{#if srv.owned}
+											<Badge tone="primary" mono>OWNED</Badge>
+										{/if}
+										<Badge tone={srv.presence ? 'direct-play' : 'neutral'} dot mono>
+											{srv.presence ? 'ONLINE' : 'OFFLINE'}
+										</Badge>
+									</div>
+								</div>
+								<p class="font-mono text-[10px] text-fg-muted">
+									{[srv.platform, srv.productVersion ? `v${srv.productVersion}` : null, srv.machineId]
+										.filter(Boolean)
+										.join(' · ')}
+								</p>
+							</button>
+						{/each}
+					</div>
+
+					{#if selectedServer}
+						<div class="flex flex-col gap-2">
+							<span class="font-heading text-xs font-semibold text-fg-primary">2. Choose Connection URI</span>
+							{#each selectedServer.connections as conn (conn.uri)}
+								{@const checked = selectedConnectionUri === conn.uri}
+								<label
+									class={`flex cursor-pointer items-center justify-between gap-2 rounded-lg border px-3 py-2.5 text-xs ${
+										checked ? 'border-cyan bg-cyan-soft/50' : 'border-border bg-elevated'
+									}`}
+								>
+									<div class="flex min-w-0 items-center gap-2">
+										<input
+											type="radio"
+											name="plex-connection-uri"
+											value={conn.uri}
+											checked={checked}
+											onchange={() => (selectedConnectionUri = conn.uri)}
+											class="accent-cyan"
+										/>
+										<span class="truncate font-mono text-[11px] text-fg-primary">{conn.uri}</span>
+									</div>
+									<div class="flex shrink-0 items-center gap-1">
+										<Badge tone={conn.local ? 'direct-play' : conn.relay ? 'hw-transcode' : 'cyan'} mono>
+											{connectionLabel(conn)}
+										</Badge>
+										<Badge tone="neutral" mono>{conn.protocol.toUpperCase()}</Badge>
+									</div>
+								</label>
+							{/each}
+
+							<label class="mt-1 flex flex-col gap-1">
+								<span class="font-heading text-[11px] font-semibold text-fg-secondary">
+									Or enter custom connection URI
+								</span>
+								<input
+									type="url"
+									bind:value={selectedConnectionUri}
+									placeholder="http://192.168.1.50:32400"
+									class="rounded-lg border border-border-strong bg-canvas px-3 py-2 font-mono text-xs text-fg-primary focus:border-cyan focus:outline-none"
+								/>
+							</label>
+						</div>
+					{/if}
+
+					<Button
+						variant="primary"
+						size="lg"
+						disabled={!selectedMachineId || !selectedConnectionUri.trim()}
+						onclick={handleConfirmServerSelection}
+						class="mt-1 w-full"
+					>
+						Save & Connect Server
+					</Button>
+				</div>
+			{/if}
+		{:else if wizardStep === 'done' && selectResult}
+			<div class="flex flex-col items-center gap-3 rounded-xl border border-direct-play/50 bg-direct-play-soft p-5 text-center">
+				<CheckCircle2 class="h-7 w-7 text-direct-play" />
+				<div>
+					<p class="font-heading text-sm font-semibold text-fg-primary">
+						{selectResult.serverName} Saved
+					</p>
+					<p class="mt-1 font-mono text-[11px] text-fg-secondary">{selectResult.baseUrl}</p>
+					<p class="mt-2 text-xs text-fg-secondary">
+						{#if selectResult.envOverrideActive}
+							Encrypted credentials were saved to the database, but static environment variables remain active.
+						{:else if selectResult.hotReloaded}
+							Miru hot-reloaded the live Plex pipeline without restarting.
+						{:else}
+							Credentials saved.
+						{/if}
+					</p>
+				</div>
+				<Button variant="primary" size="md" onclick={() => handleWizardOpenChange(false)} class="w-full">
+					Done
+				</Button>
+			</div>
+		{/if}
+	</div>
+</Sheet>
 
 <!-- Create Account Sheet -->
 <Sheet bind:open={createAccountOpen} onOpenChange={(v) => (createAccountOpen = v)} title="Create Local Account">

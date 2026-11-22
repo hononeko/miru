@@ -7,6 +7,7 @@ import app.hononeko.miru.persistence.model.MediaServerRecord
 import app.hononeko.miru.persistence.table.MediaServersTable
 import arrow.core.Either
 import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.coalesce
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
@@ -17,6 +18,15 @@ import java.sql.SQLException
 
 interface MediaServerRepository {
     suspend fun upsert(server: MediaServerRecord): Either<MiruError.PersistenceError, MediaServerRecord>
+
+    suspend fun updateCredentials(
+        id: String,
+        name: String,
+        baseUrl: String,
+        encryptedToken: String?,
+        clientIdentifier: String?,
+        updatedAtMs: Long = System.currentTimeMillis(),
+    ): Either<MiruError.PersistenceError, MediaServerRecord?>
 
     suspend fun findById(id: String): Either<MiruError.PersistenceError, MediaServerRecord?>
 
@@ -40,6 +50,12 @@ class ExposedMediaServerRepository(
                     it[serverType] = server.serverType
                     it[machineId] = server.machineId
                     it[baseUrl] = server.baseUrl
+                    if (server.encryptedToken != null) {
+                        it[encryptedToken] = server.encryptedToken
+                    }
+                    if (server.clientIdentifier != null) {
+                        it[clientIdentifier] = server.clientIdentifier
+                    }
                     it[updatedAtMs] = server.updatedAtMs
                 }
 
@@ -53,13 +69,24 @@ class ExposedMediaServerRepository(
             } else {
                 MediaServersTable.upsert(
                     MediaServersTable.machineId,
-                    onUpdateExclude = listOf(MediaServersTable.id, MediaServersTable.createdAtMs),
+                    onUpdate = {
+                        it[MediaServersTable.name] = insertValue(MediaServersTable.name)
+                        it[MediaServersTable.serverType] = insertValue(MediaServersTable.serverType)
+                        it[MediaServersTable.baseUrl] = insertValue(MediaServersTable.baseUrl)
+                        it[MediaServersTable.encryptedToken] =
+                            coalesce(insertValue(MediaServersTable.encryptedToken), MediaServersTable.encryptedToken)
+                        it[MediaServersTable.clientIdentifier] =
+                            coalesce(insertValue(MediaServersTable.clientIdentifier), MediaServersTable.clientIdentifier)
+                        it[MediaServersTable.updatedAtMs] = insertValue(MediaServersTable.updatedAtMs)
+                    },
                 ) {
                     it[id] = server.id
                     it[name] = server.name
                     it[serverType] = server.serverType
                     it[machineId] = server.machineId
                     it[baseUrl] = server.baseUrl
+                    it[encryptedToken] = server.encryptedToken
+                    it[clientIdentifier] = server.clientIdentifier
                     it[createdAtMs] = server.createdAtMs
                     it[updatedAtMs] = server.updatedAtMs
                 }
@@ -69,6 +96,34 @@ class ExposedMediaServerRepository(
                     .singleOrNull()
                     ?.toMediaServerRecord()
                     ?: throw SQLException("Upserted media server '${server.machineId}' could not be reloaded")
+            }
+        }
+
+    override suspend fun updateCredentials(
+        id: String,
+        name: String,
+        baseUrl: String,
+        encryptedToken: String?,
+        clientIdentifier: String?,
+        updatedAtMs: Long,
+    ): Either<MiruError.PersistenceError, MediaServerRecord?> =
+        database.exposedQuery("media_server_update_credentials") {
+            val updatedRows =
+                MediaServersTable.update({ MediaServersTable.id eq id }) {
+                    it[MediaServersTable.name] = name
+                    it[MediaServersTable.baseUrl] = baseUrl
+                    it[MediaServersTable.encryptedToken] = encryptedToken
+                    it[MediaServersTable.clientIdentifier] = clientIdentifier
+                    it[MediaServersTable.updatedAtMs] = updatedAtMs
+                }
+            if (updatedRows > 0) {
+                MediaServersTable
+                    .selectAll()
+                    .where { MediaServersTable.id eq id }
+                    .singleOrNull()
+                    ?.toMediaServerRecord()
+            } else {
+                null
             }
         }
 

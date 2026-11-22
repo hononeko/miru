@@ -1,8 +1,10 @@
 package app.hononeko.miru
 
+import app.hononeko.miru.adapter.plex.PlexOAuthClient
+import app.hononeko.miru.adapter.plex.PlexOAuthService
+import app.hononeko.miru.adapter.plex.PlexRuntimeManager
 import app.hononeko.miru.adapter.plex.RealtimeLifecycle
-import app.hononeko.miru.adapter.plex.buildPlexRuntime
-import app.hononeko.miru.adapter.plex.createLazyServerIdProvider
+import app.hononeko.miru.adapter.plex.createPlexHttpClient
 import app.hononeko.miru.artwork.ArtworkProxyService
 import app.hononeko.miru.artwork.createAvatarHttpClient
 import app.hononeko.miru.auth.Argon2idPasswordHasher
@@ -21,6 +23,7 @@ import app.hononeko.miru.http.healthRoutes
 import app.hononeko.miru.http.historyStatsRoutes
 import app.hononeko.miru.http.libraryRoutes
 import app.hononeko.miru.http.openApiRoutes
+import app.hononeko.miru.http.plexOAuthRoutes
 import app.hononeko.miru.http.respondError
 import app.hononeko.miru.http.staticWebRoutes
 import app.hononeko.miru.http.streamsAndUsersRoutes
@@ -31,9 +34,9 @@ import app.hononeko.miru.persistence.DatabaseFactory
 import app.hononeko.miru.persistence.DatabaseHandle
 import app.hononeko.miru.persistence.DatabaseReadinessCheck
 import app.hononeko.miru.persistence.repository.ExposedActiveSessionRepository
-import app.hononeko.miru.persistence.repository.ExposedApiKeyRepository
 import app.hononeko.miru.persistence.repository.ExposedAuthAccountRepository
 import app.hononeko.miru.persistence.repository.ExposedAuthSessionRepository
+import app.hononeko.miru.persistence.repository.ExposedApiKeyRepository
 import app.hononeko.miru.persistence.repository.ExposedLibraryRepository
 import app.hononeko.miru.persistence.repository.ExposedMediaServerRepository
 import app.hononeko.miru.persistence.repository.ExposedPlaybackHistoryRepository
@@ -100,6 +103,7 @@ fun main(args: Array<String>) {
 }
 
 private fun runServer() {
+    val appVersion = resolveAppVersion()
     val appConfig = loadStartupConfig()
     val databaseHandle = initDatabase(appConfig)
     val mediaServerRepository = ExposedMediaServerRepository(databaseHandle)
@@ -123,38 +127,52 @@ private fun runServer() {
             defaultWatchedThresholdPercent = appConfig.session.watchedThresholdPercent,
         )
 
-    val plexRuntime = initPlexRuntime(appConfig, databaseHandle, oidcClient)
-
-    val externalAvatarClient = createAvatarClientOrCleanup(plexRuntime, databaseHandle, oidcClient)
+    val plexRuntimeManager =
+        PlexRuntimeManager(
+            plexConfig = appConfig.plex,
+            databaseHandle = databaseHandle,
+            sessionConfig = appConfig.session,
+            mediaServerRepository = mediaServerRepository,
+        )
+    val externalAvatarClient = createClientOrCleanup(plexRuntimeManager, databaseHandle, oidcClient) { createAvatarHttpClient() }
+    val plexOAuthHttpClient =
+        createClientOrCleanup(plexRuntimeManager, databaseHandle, externalAvatarClient, oidcClient) { createPlexHttpClient() }
+    val plexOAuthService =
+        PlexOAuthService(
+            plexConfig = appConfig.plex,
+            oauthClient = PlexOAuthClient(httpClient = plexOAuthHttpClient, appVersion = appVersion),
+            mediaServerRepository = mediaServerRepository,
+            runtimeManager = plexRuntimeManager,
+        )
 
     val artworkProxyService =
         ArtworkProxyService(
-            adapter = plexRuntime.adapter,
+            adapter = plexRuntimeManager.adapter,
             userRepository = userRepository,
             externalAvatarClient = externalAvatarClient,
-            plexBaseUrl = appConfig.plex.baseUrl,
+            plexBaseUrlProvider = { plexRuntimeManager.currentBaseUrl() },
         )
     val streamsAndUsersService =
         StreamsAndUsersService(
             activeSessionRepository = ExposedActiveSessionRepository(databaseHandle),
             userRepository = userRepository,
             playbackHistoryRepository = playbackHistoryRepository,
-            liveTechnicalProvider = {
-                plexRuntime.sessionEngine?.currentLiveTechnical().orEmpty()
-            },
+            liveTechnicalProvider = { plexRuntimeManager.sessionEngine.currentLiveTechnical() },
         )
     val libraryRepository = ExposedLibraryRepository(databaseHandle)
     val libraryQueryService = LibraryQueryService(libraryRepository = libraryRepository)
     val libraryCollectorScope =
         CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("library-stats-collector"))
     val libraryStatsCollector =
-        createLibraryStatsCollector(
-            appConfig = appConfig,
-            databaseHandle = databaseHandle,
-            plexRuntime = plexRuntime,
+        LibraryStatsCollector(
+            adapter = plexRuntimeManager.adapter,
+            serverIdProvider = plexRuntimeManager.serverIdProvider,
             libraryRepository = libraryRepository,
             scope = libraryCollectorScope,
         )
+    plexRuntimeManager.setOnReloadLibrarySync {
+        libraryStatsCollector.syncFastCounts()
+    }
     val readinessChecks = listOf(NamedReadinessCheck("database", DatabaseReadinessCheck(databaseHandle)))
 
     val server =
@@ -163,94 +181,96 @@ private fun runServer() {
             port = appConfig.server.port,
             host = appConfig.server.host,
         ) {
-            monitor.subscribe(ApplicationStarted) {
-                logger.info("Starting library stats collector")
-                libraryStatsCollector.start()
-            }
-            monitor.subscribe(ApplicationStopping) {
-                logger.info("Stopping library stats collector")
-                runBlocking {
-                    withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { libraryStatsCollector.stop() }
-                        ?: logger.warn("Library stats collector did not stop within {}", REALTIME_SHUTDOWN_TIMEOUT)
-                }
-                libraryCollectorScope.cancel()
-            }
-            monitor.subscribe(ApplicationStopped) {
-                logger.info("Closing external avatar HTTP client, OIDC HTTP client, and database handle")
-                runCatching { externalAvatarClient.close() }
-                    .onFailure { err -> logger.warn("Failed to close external avatar HTTP client on shutdown: {}", err.message) }
-                runCatching { oidcClient?.close() }
-                    .onFailure { err -> logger.warn("Failed to close OIDC HTTP client on shutdown: {}", err.message) }
-                runCatching { databaseHandle.close() }
-                    .onFailure { err -> logger.warn("Failed to close database handle on shutdown: {}", err.message) }
-            }
+            registerLifecycleHandlers(
+                libraryStatsCollector = libraryStatsCollector,
+                libraryCollectorScope = libraryCollectorScope,
+                databaseHandle = databaseHandle,
+                plexOAuthHttpClient,
+                externalAvatarClient,
+                oidcClient,
+            )
             miruModule(
                 config = appConfig,
                 readinessChecks = readinessChecks,
-                realtime = plexRuntime.realtime,
+                appVersion = appVersion,
+                realtime = plexRuntimeManager,
                 authService = authService,
                 oidcAuthService = oidcAuthService,
                 artworkProxyService = artworkProxyService,
                 streamsAndUsersService = streamsAndUsersService,
-                sessionEvents = plexRuntime.sessionEngine?.sessionEvents,
+                sessionEvents = plexRuntimeManager.sessionEngine.sessionEvents,
                 historyAndStatsService = historyAndStatsService,
                 libraryQueryService = libraryQueryService,
                 librarySyncTrigger = libraryStatsCollector,
                 tautulliImporterService = tautulliImporterService,
+                plexOAuthService = plexOAuthService,
             )
         }
     try {
         server.start(wait = true)
     } catch (e: Throwable) {
-        cleanupAfterServerFailure(
+        cleanupOnStartupFailure(
             libraryStatsCollector = libraryStatsCollector,
-            plexRuntime = plexRuntime,
+            plexRuntimeManager = plexRuntimeManager,
             libraryCollectorScope = libraryCollectorScope,
-            externalAvatarClient = externalAvatarClient,
-            oidcClient = oidcClient,
             databaseHandle = databaseHandle,
+            plexOAuthHttpClient,
+            externalAvatarClient,
+            oidcClient,
         )
         throw e
     }
 }
 
-private fun initPlexRuntime(
-    appConfig: AppConfig,
-    databaseHandle: DatabaseHandle,
-    oidcClient: OidcClient?,
-): app.hononeko.miru.adapter.plex.PlexRuntime =
-    try {
-        buildPlexRuntime(
-            config = appConfig.plex,
-            databaseHandle = databaseHandle,
-            sessionConfig = appConfig.session,
-        )
-    } catch (e: Throwable) {
-        runCatching { oidcClient?.close() }
-            .onFailure { err -> logger.warn("Failed to close OIDC HTTP client after startup failure: {}", err.message) }
-        runCatching { databaseHandle.close() }
-            .onFailure { err -> logger.warn("Failed to close database handle after startup failure: {}", err.message) }
-        throw e
-    }
-
-@Suppress("LongParameterList")
-private fun cleanupAfterServerFailure(
+private fun Application.registerLifecycleHandlers(
     libraryStatsCollector: LibraryStatsCollector,
-    plexRuntime: app.hononeko.miru.adapter.plex.PlexRuntime,
     libraryCollectorScope: CoroutineScope,
-    externalAvatarClient: io.ktor.client.HttpClient,
-    oidcClient: OidcClient?,
     databaseHandle: DatabaseHandle,
+    vararg clients: AutoCloseable?,
+) {
+    monitor.subscribe(ApplicationStarted) {
+        logger.info("Starting library stats collector")
+        libraryStatsCollector.start()
+    }
+    monitor.subscribe(ApplicationStopping) {
+        logger.info("Stopping library stats collector")
+        runBlocking {
+            withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { libraryStatsCollector.stop() }
+                ?: logger.warn("Library stats collector did not stop within {}", REALTIME_SHUTDOWN_TIMEOUT)
+        }
+        libraryCollectorScope.cancel()
+    }
+    monitor.subscribe(ApplicationStopped) {
+        logger.info("Closing external HTTP clients and database handle")
+        clients.forEach { client ->
+            if (client != null) {
+                runCatching { client.close() }
+                    .onFailure { err -> logger.warn("Failed to close HTTP client on shutdown: {}", err.message) }
+            }
+        }
+        runCatching { databaseHandle.close() }
+            .onFailure { err -> logger.warn("Failed to close database handle on shutdown: {}", err.message) }
+    }
+}
+
+private fun cleanupOnStartupFailure(
+    libraryStatsCollector: LibraryStatsCollector,
+    plexRuntimeManager: PlexRuntimeManager,
+    libraryCollectorScope: CoroutineScope,
+    databaseHandle: DatabaseHandle,
+    vararg clients: AutoCloseable?,
 ) {
     runBlocking {
         withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { libraryStatsCollector.stop() }
-        withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { plexRuntime.realtime.stop() }
+        withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { plexRuntimeManager.stop() }
     }
     libraryCollectorScope.cancel()
-    runCatching { externalAvatarClient.close() }
-        .onFailure { err -> logger.warn("Failed to close external avatar HTTP client after server failure: {}", err.message) }
-    runCatching { oidcClient?.close() }
-        .onFailure { err -> logger.warn("Failed to close OIDC HTTP client after server failure: {}", err.message) }
+    clients.forEach { client ->
+        if (client != null) {
+            runCatching { client.close() }
+                .onFailure { err -> logger.warn("Failed to close HTTP client after server failure: {}", err.message) }
+        }
+    }
     runCatching { databaseHandle.close() }
         .onFailure { err -> logger.warn("Failed to close database handle after server failure: {}", err.message) }
 }
@@ -351,6 +371,7 @@ fun Application.miruModule(
     libraryQueryService: LibraryQueryService? = null,
     librarySyncTrigger: LibrarySyncTrigger? = null,
     tautulliImporterService: TautulliImporterService? = null,
+    plexOAuthService: PlexOAuthService? = null,
 ) {
     if (realtime != null) {
         monitor.subscribe(ApplicationStarted) {
@@ -377,48 +398,8 @@ fun Application.miruModule(
         filter { call -> call.request.path() != "/healthz" }
     }
 
-    if (config.server.corsAllowedOrigins.isNotEmpty()) {
-        install(CORS) {
-            config.server.corsAllowedOrigins.forEach { origin ->
-                val sanitized = origin.removePrefix("https://").removePrefix("http://")
-                val schemes =
-                    when {
-                        origin.startsWith("https://") -> listOf("https")
-                        origin.startsWith("http://") -> listOf("http")
-                        else -> listOf("http", "https")
-                    }
-                allowHost(sanitized, schemes = schemes)
-            }
-            allowCredentials = true
-            allowHeader(HttpHeaders.Authorization)
-            allowHeader(HttpHeaders.ContentType)
-            allowHeader("X-Api-Key")
-            allowMethod(HttpMethod.Options)
-            allowMethod(HttpMethod.Get)
-            allowMethod(HttpMethod.Post)
-            allowMethod(HttpMethod.Put)
-            allowMethod(HttpMethod.Patch)
-            allowMethod(HttpMethod.Delete)
-        }
-    }
-
-    install(StatusPages) {
-        exception<BadRequestException> { call, cause ->
-            call.respondError(
-                MiruError.ValidationError(
-                    message = cause.message ?: "Malformed request payload",
-                ),
-            )
-        }
-        exception<Throwable> { call, cause ->
-            call.respondError(
-                MiruError.InternalError(
-                    message = cause.message ?: "Unhandled server exception",
-                    cause = cause,
-                ),
-            )
-        }
-    }
+    installConfiguredCors(config.server.corsAllowedOrigins)
+    installDefaultStatusPages()
 
     val readinessService = ReadinessService(readinessChecks)
 
@@ -431,6 +412,13 @@ fun Application.miruModule(
                 authMode = config.auth.mode,
                 oidcAuthService = oidcAuthService,
             )
+            if (plexOAuthService != null) {
+                plexOAuthRoutes(
+                    plexOAuthService = plexOAuthService,
+                    authService = authService,
+                    authMode = config.auth.mode,
+                )
+            }
             if (artworkProxyService != null) {
                 artworkRoutes(
                     artworkProxyService = artworkProxyService,
@@ -475,44 +463,74 @@ fun Application.miruModule(
     }
 }
 
-private fun createAvatarClientOrCleanup(
-    plexRuntime: app.hononeko.miru.adapter.plex.PlexRuntime,
-    databaseHandle: app.hononeko.miru.persistence.DatabaseHandle,
-    oidcClient: OidcClient?,
-) = try {
-    createAvatarHttpClient()
-} catch (e: Throwable) {
-    runBlocking {
-        withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { plexRuntime.realtime.stop() }
+private fun Application.installConfiguredCors(allowedOrigins: List<String>) {
+    if (allowedOrigins.isEmpty()) return
+    install(CORS) {
+        allowedOrigins.forEach { origin ->
+            val sanitized = origin.removePrefix("https://").removePrefix("http://")
+            val schemes =
+                when {
+                    origin.startsWith("https://") -> listOf("https")
+                    origin.startsWith("http://") -> listOf("http")
+                    else -> listOf("http", "https")
+                }
+            allowHost(sanitized, schemes = schemes)
+        }
+        allowCredentials = true
+        allowHeader(HttpHeaders.Authorization)
+        allowHeader(HttpHeaders.ContentType)
+        allowHeader("X-Api-Key")
+        allowMethod(HttpMethod.Options)
+        allowMethod(HttpMethod.Get)
+        allowMethod(HttpMethod.Post)
+        allowMethod(HttpMethod.Put)
+        allowMethod(HttpMethod.Patch)
+        allowMethod(HttpMethod.Delete)
     }
-    runCatching { oidcClient?.close() }
-        .onFailure { err -> logger.warn("Failed to close OIDC HTTP client after startup failure: {}", err.message) }
-    runCatching { databaseHandle.close() }
-        .onFailure { err -> logger.warn("Failed to close database handle after startup failure: {}", err.message) }
-    throw e
 }
 
-private fun createLibraryStatsCollector(
-    appConfig: AppConfig,
-    databaseHandle: app.hononeko.miru.persistence.DatabaseHandle,
-    plexRuntime: app.hononeko.miru.adapter.plex.PlexRuntime,
-    libraryRepository: ExposedLibraryRepository,
-    scope: CoroutineScope,
-): LibraryStatsCollector {
-    val serverIdProvider =
-        plexRuntime.serverIdProvider
-            ?: createLazyServerIdProvider(
-                adapter = plexRuntime.adapter,
-                baseUrl = appConfig.plex.baseUrl,
-                mediaServerRepository = ExposedMediaServerRepository(databaseHandle),
+private fun Application.installDefaultStatusPages() {
+    install(StatusPages) {
+        exception<BadRequestException> { call, cause ->
+            call.respondError(
+                MiruError.ValidationError(
+                    message = cause.message ?: "Malformed request payload",
+                ),
             )
-    return LibraryStatsCollector(
-        adapter = plexRuntime.adapter,
-        serverIdProvider = serverIdProvider,
-        libraryRepository = libraryRepository,
-        scope = scope,
-    )
+        }
+        exception<Throwable> { call, cause ->
+            call.respondError(
+                MiruError.InternalError(
+                    message = cause.message ?: "Unhandled server exception",
+                    cause = cause,
+                ),
+            )
+        }
+    }
 }
+
+private inline fun <T> createClientOrCleanup(
+    realtime: RealtimeLifecycle,
+    databaseHandle: DatabaseHandle,
+    vararg extraClosables: AutoCloseable?,
+    factory: () -> T,
+): T =
+    try {
+        factory()
+    } catch (e: Throwable) {
+        runBlocking {
+            withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { realtime.stop() }
+        }
+        extraClosables.forEach { closeable ->
+            if (closeable != null) {
+                runCatching { closeable.close() }
+                    .onFailure { err -> logger.warn("Failed to close resource after startup failure: {}", err.message) }
+            }
+        }
+        runCatching { databaseHandle.close() }
+            .onFailure { err -> logger.warn("Failed to close database handle after startup failure: {}", err.message) }
+        throw e
+    }
 
 private fun resolveAppVersion(): String =
     object {}::class.java.`package`?.implementationVersion ?: "0.1.0-dev"

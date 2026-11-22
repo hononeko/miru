@@ -1,5 +1,6 @@
 package app.hononeko.miru.config
 
+import app.hononeko.miru.auth.CredentialCrypto
 import app.hononeko.miru.domain.error.MiruError
 import arrow.core.Either
 import arrow.core.raise.either
@@ -37,13 +38,20 @@ sealed interface DatabaseConfig {
 }
 
 data class PlexConfig(
-    val baseUrl: String,
-    val token: String,
+    val baseUrl: String = "",
+    val token: String = "",
     val pollIntervalSeconds: Int = 20,
     val websocketEnabled: Boolean = true,
+    val encryptionKey: String? = null,
+    val clientIdentifier: String? = null,
 ) {
+    val isStaticConfigured: Boolean
+        get() = baseUrl.isNotBlank() && token.isNotBlank()
+
     override fun toString(): String =
-        "PlexConfig(baseUrl=$baseUrl, token=***, pollIntervalSeconds=$pollIntervalSeconds, websocketEnabled=$websocketEnabled)"
+        "PlexConfig(baseUrl=$baseUrl, token=***, pollIntervalSeconds=$pollIntervalSeconds, " +
+            "websocketEnabled=$websocketEnabled, encryptionKey=${if (encryptionKey != null) "***" else "null"}, " +
+            "clientIdentifier=$clientIdentifier)"
 }
 
 data class SessionConfig(
@@ -269,13 +277,15 @@ object AppConfigLoader {
         errors: MutableMap<String, String>,
     ): PlexConfig {
         val baseUrl = get("PLEX_URL", "miru.plex.baseUrl", null).orEmpty().trimEnd('/')
-        if (baseUrl.isBlank() || !isValidHttpUrl(baseUrl)) {
+        val token = get("PLEX_TOKEN", "miru.plex.token", null).orEmpty()
+
+        if (baseUrl.isNotBlank() && !isValidHttpUrl(baseUrl)) {
             errors["PLEX_URL"] = "must be a valid http:// or https:// URL"
         }
-
-        val token = get("PLEX_TOKEN", "miru.plex.token", null).orEmpty()
-        if (token.isBlank()) {
-            errors["PLEX_TOKEN"] = "is required"
+        if (baseUrl.isNotBlank() && token.isBlank()) {
+            errors["PLEX_TOKEN"] = "is required when PLEX_URL is set"
+        } else if (baseUrl.isBlank() && token.isNotBlank()) {
+            errors["PLEX_URL"] = "is required when PLEX_TOKEN is set"
         }
 
         val pollRaw = get("PLEX_POLL_INTERVAL_SECONDS", "miru.plex.pollIntervalSeconds", null) ?: "20"
@@ -290,11 +300,20 @@ object AppConfigLoader {
             errors["PLEX_WEBSOCKET_ENABLED"] = "must be 'true' or 'false'"
         }
 
+        val encryptionKey = get("MIRU_ENCRYPTION_KEY", "miru.security.encryptionKey", null)
+        if (encryptionKey != null && encryptionKey.length < CredentialCrypto.MIN_KEY_LENGTH) {
+            errors["MIRU_ENCRYPTION_KEY"] = "must be at least ${CredentialCrypto.MIN_KEY_LENGTH} characters when set"
+        }
+
+        val clientIdentifier = get("PLEX_CLIENT_IDENTIFIER", "miru.plex.clientIdentifier", null)
+
         return PlexConfig(
             baseUrl = baseUrl,
             token = token,
             pollIntervalSeconds = pollSeconds ?: 20,
             websocketEnabled = wsEnabled ?: true,
+            encryptionKey = encryptionKey,
+            clientIdentifier = clientIdentifier,
         )
     }
 

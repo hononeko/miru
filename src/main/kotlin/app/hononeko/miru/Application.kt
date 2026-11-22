@@ -2,6 +2,8 @@ package app.hononeko.miru
 
 import app.hononeko.miru.adapter.plex.RealtimeLifecycle
 import app.hononeko.miru.adapter.plex.buildPlexRuntime
+import app.hononeko.miru.artwork.ArtworkProxyService
+import app.hononeko.miru.artwork.createAvatarHttpClient
 import app.hononeko.miru.auth.Argon2idPasswordHasher
 import app.hononeko.miru.auth.AuthService
 import app.hononeko.miru.config.AppConfig
@@ -9,6 +11,7 @@ import app.hononeko.miru.config.AppConfigLoader
 import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.health.NamedReadinessCheck
 import app.hononeko.miru.health.ReadinessService
+import app.hononeko.miru.http.artworkRoutes
 import app.hononeko.miru.http.authRoutes
 import app.hononeko.miru.http.healthRoutes
 import app.hononeko.miru.http.openApiRoutes
@@ -94,12 +97,13 @@ fun main() {
                 ifRight = { it },
             )
 
+    val userRepository = ExposedUserRepository(databaseHandle)
     val authService =
         AuthService(
             accountRepository = ExposedAuthAccountRepository(databaseHandle),
             sessionRepository = ExposedAuthSessionRepository(databaseHandle),
             apiKeyRepository = ExposedApiKeyRepository(databaseHandle),
-            userRepository = ExposedUserRepository(databaseHandle),
+            userRepository = userRepository,
             passwordHasher = Argon2idPasswordHasher(),
             authConfig = appConfig.auth,
         )
@@ -125,6 +129,26 @@ fun main() {
             throw e
         }
 
+    val externalAvatarClient =
+        try {
+            createAvatarHttpClient()
+        } catch (e: Throwable) {
+            runBlocking {
+                withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { plexRuntime.realtime.stop() }
+            }
+            runCatching { databaseHandle.close() }
+                .onFailure { err -> logger.warn("Failed to close database handle after startup failure: {}", err.message) }
+            throw e
+        }
+
+    val artworkProxyService =
+        ArtworkProxyService(
+            adapter = plexRuntime.adapter,
+            userRepository = userRepository,
+            externalAvatarClient = externalAvatarClient,
+            plexBaseUrl = appConfig.plex.baseUrl,
+        )
+
     val readinessChecks = listOf(NamedReadinessCheck("database", DatabaseReadinessCheck(databaseHandle)))
 
     val server =
@@ -134,7 +158,9 @@ fun main() {
             host = appConfig.server.host,
         ) {
             monitor.subscribe(ApplicationStopped) {
-                logger.info("Closing database handle")
+                logger.info("Closing external avatar HTTP client and database handle")
+                runCatching { externalAvatarClient.close() }
+                    .onFailure { err -> logger.warn("Failed to close external avatar HTTP client on shutdown: {}", err.message) }
                 runCatching { databaseHandle.close() }
                     .onFailure { err -> logger.warn("Failed to close database handle on shutdown: {}", err.message) }
             }
@@ -143,6 +169,7 @@ fun main() {
                 readinessChecks = readinessChecks,
                 realtime = plexRuntime.realtime,
                 authService = authService,
+                artworkProxyService = artworkProxyService,
             )
         }
     try {
@@ -151,6 +178,8 @@ fun main() {
         runBlocking {
             withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { plexRuntime.realtime.stop() }
         }
+        runCatching { externalAvatarClient.close() }
+            .onFailure { err -> logger.warn("Failed to close external avatar HTTP client after server failure: {}", err.message) }
         runCatching { databaseHandle.close() }
             .onFailure { err -> logger.warn("Failed to close database handle after server failure: {}", err.message) }
         throw e
@@ -163,6 +192,7 @@ fun Application.miruModule(
     appVersion: String = resolveAppVersion(),
     realtime: RealtimeLifecycle? = null,
     authService: AuthService? = null,
+    artworkProxyService: ArtworkProxyService? = null,
 ) {
     if (realtime != null) {
         monitor.subscribe(ApplicationStarted) {
@@ -239,6 +269,13 @@ fun Application.miruModule(
         openApiRoutes()
         if (authService != null) {
             authRoutes(authService = authService, authMode = config.auth.mode)
+            if (artworkProxyService != null) {
+                artworkRoutes(
+                    artworkProxyService = artworkProxyService,
+                    authService = authService,
+                    authMode = config.auth.mode,
+                )
+            }
         }
     }
 }

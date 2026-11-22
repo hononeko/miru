@@ -45,6 +45,7 @@ data class PlexConfig(
     val websocketEnabled: Boolean = true,
     val encryptionKey: String? = null,
     val clientIdentifier: String? = null,
+    val plexTvBaseUrl: String = DEFAULT_PLEX_TV_BASE_URL,
 ) {
     val isStaticConfigured: Boolean
         get() = baseUrl.isNotBlank() && token.isNotBlank()
@@ -52,7 +53,11 @@ data class PlexConfig(
     override fun toString(): String =
         "PlexConfig(baseUrl=$baseUrl, token=***, pollIntervalSeconds=$pollIntervalSeconds, " +
             "websocketEnabled=$websocketEnabled, encryptionKey=${if (encryptionKey != null) "***" else "null"}, " +
-            "clientIdentifier=$clientIdentifier)"
+            "clientIdentifier=$clientIdentifier, plexTvBaseUrl=$plexTvBaseUrl)"
+
+    companion object {
+        const val DEFAULT_PLEX_TV_BASE_URL = "https://plex.tv"
+    }
 }
 
 data class SessionConfig(
@@ -306,6 +311,12 @@ object AppConfigLoader {
         }
 
         val clientIdentifier = get("PLEX_CLIENT_IDENTIFIER", "miru.plex.clientIdentifier", null)
+        val plexTvBaseUrl =
+            (get("PLEX_TV_BASE_URL", "miru.plex.plexTvBaseUrl", null) ?: PlexConfig.DEFAULT_PLEX_TV_BASE_URL)
+                .trimEnd('/')
+        if (!isValidHttpUrl(plexTvBaseUrl)) {
+            errors["PLEX_TV_BASE_URL"] = "must be a valid http:// or https:// URL"
+        }
 
         return PlexConfig(
             baseUrl = baseUrl,
@@ -314,6 +325,7 @@ object AppConfigLoader {
             websocketEnabled = wsEnabled ?: true,
             encryptionKey = encryptionKey,
             clientIdentifier = clientIdentifier,
+            plexTvBaseUrl = plexTvBaseUrl,
         )
     }
 

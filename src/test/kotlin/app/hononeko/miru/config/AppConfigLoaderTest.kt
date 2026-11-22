@@ -27,6 +27,7 @@ class AppConfigLoaderTest :
             config.server.port shouldBe 8080
             config.database shouldBe DatabaseConfig.Sqlite("./data/miru.db")
             config.plex.baseUrl shouldBe "http://plex.local:32400"
+            config.plex.plexTvBaseUrl shouldBe "https://plex.tv"
             config.plex.pollIntervalSeconds shouldBe 20
             config.plex.websocketEnabled shouldBe true
             config.session.minPlayDurationSeconds shouldBe 120
@@ -305,5 +306,36 @@ class AppConfigLoaderTest :
             config.plex.encryptionKey shouldBe encKey
             config.plex.clientIdentifier shouldBe "miru-custom-client-id"
             config.toString() shouldNotContain encKey
+        }
+
+        test("loads and validates PLEX_TV_BASE_URL from env and HOCON") {
+            val fromEnv =
+                AppConfigLoader
+                    .load(
+                        env =
+                            baseSqliteEnv(
+                                mapOf("PLEX_TV_BASE_URL" to "http://127.0.0.1:19876/"),
+                            ),
+                    ).shouldBeRight()
+            fromEnv.plex.plexTvBaseUrl shouldBe "http://127.0.0.1:19876"
+            fromEnv.plex.toString() shouldNotContain "super-secret-plex-token"
+
+            val fromHocon =
+                AppConfigLoader
+                    .load(
+                        env = mapOf("AUTH_SESSION_SECRET" to validSecret),
+                        hocon = MapApplicationConfig("miru.plex.plexTvBaseUrl" to "http://plex-tv.internal:8080/"),
+                    ).shouldBeRight()
+            fromHocon.plex.plexTvBaseUrl shouldBe "http://plex-tv.internal:8080"
+
+            val invalid =
+                AppConfigLoader
+                    .load(
+                        env =
+                            baseSqliteEnv(
+                                mapOf("PLEX_TV_BASE_URL" to "ftp://invalid.plex.tv"),
+                            ),
+                    ).shouldBeLeft()
+            invalid.fieldErrors.keys shouldBe setOf("PLEX_TV_BASE_URL")
         }
     })

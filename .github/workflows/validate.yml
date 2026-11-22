@@ -126,3 +126,53 @@ jobs:
           name: kover-reports
           path: build/reports/kover/
           if-no-files-found: ignore
+
+  e2e:
+    name: E2E (Playwright)
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Gradle & JDK
+        uses: hononeko/actions/gradle-setup@v1
+        with:
+          cache-read-only: "true"
+
+      - name: Build backend fat JAR
+        run: ./gradlew shadowJar --no-daemon
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.4.2"
+
+      - name: Install frontend dependencies
+        working-directory: web
+        run: bun install --frozen-lockfile
+
+      - name: Build static PWA bundle
+        working-directory: web
+        run: bun run build
+
+      - name: Install Playwright Chromium
+        working-directory: web
+        run: bunx playwright install --with-deps chromium
+
+      - name: Run Playwright E2E suite
+        working-directory: web
+        run: bun run test:e2e
+
+      - name: Upload Playwright report and failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: playwright-e2e-artifacts
+          path: |
+            web/playwright-report/
+            web/test-results/
+          if-no-files-found: ignore

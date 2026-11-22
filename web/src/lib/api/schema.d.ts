@@ -230,6 +230,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/imports/tautulli": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import historical users and playback history from a Tautulli SQLite database */
+        post: operations["importTautulliDatabase"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/media/{ratingKey}/thumb": {
         parameters: {
             query?: never;
@@ -1086,6 +1103,17 @@ export interface components {
             /** Format: int64 */
             syncedAtMs: number;
         };
+        TautulliImportResponse: {
+            dryRun: boolean;
+            serverId: string;
+            usersDiscovered: number;
+            usersUpserted: number;
+            historyRowsRead: number;
+            historyImported: number;
+            historySkippedDuplicate: number;
+            malformedRows: number;
+            warnings: string[];
+        };
     };
     responses: never;
     parameters: never;
@@ -1677,6 +1705,81 @@ export interface operations {
                 };
             };
             /** @description API key not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    importTautulliDatabase: {
+        parameters: {
+            query?: {
+                /** @description Preview import counts without mutating the database */
+                dryRun?: boolean;
+                /** @description Optional target Miru media server ID */
+                serverId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /**
+                     * Format: binary
+                     * @description Tautulli tautulli.db SQLite database file (max 256 MiB)
+                     */
+                    file: string;
+                    /** @description Optional form field override when dryRun query parameter is omitted */
+                    dryRun?: boolean;
+                    /** @description Optional target Miru media server ID when serverId query parameter is omitted */
+                    serverId?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Tautulli import or dry-run report */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TautulliImportResponse"];
+                };
+            };
+            /** @description Invalid upload, non-SQLite file, or missing Tautulli tables */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Target media server not found */
             404: {
                 headers: {
                     [name: string]: unknown;

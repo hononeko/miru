@@ -37,10 +37,16 @@ import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.update
 
+private const val IMPORT_KEY_QUERY_CHUNK_SIZE = 500
+
 interface PlaybackHistoryRepository {
     suspend fun insert(record: PlaybackHistoryRecord): Either<MiruError.PersistenceError, PlaybackHistoryRecord>
 
     suspend fun insertIfAbsentByImportKey(record: PlaybackHistoryRecord): Either<MiruError.PersistenceError, Boolean>
+
+    suspend fun insertBatchIfAbsentByImportKey(records: List<PlaybackHistoryRecord>): Either<MiruError.PersistenceError, Int>
+
+    suspend fun findExistingImportKeys(keys: Set<String>): Either<MiruError.PersistenceError, Set<String>>
 
     suspend fun findById(id: String): Either<MiruError.PersistenceError, PlaybackHistoryRecord?>
 
@@ -90,6 +96,39 @@ class ExposedPlaybackHistoryRepository(
         database.exposedQuery("playback_history_insert_if_absent") {
             PlaybackHistoryTable.insertIgnore { populateInsert(it, record) }.insertedCount > 0
         }
+
+    override suspend fun insertBatchIfAbsentByImportKey(
+        records: List<PlaybackHistoryRecord>,
+    ): Either<MiruError.PersistenceError, Int> {
+        if (records.isEmpty()) {
+            return Either.Right(0)
+        }
+        return database.exposedQuery("playback_history_insert_batch_if_absent") {
+            var inserted = 0
+            for (record in records) {
+                inserted += PlaybackHistoryTable.insertIgnore { populateInsert(it, record) }.insertedCount
+            }
+            inserted
+        }
+    }
+
+    override suspend fun findExistingImportKeys(keys: Set<String>): Either<MiruError.PersistenceError, Set<String>> {
+        if (keys.isEmpty()) {
+            return Either.Right(emptySet())
+        }
+        return database.exposedQuery("playback_history_find_existing_import_keys") {
+            val existing = linkedSetOf<String>()
+            for (chunk in keys.chunked(IMPORT_KEY_QUERY_CHUNK_SIZE)) {
+                PlaybackHistoryTable
+                    .select(PlaybackHistoryTable.externalImportKey)
+                    .where { PlaybackHistoryTable.externalImportKey inList chunk }
+                    .forEach { row ->
+                        row[PlaybackHistoryTable.externalImportKey]?.let { existing.add(it) }
+                    }
+            }
+            existing
+        }
+    }
 
     override suspend fun findById(id: String): Either<MiruError.PersistenceError, PlaybackHistoryRecord?> =
         database.exposedQuery("playback_history_find_by_id") {

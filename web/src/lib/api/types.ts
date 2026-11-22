@@ -47,5 +47,6 @@ export type RecentMediaItemResponse = Schemas['RecentMediaItemResponse'];
 export type RecentMediaListResponse = Schemas['RecentMediaListResponse'];
 export type LibrarySyncMode = Schemas['LibrarySyncMode'];
 export type LibrarySyncResponse = Schemas['LibrarySyncResponse'];
+export type TautulliImportResponse = Schemas['TautulliImportResponse'];
 
 export type StatsRange = '7d' | '30d' | '90d' | 'all';

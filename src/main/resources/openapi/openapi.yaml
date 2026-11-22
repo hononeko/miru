@@ -480,6 +480,79 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /api/v1/admin/imports/tautulli:
+    post:
+      tags: [Admin]
+      operationId: importTautulliDatabase
+      summary: Import historical users and playback history from a Tautulli SQLite database
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: dryRun
+          in: query
+          required: false
+          description: Preview import counts without mutating the database
+          schema:
+            type: boolean
+            default: false
+        - name: serverId
+          in: query
+          required: false
+          description: Optional target Miru media server ID
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Tautulli tautulli.db SQLite database file (max 256 MiB)
+                dryRun:
+                  type: boolean
+                  description: Optional form field override when dryRun query parameter is omitted
+                serverId:
+                  type: string
+                  description: Optional target Miru media server ID when serverId query parameter is omitted
+      responses:
+        '200':
+          description: Tautulli import or dry-run report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TautulliImportResponse'
+        '400':
+          description: Invalid upload, non-SQLite file, or missing Tautulli tables
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Target media server not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
   /api/v1/media/{ratingKey}/thumb:
     get:
       tags: [Artwork]
@@ -2690,3 +2763,37 @@ components:
         syncedAtMs:
           type: integer
           format: int64
+
+    TautulliImportResponse:
+      type: object
+      required:
+        - dryRun
+        - serverId
+        - usersDiscovered
+        - usersUpserted
+        - historyRowsRead
+        - historyImported
+        - historySkippedDuplicate
+        - malformedRows
+        - warnings
+      properties:
+        dryRun:
+          type: boolean
+        serverId:
+          type: string
+        usersDiscovered:
+          type: integer
+        usersUpserted:
+          type: integer
+        historyRowsRead:
+          type: integer
+        historyImported:
+          type: integer
+        historySkippedDuplicate:
+          type: integer
+        malformedRows:
+          type: integer
+        warnings:
+          type: array
+          items:
+            type: string

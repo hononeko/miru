@@ -12,6 +12,7 @@ import app.hononeko.miru.config.AppConfigLoader
 import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.health.NamedReadinessCheck
 import app.hononeko.miru.health.ReadinessService
+import app.hononeko.miru.http.adminImportRoutes
 import app.hononeko.miru.http.artworkRoutes
 import app.hononeko.miru.http.authRoutes
 import app.hononeko.miru.http.healthRoutes
@@ -21,6 +22,8 @@ import app.hononeko.miru.http.openApiRoutes
 import app.hononeko.miru.http.respondError
 import app.hononeko.miru.http.staticWebRoutes
 import app.hononeko.miru.http.streamsAndUsersRoutes
+import app.hononeko.miru.importer.TautulliCli
+import app.hononeko.miru.importer.TautulliImporterService
 import app.hononeko.miru.library.LibraryStatsCollector
 import app.hononeko.miru.persistence.DatabaseFactory
 import app.hononeko.miru.persistence.DatabaseHandle
@@ -83,12 +86,21 @@ val MiruJson: Json =
         explicitNulls = false
     }
 
-fun main() {
+fun main(args: Array<String>) {
     SLF4JBridgeHandler.removeHandlersForRootLogger()
     SLF4JBridgeHandler.install()
 
+    if (args.firstOrNull() == "import") {
+        exitProcess(TautulliCli.run(args.drop(1)))
+    }
+
+    runServer()
+}
+
+private fun runServer() {
     val appConfig = loadStartupConfig()
     val databaseHandle = initDatabase(appConfig)
+    val mediaServerRepository = ExposedMediaServerRepository(databaseHandle)
     val userRepository = ExposedUserRepository(databaseHandle)
     val playbackHistoryRepository = ExposedPlaybackHistoryRepository(databaseHandle)
     val authService = initAuthService(appConfig, databaseHandle, userRepository)
@@ -96,6 +108,14 @@ fun main() {
         HistoryAndStatsService(
             playbackHistoryRepository = playbackHistoryRepository,
             userRepository = userRepository,
+        )
+    val tautulliImporterService =
+        TautulliImporterService(
+            mediaServerRepository = mediaServerRepository,
+            userRepository = userRepository,
+            playbackHistoryRepository = playbackHistoryRepository,
+            fallbackBaseUrl = appConfig.plex.baseUrl,
+            defaultWatchedThresholdPercent = appConfig.session.watchedThresholdPercent,
         )
 
     val plexRuntime =
@@ -179,6 +199,7 @@ fun main() {
                 historyAndStatsService = historyAndStatsService,
                 libraryQueryService = libraryQueryService,
                 librarySyncTrigger = libraryStatsCollector,
+                tautulliImporterService = tautulliImporterService,
             )
         }
     try {
@@ -257,6 +278,7 @@ private fun initAuthService(
     return authService
 }
 
+@Suppress("LongParameterList")
 fun Application.miruModule(
     config: AppConfig,
     readinessChecks: List<NamedReadinessCheck> = emptyList(),
@@ -270,6 +292,7 @@ fun Application.miruModule(
     historyAndStatsService: HistoryAndStatsService? = null,
     libraryQueryService: LibraryQueryService? = null,
     librarySyncTrigger: LibrarySyncTrigger? = null,
+    tautulliImporterService: TautulliImporterService? = null,
 ) {
     if (realtime != null) {
         monitor.subscribe(ApplicationStarted) {
@@ -375,6 +398,14 @@ fun Application.miruModule(
                     librarySyncTrigger = librarySyncTrigger,
                     authService = authService,
                     authMode = config.auth.mode,
+                )
+            }
+            if (tautulliImporterService != null) {
+                adminImportRoutes(
+                    tautulliImporterService = tautulliImporterService,
+                    authService = authService,
+                    authMode = config.auth.mode,
+                    watchedThresholdPercent = config.session.watchedThresholdPercent,
                 )
             }
         }

@@ -9,6 +9,7 @@ export type ProblemDetails = Schemas['ProblemDetails'];
 export type MiruRole = Schemas['MiruRole'];
 export type AuthSource = Schemas['AuthSource'];
 export type AuthStatusResponse = Schemas['AuthStatusResponse'];
+export type AuthProvidersResponse = Schemas['AuthProvidersResponse'];
 export type PrincipalResponse = Schemas['PrincipalResponse'];
 export type AccountResponse = Schemas['AccountResponse'];
 export type AccountListResponse = Schemas['AccountListResponse'];

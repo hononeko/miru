@@ -1,6 +1,7 @@
 package app.hononeko.miru.http
 
 import app.hononeko.miru.auth.AccountWithLinks
+import app.hononeko.miru.auth.AuthProvidersInfo
 import app.hononeko.miru.auth.AuthSource
 import app.hononeko.miru.auth.MiruPrincipal
 import app.hononeko.miru.auth.MiruRole
@@ -10,6 +11,20 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class AuthStatusResponse(
     val authMode: String,
+    val setupRequired: Boolean,
+    val localEnabled: Boolean? = null,
+    val oidcEnabled: Boolean? = null,
+    val oidcDisplayName: String? = null,
+)
+
+@Serializable
+data class AuthProvidersResponse(
+    val authMode: String,
+    val localEnabled: Boolean,
+    val oidcEnabled: Boolean,
+    val oidcDisplayName: String,
+    val oidcLoginUrl: String? = null,
+    val oidcLogoutUrl: String? = null,
     val setupRequired: Boolean,
 )
 
@@ -49,6 +64,7 @@ data class AccountResponse(
     val email: String? = null,
     val role: MiruRole,
     val disabled: Boolean,
+    val authProvider: String,
     val linkedMediaUserIds: List<String>,
     val createdAtMs: Long,
     val updatedAtMs: Long,
@@ -121,6 +137,17 @@ internal fun MiruPrincipal.toResponse(): PrincipalResponse =
         authSource = authSource,
     )
 
+internal fun AuthProvidersInfo.toResponse(): AuthProvidersResponse =
+    AuthProvidersResponse(
+        authMode = authMode,
+        localEnabled = localEnabled,
+        oidcEnabled = oidcEnabled,
+        oidcDisplayName = oidcDisplayName,
+        oidcLoginUrl = oidcLoginUrl,
+        oidcLogoutUrl = oidcLogoutUrl,
+        setupRequired = setupRequired,
+    )
+
 internal fun AccountWithLinks.toResponse(): AccountResponse =
     AccountResponse(
         id = account.id,
@@ -128,6 +155,7 @@ internal fun AccountWithLinks.toResponse(): AccountResponse =
         email = account.email,
         role = if (account.role.equals("ADMIN", ignoreCase = true)) MiruRole.ADMIN else MiruRole.USER,
         disabled = account.disabled,
+        authProvider = account.authProvider,
         linkedMediaUserIds = linkedMediaUserIds.sorted(),
         createdAtMs = account.createdAtMs,
         updatedAtMs = account.updatedAtMs,

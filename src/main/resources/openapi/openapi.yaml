@@ -99,6 +99,103 @@ paths:
               schema:
                 $ref: '#/components/schemas/AuthStatusResponse'
 
+  /api/v1/auth/providers:
+    get:
+      tags: [Auth]
+      operationId: getAuthProviders
+      summary: Retrieve active authentication providers and SSO endpoints
+      responses:
+        '200':
+          description: Active authentication provider configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthProvidersResponse'
+
+  /api/v1/auth/oidc/login:
+    get:
+      tags: [Auth]
+      operationId: oidcLogin
+      summary: Initiate OIDC Authorization Code + PKCE login flow
+      responses:
+        '302':
+          description: Redirect to OIDC identity provider authorization endpoint
+        '409':
+          description: OIDC authentication is disabled
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '502':
+          description: OIDC discovery metadata unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/auth/oidc/callback:
+    get:
+      tags: [Auth]
+      operationId: oidcCallback
+      summary: Handle OIDC Authorization Code callback, verify ID token, and issue Miru session
+      parameters:
+        - name: code
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: error
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: error_description
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirect to application root on success or /login?error=... for HTML clients
+        '401':
+          description: Invalid OIDC state, nonce, or disabled account
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: User is not a member of an authorized Miru group
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: OIDC authentication is disabled
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '502':
+          description: OIDC token exchange, verification, or discovery failed
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/auth/oidc/logout:
+    get:
+      tags: [Auth]
+      operationId: oidcLogout
+      summary: Invalidate Miru session and redirect to OIDC RP-Initiated Logout endpoint if configured
+      responses:
+        '302':
+          description: Redirect to OIDC end_session_endpoint or /login
+
   /api/v1/auth/setup:
     post:
       tags: [Auth]
@@ -1469,7 +1566,38 @@ components:
       properties:
         authMode:
           type: string
-          enum: [local, none]
+          enum: [local, oidc, none]
+        setupRequired:
+          type: boolean
+        localEnabled:
+          type: boolean
+          nullable: true
+        oidcEnabled:
+          type: boolean
+          nullable: true
+        oidcDisplayName:
+          type: string
+          nullable: true
+
+    AuthProvidersResponse:
+      type: object
+      required: [authMode, localEnabled, oidcEnabled, oidcDisplayName, setupRequired]
+      properties:
+        authMode:
+          type: string
+          enum: [local, oidc, none]
+        localEnabled:
+          type: boolean
+        oidcEnabled:
+          type: boolean
+        oidcDisplayName:
+          type: string
+        oidcLoginUrl:
+          type: string
+          nullable: true
+        oidcLogoutUrl:
+          type: string
+          nullable: true
         setupRequired:
           type: boolean
 
@@ -1521,7 +1649,7 @@ components:
 
     AccountResponse:
       type: object
-      required: [id, username, role, disabled, linkedMediaUserIds, createdAtMs, updatedAtMs]
+      required: [id, username, role, disabled, authProvider, linkedMediaUserIds, createdAtMs, updatedAtMs]
       properties:
         id:
           type: string
@@ -1534,6 +1662,8 @@ components:
           $ref: '#/components/schemas/MiruRole'
         disabled:
           type: boolean
+        authProvider:
+          type: string
         linkedMediaUserIds:
           type: array
           items:

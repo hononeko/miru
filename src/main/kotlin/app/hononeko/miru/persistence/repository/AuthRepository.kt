@@ -13,6 +13,7 @@ import app.hononeko.miru.persistence.table.AuthSessionsTable
 import arrow.core.Either
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.lessEq
 import org.jetbrains.exposed.v1.core.longParam
@@ -28,6 +29,20 @@ interface AuthAccountRepository {
     suspend fun findById(id: String): Either<MiruError.PersistenceError, AuthAccountRecord?>
 
     suspend fun findByNormalizedUsername(usernameNormalized: String): Either<MiruError.PersistenceError, AuthAccountRecord?>
+
+    suspend fun findByProviderAndSubject(
+        authProvider: String,
+        externalSubject: String,
+    ): Either<MiruError.PersistenceError, AuthAccountRecord?>
+
+    suspend fun updateOidcProfile(
+        id: String,
+        username: String,
+        usernameNormalized: String,
+        email: String?,
+        role: String,
+        updatedAtMs: Long,
+    ): Either<MiruError.PersistenceError, AuthAccountRecord?>
 
     suspend fun findAll(): Either<MiruError.PersistenceError, List<AuthAccountRecord>>
 
@@ -98,6 +113,8 @@ class ExposedAuthAccountRepository(
                 it[passwordHash] = account.passwordHash
                 it[role] = account.role
                 it[disabled] = account.disabled
+                it[authProvider] = account.authProvider
+                it[externalSubject] = account.externalSubject
                 it[createdAtMs] = account.createdAtMs
                 it[updatedAtMs] = account.updatedAtMs
             }
@@ -122,6 +139,48 @@ class ExposedAuthAccountRepository(
                 .where { AuthAccountsTable.usernameNormalized eq usernameNormalized }
                 .singleOrNull()
                 ?.toAuthAccountRecord()
+        }
+
+    override suspend fun findByProviderAndSubject(
+        authProvider: String,
+        externalSubject: String,
+    ): Either<MiruError.PersistenceError, AuthAccountRecord?> =
+        database.exposedQuery("auth_account_find_by_provider_subject") {
+            AuthAccountsTable
+                .selectAll()
+                .where {
+                    (AuthAccountsTable.authProvider eq authProvider) and
+                        (AuthAccountsTable.externalSubject eq externalSubject)
+                }.singleOrNull()
+                ?.toAuthAccountRecord()
+        }
+
+    override suspend fun updateOidcProfile(
+        id: String,
+        username: String,
+        usernameNormalized: String,
+        email: String?,
+        role: String,
+        updatedAtMs: Long,
+    ): Either<MiruError.PersistenceError, AuthAccountRecord?> =
+        database.exposedQuery("auth_account_update_oidc_profile") {
+            val updated =
+                AuthAccountsTable.update({ AuthAccountsTable.id eq id }) {
+                    it[AuthAccountsTable.username] = username
+                    it[AuthAccountsTable.usernameNormalized] = usernameNormalized
+                    it[AuthAccountsTable.email] = email
+                    it[AuthAccountsTable.role] = role
+                    it[AuthAccountsTable.updatedAtMs] = updatedAtMs
+                }
+            if (updated <= 0) {
+                null
+            } else {
+                AuthAccountsTable
+                    .selectAll()
+                    .where { AuthAccountsTable.id eq id }
+                    .singleOrNull()
+                    ?.toAuthAccountRecord()
+            }
         }
 
     override suspend fun findAll(): Either<MiruError.PersistenceError, List<AuthAccountRecord>> =
@@ -313,6 +372,8 @@ private fun ResultRow.toAuthAccountRecord(): AuthAccountRecord =
         passwordHash = this[AuthAccountsTable.passwordHash],
         role = this[AuthAccountsTable.role],
         disabled = this[AuthAccountsTable.disabled],
+        authProvider = this[AuthAccountsTable.authProvider],
+        externalSubject = this[AuthAccountsTable.externalSubject],
         createdAtMs = this[AuthAccountsTable.createdAtMs],
         updatedAtMs = this[AuthAccountsTable.updatedAtMs],
     )

@@ -8,12 +8,15 @@ data class AuthAccountRecord(
     val passwordHash: String,
     val role: String,
     val disabled: Boolean = false,
+    val authProvider: String = "LOCAL",
+    val externalSubject: String? = null,
     val createdAtMs: Long,
     val updatedAtMs: Long,
 ) {
     override fun toString(): String =
         "AuthAccountRecord(id=$id, username=$username, usernameNormalized=$usernameNormalized, " +
             "email=$email, passwordHash=***, role=$role, disabled=$disabled, " +
+            "authProvider=$authProvider, externalSubject=$externalSubject, " +
             "createdAtMs=$createdAtMs, updatedAtMs=$updatedAtMs)"
 }
 

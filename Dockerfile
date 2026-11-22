@@ -1,5 +1,15 @@
 # syntax=docker/dockerfile:1
 
+# Build the SvelteKit static PWA bundle natively on the build host
+FROM --platform=$BUILDPLATFORM oven/bun:1.4.2-alpine AS web-build
+WORKDIR /web
+
+COPY web/package.json web/bun.lock ./
+RUN bun install --frozen-lockfile
+
+COPY web/ ./
+RUN bun run build
+
 # Bytecode is platform-independent: build natively, even for a cross-platform image
 FROM --platform=$BUILDPLATFORM eclipse-temurin:25.0.5_8-jdk-noble AS build
 WORKDIR /src
@@ -27,13 +37,15 @@ LABEL org.opencontainers.image.title="miru" \
 
 RUN groupadd --system --gid 10001 miru \
     && useradd --system --uid 10001 --gid miru --no-create-home miru \
-    && mkdir -p /data /opt/miru \
+    && mkdir -p /data /opt/miru/static \
     && chown -R 10001:10001 /data /opt/miru
 
 COPY --from=build --chown=10001:10001 /miru-all.jar /opt/miru/miru-all.jar
+COPY --from=web-build --chown=10001:10001 /web/build /opt/miru/static
 
 ENV MIRU_JAVA_OPTS="-XX:MaxRAMPercentage=75.0 -XX:+ExitOnOutOfMemoryError" \
-    SQLITE_PATH="/data/miru.db"
+    SQLITE_PATH="/data/miru.db" \
+    STATIC_WEB_DIR="/opt/miru/static"
 
 USER 10001:10001
 WORKDIR /data

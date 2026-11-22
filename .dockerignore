@@ -1,5 +1,7 @@
 **/build/
 **/.gradle/
+**/node_modules/
+**/.svelte-kit/
 .git/
 .github/
 .idea/

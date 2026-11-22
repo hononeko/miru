@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en" class="dark">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+		<meta name="theme-color" content="#090A0F" />
+		<meta
+			name="description"
+			content="Miru (見る) — Lightweight media server telemetry, live stream monitor, playback history tracker, and library analytics."
+		/>
+		<meta name="apple-mobile-web-app-capable" content="yes" />
+		<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+		<meta name="apple-mobile-web-app-title" content="Miru" />
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+		<link rel="manifest" href="/manifest.webmanifest" />
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
+		<link
+			rel="stylesheet"
+			href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Josefin+Sans:wght@600;700&family=Montserrat:wght@500;600;700&display=swap"
+		/>
+		<script>
+			(function () {
+				try {
+					const stored = localStorage.getItem('miru-theme');
+					const prefersLight =
+						!stored && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+					const theme = stored === 'light' || stored === 'dark' ? stored : prefersLight ? 'light' : 'dark';
+					document.documentElement.classList.toggle('dark', theme === 'dark');
+					const meta = document.querySelector('meta[name="theme-color"]');
+					if (meta) meta.setAttribute('content', theme === 'dark' ? '#090A0F' : '#F9FAFC');
+				} catch {
+					document.documentElement.classList.add('dark');
+				}
+			})();
+		</script>
+		%sveltekit.head%
+	</head>
+	<body data-sveltekit-preload-data="hover" class="bg-canvas text-fg-primary antialiased selection:bg-primary/25 selection:text-fg-primary">
+		<div style="display: contents">%sveltekit.body%</div>
+	</body>
+</html>

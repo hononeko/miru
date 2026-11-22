@@ -19,6 +19,22 @@ Copy `.env.example` to `.env` (git-ignored) and export your local settings, then
 ./gradlew run
 ```
 
+### Frontend (SvelteKit PWA)
+
+The decoupled SvelteKit 2 + Svelte 5 + Tailwind CSS v4 PWA lives under [`web/`](web/) and consumes a generated TypeScript client from `src/main/resources/openapi/openapi.yaml`:
+
+```sh
+cd web
+bun install
+bun run api:gen   # regenerate TypeScript types from OpenAPI spec
+bun run dev       # Vite dev server on :5173 (proxies /api, /healthz, /readyz to :8080)
+bun run check     # svelte-check + TypeScript validation
+bun run test      # Vitest unit tests
+bun run build     # builds static PWA bundle into web/build
+```
+
+In Docker builds, `web/build` is bundled into `/opt/miru/static` and served automatically by Ktor (`STATIC_WEB_DIR=/opt/miru/static`) with SPA fallback and immutable asset caching.
+
 ## System Endpoints
 
 - `GET /healthz` — liveness probe

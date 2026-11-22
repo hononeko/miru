@@ -1,0 +1,78 @@
+import { api, MiruApiError, unwrap } from '$api/client';
+import type { AuthStatusResponse, PrincipalResponse } from '$api/types';
+
+class AuthStore {
+	loading = $state(true);
+	authMode = $state<'local' | 'none'>('local');
+	setupRequired = $state(false);
+	principal = $state<PrincipalResponse | null>(null);
+	error = $state<string | null>(null);
+
+	get authenticated(): boolean {
+		return this.principal !== null;
+	}
+
+	get isAdmin(): boolean {
+		return this.principal?.role === 'ADMIN';
+	}
+
+	async init(): Promise<void> {
+		this.loading = true;
+		this.error = null;
+		try {
+			const status: AuthStatusResponse = unwrap(await api.GET('/api/v1/auth/status'));
+			this.authMode = status.authMode;
+			this.setupRequired = status.setupRequired;
+
+			if (!status.setupRequired) {
+				const meRes = await api.GET('/api/v1/auth/me');
+				if (meRes.data) {
+					this.principal = meRes.data;
+				} else {
+					this.principal = null;
+				}
+			} else {
+				this.principal = null;
+			}
+		} catch (e) {
+			this.error = e instanceof MiruApiError ? e.detail : 'Unable to reach Miru backend';
+			this.principal = null;
+		} finally {
+			this.loading = false;
+		}
+	}
+
+	async login(username: string, password: string): Promise<PrincipalResponse> {
+		const principal = unwrap(
+			await api.POST('/api/v1/auth/login', {
+				body: { username, password }
+			})
+		);
+		this.principal = principal;
+		this.setupRequired = false;
+		this.error = null;
+		return principal;
+	}
+
+	async setupAdmin(username: string, password: string, email?: string): Promise<PrincipalResponse> {
+		const principal = unwrap(
+			await api.POST('/api/v1/auth/setup', {
+				body: { username, password, email: email?.trim() || null }
+			})
+		);
+		this.principal = principal;
+		this.setupRequired = false;
+		this.error = null;
+		return principal;
+	}
+
+	async logout(): Promise<void> {
+		try {
+			await api.POST('/api/v1/auth/logout');
+		} finally {
+			this.principal = null;
+		}
+	}
+}
+
+export const authStore = new AuthStore();

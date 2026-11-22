@@ -1,19 +1,21 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Copy, Check, KeyRound, Plus, Trash2, Link2 } from 'lucide-svelte';
+	import { Copy, Check, KeyRound, Plus, Trash2, Link2, Upload, FileSpreadsheet, ChevronDown } from 'lucide-svelte';
 	import { api, MiruApiError, unwrap } from '$api/client';
 	import type {
 		AccountResponse,
 		ApiKeyResponse,
 		MiruRole,
+		ProblemDetails,
 		ReadinessResponse,
+		TautulliImportResponse,
 		UserSummaryDto
 	} from '$api/types';
 	import Badge from '$components/ui/Badge.svelte';
 	import Button from '$components/ui/Button.svelte';
 	import Sheet from '$components/ui/Sheet.svelte';
 	import { authStore } from '$stores/auth.svelte';
-	import { formatRelativeTime, safeInitial } from '$lib/utils';
+	import { formatBytes, formatRelativeTime, safeInitial } from '$lib/utils';
 
 	let accounts = $state<AccountResponse[]>([]);
 	let apiKeys = $state<ApiKeyResponse[]>([]);
@@ -45,6 +47,49 @@
 	let newKeyName = $state('');
 	let newKeyRole = $state<MiruRole>('USER');
 	let keySubmitting = $state(false);
+
+	// Tautulli Data Import
+	let selectedImportFile = $state<File | null>(null);
+	let importSubmitting = $state(false);
+	let importError = $state<string | null>(null);
+	let importReport = $state<TautulliImportResponse | null>(null);
+	let warningsOpen = $state(false);
+
+	function handleImportFileChange(e: Event) {
+		const input = e.currentTarget as HTMLInputElement;
+		selectedImportFile = input.files?.[0] ?? null;
+		importError = null;
+	}
+
+	async function runTautulliImport(dryRun: boolean) {
+		if (!selectedImportFile) return;
+		importSubmitting = true;
+		importError = null;
+		warningsOpen = false;
+		try {
+			const body = new FormData();
+			body.append('file', selectedImportFile);
+			const res = await fetch(`/api/v1/admin/imports/tautulli?dryRun=${dryRun}`, {
+				method: 'POST',
+				credentials: 'include',
+				body
+			});
+			const payload = await res.json().catch(() => null);
+			if (!res.ok) {
+				const problem =
+					payload && typeof payload === 'object' ? (payload as Partial<ProblemDetails>) : undefined;
+				throw new MiruApiError(res.status, problem);
+			}
+			importReport = payload as TautulliImportResponse;
+			if (!dryRun) {
+				await loadAll();
+			}
+		} catch (err) {
+			importError = err instanceof MiruApiError ? err.detail : 'Failed to import Tautulli database';
+		} finally {
+			importSubmitting = false;
+		}
+	}
 
 	async function loadAll() {
 		loading = true;
@@ -355,6 +400,140 @@
 						</div>
 					</div>
 				{/each}
+			</div>
+		{/if}
+	</section>
+
+	<!-- Data Import (Tautulli) -->
+	<section class="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
+		<div class="flex flex-wrap items-center justify-between gap-2">
+			<div>
+				<h2 class="font-heading text-sm font-semibold text-fg-primary">
+					Data Import (Tautulli)
+				</h2>
+				<p class="mt-0.5 text-[11px] text-fg-muted">
+					Upload a <span class="font-mono">tautulli.db</span> SQLite database to import historical users and playback sessions.
+				</p>
+			</div>
+			<Badge tone="neutral" mono>IDEMPOTENT · tautulli:&lt;id&gt;</Badge>
+		</div>
+
+		<div class="flex flex-col gap-3 rounded-xl border border-border bg-elevated p-3.5 sm:flex-row sm:items-center sm:justify-between">
+			<div class="flex min-w-0 flex-1 items-center gap-3">
+				<label class="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border-strong bg-canvas px-3 py-2 font-heading text-xs font-semibold text-fg-primary transition-colors hover:border-cyan">
+					<Upload class="h-3.5 w-3.5 text-cyan" />
+					<span>Choose .db File</span>
+					<input
+						type="file"
+						accept=".db,.sqlite,.sqlite3"
+						onchange={handleImportFileChange}
+						class="sr-only"
+					/>
+				</label>
+				{#if selectedImportFile}
+					<div class="min-w-0">
+						<p class="truncate font-mono text-xs font-semibold text-fg-primary">
+							{selectedImportFile.name}
+						</p>
+						<p class="font-mono text-[10px] text-fg-muted">
+							{formatBytes(selectedImportFile.size)}
+						</p>
+					</div>
+				{:else}
+					<span class="text-xs text-fg-muted">No database file selected</span>
+				{/if}
+			</div>
+
+			<div class="flex flex-wrap items-center gap-2">
+				<Button
+					variant="outline"
+					size="md"
+					disabled={!selectedImportFile || importSubmitting}
+					onclick={() => runTautulliImport(true)}
+				>
+					<FileSpreadsheet class="h-3.5 w-3.5" />
+					{importSubmitting ? 'Processing…' : 'Dry Run Preview'}
+				</Button>
+				<Button
+					variant="primary"
+					size="md"
+					disabled={!selectedImportFile || importSubmitting}
+					onclick={() => runTautulliImport(false)}
+				>
+					<Upload class="h-3.5 w-3.5" />
+					{importSubmitting ? 'Importing…' : 'Run Import'}
+				</Button>
+			</div>
+		</div>
+
+		{#if importError}
+			<div role="alert" class="rounded-xl border border-danger/50 bg-danger-soft px-4 py-3 text-xs text-danger">
+				{importError}
+			</div>
+		{/if}
+
+		{#if importReport}
+			<div class="flex flex-col gap-3 rounded-xl border border-border bg-elevated p-3.5">
+				<div class="flex flex-wrap items-center justify-between gap-2">
+					<div class="flex items-center gap-2">
+						<Badge tone={importReport.dryRun ? 'cyan' : 'direct-play'} dot>
+							{importReport.dryRun ? 'DRY RUN PREVIEW' : 'IMPORT COMPLETE'}
+						</Badge>
+						<span class="font-mono text-[11px] text-fg-muted">
+							Server: {importReport.serverId}
+						</span>
+					</div>
+					<span class="font-mono text-[11px] text-fg-muted">
+						Users upserted: {importReport.usersUpserted}
+					</span>
+				</div>
+
+				<div class="grid grid-cols-2 gap-2.5 sm:grid-cols-5">
+					<div class="rounded-lg border border-border bg-canvas px-3 py-2">
+						<p class="text-[10px] uppercase tracking-wider text-fg-muted">Users</p>
+						<p class="mt-0.5 font-mono text-base font-bold text-fg-primary">{importReport.usersDiscovered}</p>
+					</div>
+					<div class="rounded-lg border border-border bg-canvas px-3 py-2">
+						<p class="text-[10px] uppercase tracking-wider text-fg-muted">Rows Read</p>
+						<p class="mt-0.5 font-mono text-base font-bold text-fg-primary">{importReport.historyRowsRead}</p>
+					</div>
+					<div class="rounded-lg border border-border bg-canvas px-3 py-2">
+						<p class="text-[10px] uppercase tracking-wider text-fg-muted">
+							{importReport.dryRun ? 'Would Import' : 'Imported'}
+						</p>
+						<p class="mt-0.5 font-mono text-base font-bold text-direct-play">{importReport.historyImported}</p>
+					</div>
+					<div class="rounded-lg border border-border bg-canvas px-3 py-2">
+						<p class="text-[10px] uppercase tracking-wider text-fg-muted">Skipped Duplicates</p>
+						<p class="mt-0.5 font-mono text-base font-bold text-fg-secondary">{importReport.historySkippedDuplicate}</p>
+					</div>
+					<div class="rounded-lg border border-border bg-canvas px-3 py-2">
+						<p class="text-[10px] uppercase tracking-wider text-fg-muted">Malformed</p>
+						<p class={importReport.malformedRows > 0 ? 'mt-0.5 font-mono text-base font-bold text-danger' : 'mt-0.5 font-mono text-base font-bold text-fg-secondary'}>
+							{importReport.malformedRows}
+						</p>
+					</div>
+				</div>
+
+				{#if importReport.warnings.length > 0}
+					<div class="rounded-lg border border-border bg-canvas">
+						<button
+							type="button"
+							onclick={() => (warningsOpen = !warningsOpen)}
+							class="flex w-full cursor-pointer items-center justify-between px-3 py-2 text-left text-xs font-semibold text-fg-secondary hover:text-fg-primary"
+						>
+							<span>Warnings ({importReport.warnings.length})</span>
+							<ChevronDown class={warningsOpen ? 'h-4 w-4 rotate-180 transition-transform' : 'h-4 w-4 transition-transform'} />
+						</button>
+						{#if warningsOpen}
+							<ul class="flex flex-col gap-1 border-t border-border px-3 py-2 font-mono text-[11px] text-fg-muted">
+								{#each importReport.warnings as warning}
+									<li>• {warning}</li>
+								{/each}
+							</ul>
+						{/if}
+					</div>
+				{/if}
 			</div>
 		{/if}
 	</section>

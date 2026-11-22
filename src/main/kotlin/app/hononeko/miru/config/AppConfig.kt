@@ -69,6 +69,11 @@ data class AppConfig(
     val auth: AuthConfig,
 )
 
+data class DatabaseAndSessionConfig(
+    val database: DatabaseConfig,
+    val session: SessionConfig,
+)
+
 object AppConfigLoader {
     private const val MIN_SESSION_SECRET_LENGTH = 32
     private const val MIN_ADMIN_PASSWORD_LENGTH = 12
@@ -82,24 +87,13 @@ object AppConfigLoader {
     ): Either<MiruError.ValidationError, AppConfig> =
         either {
             val errors = linkedMapOf<String, String>()
+            val get = configLookup(env, hocon)
 
-            fun get(
-                envKey: String,
-                hoconPath: String,
-                fallbackEnvKey: String? = null,
-            ): String? {
-                val fromEnv =
-                    env[envKey]?.takeIf { it.isNotBlank() }
-                        ?: fallbackEnvKey?.let { env[it]?.takeIf { v -> v.isNotBlank() } }
-                if (fromEnv != null) return fromEnv.trim()
-                return hocon?.propertyOrNull(hoconPath)?.getString()?.trim()?.takeIf { it.isNotBlank() }
-            }
-
-            val server = parseServerConfig(::get, errors)
-            val database = parseDatabaseConfig(::get, errors)
-            val plex = parsePlexConfig(::get, errors)
-            val session = parseSessionConfig(::get, errors)
-            val auth = parseAuthConfig(::get, errors)
+            val server = parseServerConfig(get, errors)
+            val database = parseDatabaseConfig(get, errors)
+            val plex = parsePlexConfig(get, errors)
+            val session = parseSessionConfig(get, errors)
+            val auth = parseAuthConfig(get, errors)
 
             ensure(errors.isEmpty()) {
                 MiruError.ValidationError(
@@ -115,6 +109,45 @@ object AppConfigLoader {
                 session = session,
                 auth = auth,
             )
+        }
+
+    fun loadDatabaseAndSessionConfig(
+        env: Map<String, String> = System.getenv(),
+        hocon: ApplicationConfig? = null,
+    ): Either<MiruError.ValidationError, DatabaseAndSessionConfig> =
+        either {
+            val errors = linkedMapOf<String, String>()
+            val get = configLookup(env, hocon)
+
+            val database = parseDatabaseConfig(get, errors)
+            val session = parseSessionConfig(get, errors)
+
+            ensure(errors.isEmpty()) {
+                MiruError.ValidationError(
+                    message = "Invalid application configuration (${errors.size} error(s))",
+                    fieldErrors = errors.toMap(),
+                )
+            }
+
+            DatabaseAndSessionConfig(
+                database = database,
+                session = session,
+            )
+        }
+
+    private fun configLookup(
+        env: Map<String, String>,
+        hocon: ApplicationConfig?,
+    ): (String, String, String?) -> String? =
+        { envKey, hoconPath, fallbackEnvKey ->
+            val fromEnv =
+                env[envKey]?.takeIf { it.isNotBlank() }
+                    ?: fallbackEnvKey?.let { env[it]?.takeIf { v -> v.isNotBlank() } }
+            if (fromEnv != null) {
+                fromEnv.trim()
+            } else {
+                hocon?.propertyOrNull(hoconPath)?.getString()?.trim()?.takeIf { it.isNotBlank() }
+            }
         }
 
     private fun parseServerConfig(

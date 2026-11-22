@@ -2,6 +2,8 @@ package app.hononeko.miru.persistence
 
 import app.hononeko.miru.auth.MiruPrincipal
 import app.hononeko.miru.auth.MiruRole
+import app.hononeko.miru.importer.TautulliImportOptions
+import app.hononeko.miru.importer.TautulliImporterService
 import app.hononeko.miru.persistence.model.ActiveSessionKey
 import app.hononeko.miru.persistence.model.ActiveSessionRecord
 import app.hononeko.miru.persistence.model.ApiKeyRecord
@@ -46,10 +48,14 @@ import io.kotest.core.spec.style.funSpec
 import io.kotest.core.spec.style.scopes.FunSpecRootScope
 import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.collections.shouldContainExactly
+import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
+import java.nio.file.Files
+import java.nio.file.Path
+import java.sql.DriverManager
 import java.time.Instant
 import java.util.UUID
 
@@ -93,6 +99,7 @@ fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
         authSessionTests { ctx }
         apiKeyTests { ctx }
         historyAndStatsServiceTests { ctx }
+        tautulliBatchAndImporterTests { ctx }
     }
 
 private fun FunSpecRootScope.mediaServerTests(ctxProvider: () -> ContractContext) {
@@ -1191,3 +1198,108 @@ private fun sampleSnapshot(
         totalDurationMs = 120_000_000L,
         aggregatesJson = """{"4k":$itemCount}""",
     )
+
+private fun FunSpecRootScope.tautulliBatchAndImporterTests(ctxProvider: () -> ContractContext) {
+    context("Tautulli import batch & parity") {
+        test("insertBatchIfAbsentByImportKey and findExistingImportKeys handle chunking and duplicates") {
+            val ctx = ctxProvider()
+            ctx.servers.upsert(sampleServer(id = "srv-1")).shouldBeRight()
+            ctx.users.upsert(sampleUser(id = "u-1", serverId = "srv-1", externalUserId = "1")).shouldBeRight()
+
+            ctx.history.insertBatchIfAbsentByImportKey(emptyList()).shouldBeRight() shouldBe 0
+            ctx.history.findExistingImportKeys(emptySet()).shouldBeRight().shouldBeEmpty()
+
+            val batch =
+                (1..600).map { idx ->
+                    sampleHistory(
+                        id = "hist-batch-$idx",
+                        userId = "u-1",
+                        ratingKey = "rk-$idx",
+                        startedAtMs = 1_000L + idx,
+                        stoppedAtMs = 2_000L + idx,
+                        externalImportKey = "tautulli:$idx",
+                    )
+                }
+            ctx.history.insertBatchIfAbsentByImportKey(batch).shouldBeRight() shouldBe 600
+            ctx.history.insertBatchIfAbsentByImportKey(batch.take(50).map { it.copy(id = "dup-${it.id}") }).shouldBeRight() shouldBe 0
+
+            val lookupKeys = (550..650).map { "tautulli:$it" }.toSet() + (1..520).map { "tautulli:$it" }
+            val existing = ctx.history.findExistingImportKeys(lookupKeys).shouldBeRight()
+            existing shouldHaveSize 571
+            existing shouldContainExactlyInAnyOrder ((1..520).map { "tautulli:$it" } + (550..600).map { "tautulli:$it" })
+        }
+
+        test("TautulliImporterService imports idempotently on both SQLite and PostgreSQL") {
+            val ctx = ctxProvider()
+            val tempDir = Files.createTempDirectory("miru-contract-tautulli-")
+            try {
+                val dbFile = createMinimalContractTautulliDb(tempDir.resolve("tautulli.db"))
+                val importer =
+                    TautulliImporterService(
+                        mediaServerRepository = ctx.servers,
+                        userRepository = ctx.users,
+                        playbackHistoryRepository = ctx.history,
+                    )
+
+                val dryRun = importer.import(dbFile, TautulliImportOptions(dryRun = true)).shouldBeRight()
+                dryRun.dryRun shouldBe true
+                dryRun.historyImported shouldBe 2
+                dryRun.historySkippedDuplicate shouldBe 0
+                ctx.servers.findAll().shouldBeRight().shouldBeEmpty()
+
+                val first = importer.import(dbFile, TautulliImportOptions(dryRun = false)).shouldBeRight()
+                first.dryRun shouldBe false
+                first.usersDiscovered shouldBe 2
+                first.usersUpserted shouldBe 2
+                first.historyRowsRead shouldBe 3
+                first.historyImported shouldBe 2
+                first.historySkippedDuplicate shouldBe 0
+
+                val second = importer.import(dbFile, TautulliImportOptions(dryRun = false)).shouldBeRight()
+                second.historyImported shouldBe 0
+                second.historySkippedDuplicate shouldBe 2
+                ctx.history.query(HistoryFilter()).shouldBeRight().totalCount shouldBe 2L
+            } finally {
+                tempDir.toFile().deleteRecursively()
+            }
+        }
+    }
+}
+
+private fun createMinimalContractTautulliDb(path: Path): Path {
+    DriverManager.getConnection("jdbc:sqlite:${path.toAbsolutePath()}").use { conn ->
+        conn.createStatement().use { stmt ->
+            stmt.executeUpdate("CREATE TABLE users (user_id INTEGER, username TEXT, friendly_name TEXT)")
+            stmt.executeUpdate(
+                "CREATE TABLE session_history (id INTEGER PRIMARY KEY, reference_id INTEGER, started INTEGER, stopped INTEGER, " +
+                    "rating_key TEXT, user_id INTEGER, user TEXT, paused_counter INTEGER, view_offset INTEGER, media_type TEXT)",
+            )
+            stmt.executeUpdate(
+                "CREATE TABLE session_history_metadata (id INTEGER PRIMARY KEY, title TEXT, duration INTEGER)",
+            )
+            stmt.executeUpdate(
+                "CREATE TABLE session_history_media_info (id INTEGER PRIMARY KEY, transcode_decision TEXT)",
+            )
+            stmt.executeUpdate("INSERT INTO users (user_id, username, friendly_name) VALUES (1, 'alice', 'Alice')")
+            stmt.executeUpdate(
+                "INSERT INTO session_history (id, reference_id, started, stopped, rating_key, user_id, user, paused_counter, " +
+                    "view_offset, media_type) VALUES (1, 10, 1700000000, 1700001000, 'rk-1', 1, 'alice', 0, 950, 'movie')",
+            )
+            stmt.executeUpdate(
+                "INSERT INTO session_history (id, reference_id, started, stopped, rating_key, user_id, user, paused_counter, " +
+                    "view_offset, media_type) VALUES (2, 10, 1700001100, 1700002000, 'rk-1', 1, 'alice', 50, 1800, 'movie')",
+            )
+            stmt.executeUpdate(
+                "INSERT INTO session_history (id, reference_id, started, stopped, rating_key, user_id, user, paused_counter, " +
+                    "view_offset, media_type) VALUES (3, 20, 1700003000, 1700003600, 'rk-2', 99, 'guest', 10, 600, 'episode')",
+            )
+            stmt.executeUpdate("INSERT INTO session_history_metadata (id, title, duration) VALUES (1, 'Movie One', 2000)")
+            stmt.executeUpdate("INSERT INTO session_history_metadata (id, title, duration) VALUES (2, 'Movie One', 2000)")
+            stmt.executeUpdate("INSERT INTO session_history_metadata (id, title, duration) VALUES (3, 'Ep One', 1200)")
+            stmt.executeUpdate("INSERT INTO session_history_media_info (id, transcode_decision) VALUES (1, 'direct play')")
+            stmt.executeUpdate("INSERT INTO session_history_media_info (id, transcode_decision) VALUES (2, 'transcode')")
+            stmt.executeUpdate("INSERT INTO session_history_media_info (id, transcode_decision) VALUES (3, 'copy')")
+        }
+    }
+    return path
+}

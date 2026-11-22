@@ -98,7 +98,11 @@ object PlexMapper {
                     if (account.id == LOCAL_OWNER_ACCOUNT_ID) {
                         mergeOwnerAccount(account = account, plexTvUser = plexTvUser)
                     } else {
-                        mergeFriendAccount(account = account, friend = friendsById[account.id])
+                        val friend = friendsById[account.id]
+                        if (friend == null && isUnnamedOrPlaceholderAccount(account)) {
+                            return@forEach
+                        }
+                        mergeFriendAccount(account = account, friend = friend)
                     }
                 if (seenIds.add(mapped.externalId)) {
                     users += mapped
@@ -112,12 +116,22 @@ object PlexMapper {
         plexTvFriends
             .filter { it.id > 0L }
             .forEach { friend ->
+                val hasIdentity =
+                    !friend.username.isNullOrBlank() ||
+                        !friend.title.isNullOrBlank() ||
+                        !friend.email.isNullOrBlank()
+                if (!hasIdentity) return@forEach
                 if (seenIds.add(friend.id.toString())) {
                     users += mergeFriendAccount(account = null, friend = friend)
                 }
             }
 
         return users
+    }
+
+    private fun isUnnamedOrPlaceholderAccount(account: PlexAccountDto): Boolean {
+        val trimmedName = account.name?.trim().orEmpty()
+        return trimmedName.isEmpty() || trimmedName == account.id.toString()
     }
 
     fun resolveOwnerUser(

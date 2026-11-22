@@ -43,7 +43,7 @@ RUN groupadd --system --gid 10001 miru \
 COPY --from=build --chown=10001:10001 /miru-all.jar /opt/miru/miru-all.jar
 COPY --from=web-build --chown=10001:10001 /web/build /opt/miru/static
 
-ENV MIRU_JAVA_OPTS="-XX:MaxRAMPercentage=75.0 -XX:+ExitOnOutOfMemoryError" \
+ENV MIRU_JAVA_OPTS="-XX:MaxRAMPercentage=50.0 -XX:MinRAMPercentage=25.0 -XX:ReservedCodeCacheSize=64m -XX:MaxDirectMemorySize=64m -XX:+ExitOnOutOfMemoryError" \
     SQLITE_PATH="/data/miru.db" \
     STATIC_WEB_DIR="/opt/miru/static"
 

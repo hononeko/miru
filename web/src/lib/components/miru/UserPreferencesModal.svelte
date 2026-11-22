@@ -6,6 +6,7 @@
 	import { authStore } from '$stores/auth.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
 	import { themeStore } from '$stores/theme.svelte';
+	import { sheetDrag } from '$lib/actions/sheetDrag';
 	import type {
 		DateFormatPreference,
 		StatsRange,
@@ -145,9 +146,15 @@
 	onclose={handleDialogClose}
 	onpointerdown={handlePointerDown}
 	onpointerup={handlePointerUp}
+	use:sheetDrag={{ onDismiss: handleCancel }}
 	class="m-0 mt-auto w-full max-w-none rounded-t-2xl border-t border-border-strong bg-surface p-0 text-fg-primary shadow-2xl open:flex open:flex-col max-h-[90dvh] md:m-auto md:w-full md:max-w-lg md:rounded-2xl md:border"
 >
-	<div class="mx-auto mt-2.5 h-1 w-10 shrink-0 rounded-full bg-border-strong md:hidden"></div>
+	<div
+		data-sheet-drag-handle
+		class="flex shrink-0 cursor-grab touch-none justify-center pt-2.5 pb-1 active:cursor-grabbing md:hidden"
+	>
+		<div class="h-1 w-10 rounded-full bg-border-strong"></div>
+	</div>
 
 	<!-- Account Summary Header -->
 	<div class="flex items-start justify-between gap-3 border-b border-border px-5 py-4">

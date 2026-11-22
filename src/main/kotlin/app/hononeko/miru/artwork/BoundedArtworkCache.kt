@@ -3,9 +3,9 @@ package app.hononeko.miru.artwork
 import java.security.MessageDigest
 import java.util.HexFormat
 
-private const val DEFAULT_MAX_BYTES = 32L * 1024 * 1024
+private const val DEFAULT_MAX_BYTES = 16L * 1024 * 1024
 private const val DEFAULT_TTL_MS = 24L * 60 * 60 * 1000
-private const val DEFAULT_MAX_ENTRY_BYTES = 8L * 1024 * 1024
+private const val DEFAULT_MAX_ENTRY_BYTES = 4L * 1024 * 1024
 private const val ETAG_HEX_LENGTH = 32
 private const val INITIAL_CAPACITY = 16
 private const val LOAD_FACTOR = 0.75f

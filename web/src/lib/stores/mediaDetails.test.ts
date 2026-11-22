@@ -148,4 +148,65 @@ describe('MediaDetailsModalStore', () => {
 		expect(store2.isOpen).toBe(false);
 		expect(store2.data).toBeNull();
 	});
+
+	it('resolves series details when preferSeries is set for an episode', async () => {
+		const calls: string[] = [];
+		const store = new MediaDetailsModalStore(async (key) => {
+			calls.push(key);
+			if (key === '54000') {
+				return {
+					...makeDetails('54000', 'Breaking Bad'),
+					mediaType: 'show',
+					season: undefined
+				};
+			}
+			return makeDetails(key, 'Ozymandias');
+		});
+
+		await store.open('54321', { preferSeries: true });
+		expect(calls).toEqual(['54321', '54000']);
+		expect(store.ratingKey).toBe('54000');
+		expect(store.data?.mediaType).toBe('show');
+		expect(store.data?.title).toBe('Breaking Bad');
+		expect(store.error).toBeNull();
+	});
+
+	it('falls back to episode details if preferSeries secondary fetch fails', async () => {
+		const store = new MediaDetailsModalStore(async (key) => {
+			if (key === '54000') throw new Error('Series lookup failed');
+			return makeDetails(key, 'Ozymandias');
+		});
+
+		await store.open('54321', { preferSeries: true });
+		expect(store.ratingKey).toBe('54321');
+		expect(store.data?.title).toBe('Ozymandias');
+		expect(store.error).toBeNull();
+	});
+
+	it('ignores stale or closed state during preferSeries secondary fetch and skips extra fetch for shows/movies', async () => {
+		const seriesDeferred = deferred<MediaDetailsResponse>();
+		const store = new MediaDetailsModalStore(async (key) => {
+			if (key === '54000') return seriesDeferred.promise;
+			return makeDetails(key, 'Ozymandias');
+		});
+
+		const pending = store.open('54321', { preferSeries: true });
+		await Promise.resolve();
+		store.close();
+		seriesDeferred.resolve({
+			...makeDetails('54000', 'Breaking Bad'),
+			mediaType: 'show'
+		});
+		await pending;
+		expect(store.isOpen).toBe(false);
+		expect(store.data).toBeNull();
+
+		const movieCalls: string[] = [];
+		const movieStore = new MediaDetailsModalStore(async (key) => {
+			movieCalls.push(key);
+			return { ...makeDetails(key, 'Spirited Away'), mediaType: 'movie', series: undefined, season: undefined };
+		});
+		await movieStore.open('12345', { preferSeries: true });
+		expect(movieCalls).toEqual(['12345']);
+	});
 });

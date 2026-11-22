@@ -132,12 +132,19 @@ class PlexMediaServerAdapterTest :
             val (onlineAdapter, onlineRequests) =
                 adapterWithMock(plexTvBaseUrl = TEST_PLEX_TV_URL) { request ->
                     when (request.url.host) {
-                        "plex.tv" ->
+                        "plex.tv" -> {
+                            request.headers["X-Plex-Client-Identifier"] shouldBe "miru"
                             when (request.url.encodedPath) {
                                 "/api/v2/user" -> respondJson(PlexFixtures.plexTvUserJson)
-                                "/api/v2/friends" -> respondJson(PlexFixtures.plexTvFriendsJson)
+                                "/api/users" ->
+                                    respond(
+                                        content = PlexFixtures.plexTvUsersXml,
+                                        status = HttpStatusCode.OK,
+                                        headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Xml.toString()),
+                                    )
                                 else -> error("Unexpected plex.tv path: ${request.url}")
                             }
+                        }
 
                         else ->
                             when (request.url.encodedPath) {
@@ -154,6 +161,10 @@ class PlexMediaServerAdapterTest :
             owner.externalId shouldBe "99887766"
             owner.username shouldBe "kerrlab"
             owner.email shouldBe "alex@kerrlab.app"
+            val shared = users.first { it.externalId == "2002" }
+            shared.username shouldBe "yuki"
+            shared.email shouldBe "yuki@example.com"
+            shared.thumbUrl shouldBe "https://plex.tv/users/yuki/avatar"
 
             val session = onlineAdapter.fetchActiveSessions().shouldBeRight().single()
             session.user.externalId shouldBe "99887766"
@@ -185,7 +196,7 @@ class PlexMediaServerAdapterTest :
                     when {
                         request.url.host == "plex.tv" && request.url.encodedPath == "/api/v2/user" ->
                             respondJson(PlexFixtures.plexTvUserJson)
-                        request.url.host == "plex.tv" && request.url.encodedPath == "/api/v2/friends" ->
+                        request.url.host == "plex.tv" && request.url.encodedPath == "/api/users" ->
                             respond("upstream down", HttpStatusCode.ServiceUnavailable)
                         request.url.encodedPath == "/status/sessions" ->
                             respondJson(PlexFixtures.localOwnerSessionJson)
@@ -203,6 +214,24 @@ class PlexMediaServerAdapterTest :
             users shouldHaveSize 3
             users.first { it.isAdmin }.externalId shouldBe "99887766"
             users.first { it.externalId == "2002" }.email shouldBe null
+        }
+
+        test("excludes numeric ghost accounts and degrades gracefully on invalid /api/users XML without leaking token") {
+            val (adapter, _) =
+                adapterWithMock(plexTvBaseUrl = TEST_PLEX_TV_URL) { request ->
+                    when {
+                        request.url.host == "plex.tv" && request.url.encodedPath == "/api/v2/user" ->
+                            respondJson(PlexFixtures.plexTvUserJson)
+                        request.url.host == "plex.tv" && request.url.encodedPath == "/api/users" ->
+                            respond("<not-valid-xml-$TEST_TOKEN", HttpStatusCode.OK)
+                        request.url.encodedPath == "/accounts" ->
+                            respondJson(PlexFixtures.accountsWithNumericGhostsJson)
+                        else -> error("Unexpected path: ${request.url}")
+                    }
+                }
+
+            val users = adapter.fetchUsers().shouldBeRight()
+            users.map { it.externalId } shouldBe listOf("99887766", "3003")
         }
 
         test("does not poison owner cache when plex.tv fails transiently and recovers on subsequent poll") {

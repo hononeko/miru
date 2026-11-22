@@ -8,6 +8,7 @@ import app.hononeko.miru.adapter.MediaUser
 import app.hononeko.miru.adapter.PlaybackState
 import app.hononeko.miru.adapter.StreamDecision
 import app.hononeko.miru.adapter.StreamLocation
+import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.collections.shouldHaveSize
@@ -224,6 +225,65 @@ class PlexMapperTest :
             mapped[0].thumbUrl shouldBe "https://plex.tv/users/local-owner/avatar"
             mapped[1].externalId shouldBe "3003"
             mapped[1].thumbUrl shouldBe "https://plex.tv/users/managed/avatar"
+        }
+
+        test("filters unnamed and id-as-name numeric /accounts stubs while keeping plex.tv matches and managed users") {
+            val accounts =
+                MiruJson
+                    .decodeFromString<PlexAccountsResponse>(PlexFixtures.accountsWithNumericGhostsJson)
+                    .mediaContainer
+                    .account
+                    .orEmpty()
+            val tvUser = MiruJson.decodeFromString<PlexTvUserDto>(PlexFixtures.plexTvUserJson)
+            val tvFriends = PlexTvUsersXmlParser.parse(PlexFixtures.plexTvUsersXml)
+
+            val mapped = PlexMapper.mapUsers(accounts = accounts, plexTvUser = tvUser, plexTvFriends = tvFriends)
+            mapped.map { it.externalId to it.username } shouldBe
+                listOf(
+                    "99887766" to "kerrlab",
+                    "2002" to "yuki",
+                    "3003" to "managed_kid",
+                )
+
+            val offlineMapped = PlexMapper.mapUsers(accounts = accounts)
+            offlineMapped.map { it.externalId to it.username } shouldBe
+                listOf(
+                    "1" to "kerrlab",
+                    "3003" to "managed_kid",
+                )
+        }
+
+        test("PlexTvUsersXmlParser parses shared/managed users and rejects XXE DOCTYPE declarations") {
+            val parsed = PlexTvUsersXmlParser.parse(PlexFixtures.plexTvUsersXml)
+            parsed shouldHaveSize 2
+            parsed[0] shouldBe
+                PlexTvFriendDto(
+                    id = 2002L,
+                    uuid = "yuki-uuid-2",
+                    username = "yuki",
+                    title = "Yuki Tanaka",
+                    email = "yuki@example.com",
+                    thumb = "https://plex.tv/users/yuki/avatar",
+                )
+            parsed[1] shouldBe
+                PlexTvFriendDto(
+                    id = 3003L,
+                    uuid = null,
+                    username = null,
+                    title = "managed_kid",
+                    email = null,
+                    thumb = "https://plex.tv/users/managed/avatar",
+                )
+
+            val xxeXml =
+                """
+                <?xml version="1.0"?>
+                <!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
+                <MediaContainer><User id="2002" username="&xxe;" /></MediaContainer>
+                """.trimIndent()
+            shouldThrow<IllegalArgumentException> {
+                PlexTvUsersXmlParser.parse(xxeXml)
+            }
         }
 
         test("maps library sections and paginated library items") {

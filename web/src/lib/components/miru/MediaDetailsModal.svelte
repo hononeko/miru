@@ -18,6 +18,7 @@
 	import Badge from '$components/ui/Badge.svelte';
 	import Button from '$components/ui/Button.svelte';
 	import ProxiedImage from './ProxiedImage.svelte';
+	import { sheetDrag } from '$lib/actions/sheetDrag';
 	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
 	import {
 		formatBandwidthKbps,
@@ -92,7 +93,8 @@
 		if (!data) return null;
 		const candidate = data.artUrl ?? data.thumbUrl ?? data.series?.thumbUrl ?? null;
 		if (!candidate || candidate === artLoadFailedSrc) return null;
-		return candidate.startsWith('/api/v1/') ? candidate : null;
+		if (!candidate.startsWith('/api/v1/')) return null;
+		return candidate.includes('?') ? candidate : `${candidate}?w=960`;
 	});
 
 	const heroPosterSrc = $derived.by(() => {
@@ -179,11 +181,15 @@
 	bind:this={dialogEl}
 	aria-labelledby={titleId}
 	onclose={handleNativeClose}
+	use:sheetDrag={{ onDismiss: () => mediaDetailsModal.close() }}
 	{...({ closedby: 'any' } as Record<string, string>)}
 	class="media-details-dialog fixed inset-x-0 bottom-0 top-auto z-50 m-0 max-h-[90dvh] w-full max-w-none overflow-hidden rounded-t-2xl border-t border-border-strong bg-surface text-fg-primary shadow-2xl focus:outline-none md:inset-0 md:m-auto md:max-h-[88dvh] md:w-[calc(100%-2rem)] md:max-w-3xl md:rounded-2xl md:border"
 >
 	<!-- Mobile drag indicator -->
-	<div class="flex justify-center pt-2.5 pb-1 md:hidden">
+	<div
+		data-sheet-drag-handle
+		class="flex shrink-0 cursor-grab touch-none justify-center pt-2.5 pb-1 active:cursor-grabbing md:hidden"
+	>
 		<div class="h-1 w-10 rounded-full bg-border-strong"></div>
 	</div>
 
@@ -599,7 +605,7 @@
 							{/if}
 						</div>
 
-						{#if data.seriesPlaySummary && data.seriesPlaySummary.totalPlays > 0 && data.mediaType !== 'movie'}
+						{#if data.seriesPlaySummary && data.seriesPlaySummary.totalPlays > 0 && data.mediaType !== 'movie' && data.mediaType !== 'show'}
 							<div class="border-t border-border pt-2.5 text-[11px] text-fg-secondary">
 								<span class="font-heading font-semibold text-fg-primary">Series Total:</span>
 								{data.seriesPlaySummary.totalPlays} plays · {data.seriesPlaySummary.uniqueUsers} users ·

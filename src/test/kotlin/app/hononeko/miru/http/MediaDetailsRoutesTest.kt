@@ -410,6 +410,9 @@ class MediaDetailsRoutesTest :
                     show.mediaType shouldBe "show"
                     show.series.shouldNotBeNull().seasonCount shouldBe 5
                     show.season.shouldBeNull()
+                    show.playSummary.totalPlays shouldBe 3L
+                    show.playSummary.uniqueUsers shouldBe 2
+                    show.playSummary.lastWatchedUsername shouldBe "Bob"
                     show.seriesPlaySummary.shouldNotBeNull().totalPlays shouldBe 3L
                 }
             }
@@ -469,6 +472,26 @@ class MediaDetailsRoutesTest :
                     unlinkedEp.playSummary.uniqueUsers shouldBe 0
                     unlinkedEp.playSummary.lastWatchedUsername.shouldBeNull()
                     unlinkedEp.seriesPlaySummary.shouldNotBeNull().totalPlays shouldBe 0L
+
+                    val aliceShow =
+                        MiruJson.decodeFromString<MediaDetailsResponse>(
+                            client
+                                .get("/api/v1/media/54000") {
+                                    cookie(SESSION_COOKIE_NAME, aliceLogin.signedToken)
+                                }.also { it.status shouldBe HttpStatusCode.OK }
+                                .bodyAsText(),
+                        )
+                    aliceShow.playSummary.totalPlays shouldBe 1L
+
+                    val unlinkedShow =
+                        MiruJson.decodeFromString<MediaDetailsResponse>(
+                            client
+                                .get("/api/v1/media/54000") {
+                                    cookie(SESSION_COOKIE_NAME, unlinkedLogin.signedToken)
+                                }.also { it.status shouldBe HttpStatusCode.OK }
+                                .bodyAsText(),
+                        )
+                    unlinkedShow.playSummary.totalPlays shouldBe 0L
                 }
             }
         }

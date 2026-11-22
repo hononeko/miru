@@ -21,4 +21,4 @@ resources:
 
 images:
   - name: ghcr.io/hononeko/miru
-    newTag: 0.1.0-rc.24
+    newTag: 0.1.0

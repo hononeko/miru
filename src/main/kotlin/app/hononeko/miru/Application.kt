@@ -144,7 +144,7 @@ private fun runServer() {
     val plexOAuthService =
         PlexOAuthService(
             plexConfig = appConfig.plex,
-            oauthClient = PlexOAuthClient(httpClient = plexOAuthHttpClient, appVersion = appVersion),
+            oauthClient = PlexOAuthClient(plexOAuthHttpClient, appConfig.plex.plexTvBaseUrl, appVersion),
             mediaServerRepository = mediaServerRepository,
             runtimeManager = plexRuntimeManager,
         )

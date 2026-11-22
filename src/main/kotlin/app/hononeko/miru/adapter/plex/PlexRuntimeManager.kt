@@ -148,7 +148,7 @@ class PlexRuntimeManager(
     private val mediaServerRepository: MediaServerRepository = ExposedMediaServerRepository(databaseHandle),
     private val httpClientEngineFactory: () -> HttpClientEngine = { Java.create() },
     private val wsClientFactory: (() -> HttpClient)? = null,
-    private val plexTvBaseUrl: String? = PlexMediaServerAdapter.DEFAULT_PLEX_TV_BASE_URL,
+    private val plexTvBaseUrl: String? = plexConfig.plexTvBaseUrl,
     private val clock: () -> Long = System::currentTimeMillis,
     private val idGenerator: () -> String = { UUID.randomUUID().toString() },
 ) : RealtimeLifecycle {

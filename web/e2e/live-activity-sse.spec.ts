@@ -1,0 +1,139 @@
+import { expect, test } from '@playwright/test';
+import { startMockPlexServer, type MockPlexServer, type MockPlexSession } from './helpers/mock-plex';
+import {
+	E2E_ADMIN_PASSWORD,
+	E2E_ADMIN_USERNAME,
+	loginViaUi,
+	startMiruServer,
+	type MiruServer
+} from './helpers/miru-server';
+import { createTautulliFixture, type TautulliFixture } from './helpers/tautulli-fixture';
+
+test.describe('Live Activity SSE, stream lifecycle, KPI strip & Top Watched ranges', () => {
+	let mockPlex: MockPlexServer;
+	let miru: MiruServer;
+	let fixture: TautulliFixture;
+
+	test.beforeAll(async () => {
+		mockPlex = await startMockPlexServer({ serverName: 'Miru Lab Plex' });
+		miru = await startMiruServer({ mockPlex });
+		await mockPlex.waitForWsClient();
+
+		fixture = createTautulliFixture();
+		const adminCookie = await miru.apiLogin(E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
+		await miru.waitForUsers(adminCookie, 2);
+		await miru.apiImportTautulli(adminCookie, fixture.filePath, false);
+	});
+
+	test.afterAll(async () => {
+		fixture?.cleanup();
+		await miru?.stop();
+		await mockPlex?.stop();
+	});
+
+	test('streams update in real time over SSE (start, pause, unpause, stop) and Top Watched switches ranges', async ({
+		page
+	}) => {
+		await loginViaUi(page, miru.baseUrl, E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
+
+		// Verify SSE connected + server name displayed in sidebar
+		await expect(page.getByText('SSE connected')).toBeVisible();
+		await expect(page.locator('aside').first()).toContainText('Miru Lab Plex');
+		await expect(page.locator('aside').first()).toContainText('SSE');
+
+		const kpiSection = page.getByRole('region', { name: 'Key telemetry metrics' });
+		await expect(page.getByRole('heading', { name: 'Active Streams (0)' })).toBeVisible();
+		await expect(page.getByText('No active streams right now')).toBeVisible();
+		await expect(kpiSection).toContainText('0 playing · 0 paused');
+
+		const baseSession: MockPlexSession = {
+			sessionKey: 'live-sess-1',
+			sessionId: 'live-id-1',
+			ratingKey: '101',
+			type: 'movie',
+			title: 'Spirited Away',
+			year: 2001,
+			durationMs: 7_500_000,
+			viewOffsetMs: 1_200_000,
+			state: 'playing',
+			user: { id: '1001', title: 'alice' },
+			player: {
+				machineIdentifier: 'appletv-living-room',
+				product: 'Plex for Apple TV',
+				platform: 'tvOS',
+				device: 'Apple TV',
+				title: 'Living Room Apple TV',
+				address: '192.168.1.42',
+				local: true
+			},
+			bandwidthKbps: 8_500,
+			location: 'lan',
+			decision: 'direct_play',
+			videoResolution: '4k',
+			videoCodec: 'hevc',
+			audioCodec: 'eac3'
+		};
+
+		// 1. Stream start -> updates live over SSE without page reload
+		mockPlex.setActiveSessions([baseSession]);
+		mockPlex.pushPlayingNotification(baseSession.sessionKey, baseSession.ratingKey, 'playing', baseSession.viewOffsetMs);
+
+		const streamCard = page.locator('article').filter({ hasText: 'Spirited Away' });
+		await expect(page.getByRole('heading', { name: 'Active Streams (1)' })).toBeVisible();
+		await expect(streamCard).toBeVisible();
+		await expect(streamCard).toContainText('Playing');
+		await expect(streamCard).toContainText('Direct Play');
+		await expect(streamCard).toContainText('Alice Admin');
+		await expect(kpiSection).toContainText('1 playing · 0 paused');
+		await expect(kpiSection).toContainText('8.5 Mbps');
+
+		// 2. Stream pause -> updates live over SSE
+		const pausedSession: MockPlexSession = { ...baseSession, state: 'paused', viewOffsetMs: 1_500_000 };
+		mockPlex.setActiveSessions([pausedSession]);
+		mockPlex.pushPlayingNotification(pausedSession.sessionKey, pausedSession.ratingKey, 'paused', pausedSession.viewOffsetMs);
+
+		await expect(streamCard).toContainText('Paused');
+		await expect(kpiSection).toContainText('0 playing · 1 paused');
+
+		// 3. Stream unpause (resume playing) -> updates live over SSE
+		const resumedSession: MockPlexSession = { ...baseSession, state: 'playing', viewOffsetMs: 1_800_000 };
+		mockPlex.setActiveSessions([resumedSession]);
+		mockPlex.pushPlayingNotification(resumedSession.sessionKey, resumedSession.ratingKey, 'playing', resumedSession.viewOffsetMs);
+
+		await expect(streamCard).toContainText('Playing');
+		await expect(kpiSection).toContainText('1 playing · 0 paused');
+
+		// 4. Stream stop -> removes card and returns KPIs to 0
+		const stoppedSession: MockPlexSession = { ...baseSession, state: 'stopped', viewOffsetMs: 2_100_000 };
+		mockPlex.setActiveSessions([stoppedSession]);
+		mockPlex.pushPlayingNotification(stoppedSession.sessionKey, stoppedSession.ratingKey, 'stopped', stoppedSession.viewOffsetMs);
+
+		await expect(page.getByRole('heading', { name: 'Active Streams (0)' })).toBeVisible();
+		await expect(page.getByText('No active streams right now')).toBeVisible();
+		await expect(kpiSection).toContainText('0 playing · 0 paused');
+		mockPlex.setActiveSessions([]);
+
+		// 5. Top Watched range switching (7d -> 30d -> 90d -> all)
+		const topWatchedCard = page.locator('section').filter({ hasText: 'Top Watched' }).locator('> div').last();
+
+		await page.getByRole('tab', { name: '7d', exact: true }).click();
+		await expect(topWatchedCard.getByRole('heading', { name: 'Top Watched (7d)' })).toBeVisible();
+		await expect(topWatchedCard).toContainText('Spirited Away');
+		await expect(topWatchedCard).not.toContainText('Akira');
+		await expect(topWatchedCard).not.toContainText('Blade Runner 2049');
+
+		await page.getByRole('tab', { name: '30d', exact: true }).click();
+		await expect(topWatchedCard.getByRole('heading', { name: 'Top Watched (30d)' })).toBeVisible();
+		await expect(topWatchedCard).toContainText('Akira');
+		await expect(topWatchedCard).not.toContainText('Blade Runner 2049');
+
+		await page.getByRole('tab', { name: '90d', exact: true }).click();
+		await expect(topWatchedCard.getByRole('heading', { name: 'Top Watched (90d)' })).toBeVisible();
+		await expect(topWatchedCard).toContainText('Blade Runner 2049');
+
+		await page.getByRole('tab', { name: 'all', exact: true }).click();
+		await expect(topWatchedCard.getByRole('heading', { name: 'Top Watched (all)' })).toBeVisible();
+		await expect(topWatchedCard).toContainText('Severance');
+		await expect(kpiSection).toContainText('Direct Play (all)');
+	});
+});

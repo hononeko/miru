@@ -4,6 +4,19 @@ Lightweight media server telemetry, live stream monitor, playback history tracke
 
 Built with **Kotlin 2.4 / JDK 25**, **Ktor 3**, **Arrow-kt**, and dual **SQLite / PostgreSQL** persistence — exposing a versioned REST + SSE API (with OpenAPI 3.1 contract) for a decoupled frontend.
 
+## Screenshots
+
+### Desktop — Live Activity
+
+![Miru desktop dashboard showing live Plex streams, bandwidth, direct play ratio, watch time, session breakdown, plays per day, and top watched titles](docs/screenshots/dashboard-web.png)
+
+### Mobile PWA — Dark & Light Themes
+
+<p align="center">
+  <img src="docs/screenshots/dashboard-mobile-dark.png" alt="Miru mobile PWA dark theme showing Live Activity summary cards and active Plex streams" width="280" />
+  <img src="docs/screenshots/dashboard-mobile-light.png" alt="Miru mobile PWA light theme showing Live Activity summary cards and active Plex streams" width="280" />
+</p>
+
 ## Development
 
 Enable the `commit-msg` hook, which enforces [Conventional Commits](https://www.conventionalcommits.org/):

@@ -1890,6 +1890,9 @@ components:
             type: string
         authSource:
           $ref: '#/components/schemas/AuthSource'
+        avatarUrl:
+          type: string
+          nullable: true
 
     AccountResponse:
       type: object

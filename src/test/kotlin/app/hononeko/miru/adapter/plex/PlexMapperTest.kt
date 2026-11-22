@@ -210,6 +210,22 @@ class PlexMapperTest :
             onlineUsers[2].isAdmin shouldBe false
         }
 
+        test("captures thumbUrl from local /accounts for owner fallback and managed/home users") {
+            val accountsWithThumbs =
+                listOf(
+                    PlexAccountDto(id = 1L, name = "kerrlab", thumb = "https://plex.tv/users/local-owner/avatar"),
+                    PlexAccountDto(id = 3003L, name = "managed_kid", thumb = "https://plex.tv/users/managed/avatar"),
+                )
+            val tvUserWithoutThumb = PlexTvUserDto(id = 99887766L, username = "kerrlab", thumb = null)
+
+            val mapped = PlexMapper.mapUsers(accounts = accountsWithThumbs, plexTvUser = tvUserWithoutThumb)
+            mapped shouldHaveSize 2
+            mapped[0].externalId shouldBe "99887766"
+            mapped[0].thumbUrl shouldBe "https://plex.tv/users/local-owner/avatar"
+            mapped[1].externalId shouldBe "3003"
+            mapped[1].thumbUrl shouldBe "https://plex.tv/users/managed/avatar"
+        }
+
         test("maps library sections and paginated library items") {
             val sectionsResponse = MiruJson.decodeFromString<PlexLibrarySectionsResponse>(PlexFixtures.librarySectionsJson)
             val sections = PlexMapper.mapLibrarySections(sectionsResponse.mediaContainer)

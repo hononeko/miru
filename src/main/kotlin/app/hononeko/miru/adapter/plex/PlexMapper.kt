@@ -346,12 +346,15 @@ private fun mergeOwnerAccount(
         plexTvUser?.title?.takeIf { it.isNotBlank() }
             ?: account?.name?.takeIf { it.isNotBlank() }
             ?: username
+    val thumbUrl =
+        plexTvUser?.thumb?.trim()?.takeIf { it.isNotEmpty() }
+            ?: account?.thumb?.trim()?.takeIf { it.isNotEmpty() }
     return MediaUser(
         externalId = externalId,
         username = username,
         displayName = displayName,
-        email = plexTvUser?.email?.takeIf { it.isNotBlank() },
-        thumbUrl = plexTvUser?.thumb?.takeIf { it.isNotBlank() },
+        email = plexTvUser?.email?.trim()?.takeIf { it.isNotEmpty() },
+        thumbUrl = thumbUrl,
         isAdmin = true,
     )
 }
@@ -370,12 +373,15 @@ private fun mergeFriendAccount(
         friend?.title?.takeIf { it.isNotBlank() }
             ?: account?.name?.takeIf { it.isNotBlank() }
             ?: username
+    val thumbUrl =
+        friend?.thumb?.trim()?.takeIf { it.isNotEmpty() }
+            ?: account?.thumb?.trim()?.takeIf { it.isNotEmpty() }
     return MediaUser(
         externalId = externalId,
         username = username,
         displayName = displayName,
-        email = friend?.email?.takeIf { it.isNotBlank() },
-        thumbUrl = friend?.thumb?.takeIf { it.isNotBlank() },
+        email = friend?.email?.trim()?.takeIf { it.isNotEmpty() },
+        thumbUrl = thumbUrl,
         isAdmin = false,
     )
 }

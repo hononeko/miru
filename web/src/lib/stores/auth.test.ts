@@ -56,8 +56,9 @@ describe('AuthStore provider initialization and logout', () => {
 			username: 'sergiu',
 			email: 'sergiu@miru.local',
 			role: 'ADMIN',
-			linkedMediaUserIds: [],
-			authSource: 'SESSION_COOKIE'
+			linkedMediaUserIds: ['u-1'],
+			authSource: 'SESSION_COOKIE',
+			avatarUrl: '/api/v1/users/u-1/avatar'
 		};
 
 		vi.spyOn(api, 'GET')
@@ -75,6 +76,7 @@ describe('AuthStore provider initialization and logout', () => {
 		expect(store.oidcLogoutUrl).toBe('/api/v1/auth/oidc/logout');
 		expect(store.authenticated).toBe(true);
 		expect(store.isAdmin).toBe(true);
+		expect(store.principal?.avatarUrl).toBe('/api/v1/users/u-1/avatar');
 	});
 
 	it('loads hybrid local + OIDC mode and clears session via POST logout when OIDC disabled', async () => {

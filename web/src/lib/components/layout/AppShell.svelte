@@ -14,10 +14,11 @@
 	} from 'lucide-svelte';
 	import MiruLogo from './MiruLogo.svelte';
 	import Badge from '$components/ui/Badge.svelte';
+	import ProxiedImage from '$components/miru/ProxiedImage.svelte';
 	import { authStore } from '$stores/auth.svelte';
 	import { streamsStore } from '$stores/streams.svelte';
 	import { themeStore } from '$stores/theme.svelte';
-	import { cn, safeInitial } from '$lib/utils';
+	import { cn } from '$lib/utils';
 
 	type Props = {
 		children?: Snippet;
@@ -156,11 +157,13 @@
 
 			<div class="flex items-center justify-between rounded-lg border border-border bg-elevated px-2.5 py-2">
 				<div class="flex min-w-0 items-center gap-2">
-					<div
-						class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary font-heading text-xs font-bold text-white"
-					>
-						{safeInitial(authStore.principal?.username)}
-					</div>
+					<ProxiedImage
+						src={authStore.principal?.avatarUrl}
+						alt={authStore.principal?.username ?? 'Guest'}
+						fallbackLabel={authStore.principal?.username ?? 'Guest'}
+						variant="avatar"
+						class="h-7 w-7 text-xs"
+					/>
 					<div class="min-w-0">
 						<p class="truncate font-heading text-xs font-semibold text-fg-primary">
 							{authStore.principal?.username ?? 'Guest'}
@@ -237,18 +240,29 @@
 			</nav>
 		</div>
 
-		<button
-			type="button"
-			onclick={() => themeStore.toggle()}
-			aria-label="Toggle color theme"
-			class="inline-flex h-10 w-10 items-center justify-center rounded-full text-fg-secondary hover:bg-elevated hover:text-fg-primary cursor-pointer"
-		>
-			{#if themeStore.mode === 'dark'}
-				<Sun class="h-4 w-4" />
-			{:else}
-				<Moon class="h-4 w-4" />
-			{/if}
-		</button>
+		<div class="flex flex-col items-center gap-2">
+			<button
+				type="button"
+				onclick={() => themeStore.toggle()}
+				aria-label="Toggle color theme"
+				class="inline-flex h-10 w-10 items-center justify-center rounded-full text-fg-secondary hover:bg-elevated hover:text-fg-primary cursor-pointer"
+			>
+				{#if themeStore.mode === 'dark'}
+					<Sun class="h-4 w-4" />
+				{:else}
+					<Moon class="h-4 w-4" />
+				{/if}
+			</button>
+			<div title={authStore.principal?.username ?? 'Guest'}>
+				<ProxiedImage
+					src={authStore.principal?.avatarUrl}
+					alt={authStore.principal?.username ?? 'Guest'}
+					fallbackLabel={authStore.principal?.username ?? 'Guest'}
+					variant="avatar"
+					class="h-8 w-8 text-xs"
+				/>
+			</div>
+		</div>
 	</aside>
 
 	<!-- MAIN CONTENT COLUMN (Mobile Top Bar + Page Body + Mobile M3 Bottom Nav) -->
@@ -277,11 +291,13 @@
 						aria-expanded={mobileUserMenuOpen}
 						class="inline-flex h-8 max-w-[132px] cursor-pointer items-center gap-1.5 rounded-full border border-border bg-elevated py-0.5 pr-2.5 pl-1 font-heading text-xs font-semibold text-fg-primary transition-colors hover:border-border-strong"
 					>
-						<span
-							class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-bold text-white"
-						>
-							{safeInitial(authStore.principal?.username)}
-						</span>
+						<ProxiedImage
+							src={authStore.principal?.avatarUrl}
+							alt={authStore.principal?.username ?? 'Guest'}
+							fallbackLabel={authStore.principal?.username ?? 'Guest'}
+							variant="avatar"
+							class="h-6 w-6 text-[11px]"
+						/>
 						<span class="truncate">{authStore.principal?.username ?? 'Guest'}</span>
 					</button>
 

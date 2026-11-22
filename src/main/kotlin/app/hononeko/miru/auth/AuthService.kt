@@ -299,6 +299,20 @@ class AuthService(
             )
         }
 
+    suspend fun resolveAvatarUrl(principal: MiruPrincipal): Either<MiruError, String?> =
+        either {
+            if (principal.linkedMediaUserIds.isEmpty()) {
+                return@either null
+            }
+            for (mediaUserId in principal.linkedMediaUserIds.sorted()) {
+                val user = userRepository.findById(mediaUserId).bind()
+                if (!user?.thumbUrl.isNullOrBlank()) {
+                    return@either "/api/v1/users/${user.id}/avatar"
+                }
+            }
+            null
+        }
+
     suspend fun listAccounts(): Either<MiruError, List<AccountWithLinks>> =
         either {
             val accounts = accountRepository.findAll().bind()

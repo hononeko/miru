@@ -650,6 +650,249 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /api/v1/admin/plex/status:
+    get:
+      tags: [Admin]
+      operationId: getPlexConnectionStatus
+      summary: Get current Plex connection status and credential source
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Plex connection status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlexConnectionStatus'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/admin/plex/oauth/start:
+    post:
+      tags: [Admin]
+      operationId: startPlexOAuth
+      summary: Start a Plex PIN OAuth session
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Plex PIN OAuth session created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlexOAuthStartResponse'
+        '400':
+          description: Validation error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '502':
+          description: Upstream Plex.tv error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/admin/plex/oauth/poll/{pinId}:
+    get:
+      tags: [Admin]
+      operationId: pollPlexOAuth
+      summary: Poll Plex PIN OAuth authorization status
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: pinId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Current PIN authorization status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlexOAuthPollResponse'
+        '400':
+          description: Invalid PIN identifier
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: OAuth PIN session not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '502':
+          description: Upstream Plex.tv error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/admin/plex/oauth/servers:
+    get:
+      tags: [Admin]
+      operationId: discoverPlexServers
+      summary: Discover Plex Media Servers accessible to the authorized PIN session
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: pinId
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Discovered Plex servers and prioritized connection URIs (tokens omitted)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlexDiscoveredServersResponse'
+        '400':
+          description: Invalid PIN identifier
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Authorized OAuth session not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: OAuth PIN session is not authorized or has expired
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '502':
+          description: Upstream Plex.tv error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/admin/plex/oauth/select:
+    post:
+      tags: [Admin]
+      operationId: selectPlexServer
+      summary: Persist encrypted Plex credentials for the selected server and hot-reload runtime
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlexSelectServerRequest'
+      responses:
+        '200':
+          description: Server credentials saved and runtime status returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlexSelectServerResponse'
+        '400':
+          description: Validation error or missing MIRU_ENCRYPTION_KEY
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: OAuth session or Plex server not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: OAuth PIN session is not authorized or has expired
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '502':
+          description: Upstream Plex.tv error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
   /api/v1/media/{ratingKey}/thumb:
     get:
       tags: [Artwork]
@@ -2927,3 +3170,144 @@ components:
           type: array
           items:
             type: string
+
+    PlexCredentialSource:
+      type: string
+      enum: [ENV_OVERRIDE, STORED_ENCRYPTED, NOT_CONFIGURED]
+
+    PlexOAuthPinStatus:
+      type: string
+      enum: [PENDING, AUTHORIZED, EXPIRED]
+
+    PlexConnectionStatus:
+      type: object
+      required: [configured, credentialSource, encryptionKeyConfigured, reachable]
+      properties:
+        configured:
+          type: boolean
+        credentialSource:
+          $ref: '#/components/schemas/PlexCredentialSource'
+        encryptionKeyConfigured:
+          type: boolean
+        serverName:
+          type: string
+          nullable: true
+        machineId:
+          type: string
+          nullable: true
+        baseUrl:
+          type: string
+          nullable: true
+        reachable:
+          type: boolean
+        statusMessage:
+          type: string
+          nullable: true
+
+    PlexOAuthStartResponse:
+      type: object
+      required: [pinId, authUrl, expiresAtMs]
+      properties:
+        pinId:
+          type: integer
+          format: int64
+        authUrl:
+          type: string
+        expiresAtMs:
+          type: integer
+          format: int64
+
+    PlexOAuthPollResponse:
+      type: object
+      required: [pinId, status, expiresAtMs]
+      properties:
+        pinId:
+          type: integer
+          format: int64
+        status:
+          $ref: '#/components/schemas/PlexOAuthPinStatus'
+        expiresAtMs:
+          type: integer
+          format: int64
+
+    PlexConnectionOptionDto:
+      type: object
+      required: [uri, protocol, local, relay, ipv6]
+      properties:
+        uri:
+          type: string
+        protocol:
+          type: string
+        local:
+          type: boolean
+        relay:
+          type: boolean
+        ipv6:
+          type: boolean
+
+    PlexDiscoveredServerDto:
+      type: object
+      required: [name, machineId, owned, presence, connections]
+      properties:
+        name:
+          type: string
+        machineId:
+          type: string
+        productVersion:
+          type: string
+          nullable: true
+        platform:
+          type: string
+          nullable: true
+        owned:
+          type: boolean
+        presence:
+          type: boolean
+        connections:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlexConnectionOptionDto'
+
+    PlexDiscoveredServersResponse:
+      type: object
+      required: [pinId, servers]
+      properties:
+        pinId:
+          type: integer
+          format: int64
+        servers:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlexDiscoveredServerDto'
+
+    PlexSelectServerRequest:
+      type: object
+      required: [machineId, connectionUri]
+      properties:
+        pinId:
+          type: integer
+          format: int64
+          nullable: true
+        machineId:
+          type: string
+        connectionUri:
+          type: string
+
+    PlexSelectServerResponse:
+      type: object
+      required: [saved, hotReloaded, envOverrideActive, serverName, machineId, baseUrl, credentialSource]
+      properties:
+        saved:
+          type: boolean
+        hotReloaded:
+          type: boolean
+        envOverrideActive:
+          type: boolean
+        serverName:
+          type: string
+        machineId:
+          type: string
+        baseUrl:
+          type: string
+        credentialSource:
+          $ref: '#/components/schemas/PlexCredentialSource'

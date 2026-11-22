@@ -6,9 +6,16 @@ data class MediaServerRecord(
     val serverType: String,
     val machineId: String,
     val baseUrl: String,
+    val encryptedToken: String? = null,
+    val clientIdentifier: String? = null,
     val createdAtMs: Long,
     val updatedAtMs: Long,
-)
+) {
+    override fun toString(): String =
+        "MediaServerRecord(id=$id, name=$name, serverType=$serverType, machineId=$machineId, baseUrl=$baseUrl, " +
+            "encryptedToken=${if (encryptedToken != null) "***" else "null"}, clientIdentifier=$clientIdentifier, " +
+            "createdAtMs=$createdAtMs, updatedAtMs=$updatedAtMs)"
+}
 
 data class UserRecord(
     val id: String,

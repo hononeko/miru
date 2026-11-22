@@ -50,4 +50,15 @@ export type LibrarySyncMode = Schemas['LibrarySyncMode'];
 export type LibrarySyncResponse = Schemas['LibrarySyncResponse'];
 export type TautulliImportResponse = Schemas['TautulliImportResponse'];
 
+export type PlexCredentialSource = Schemas['PlexCredentialSource'];
+export type PlexOAuthPinStatus = Schemas['PlexOAuthPinStatus'];
+export type PlexConnectionStatus = Schemas['PlexConnectionStatus'];
+export type PlexOAuthStartResponse = Schemas['PlexOAuthStartResponse'];
+export type PlexOAuthPollResponse = Schemas['PlexOAuthPollResponse'];
+export type PlexConnectionOptionDto = Schemas['PlexConnectionOptionDto'];
+export type PlexDiscoveredServerDto = Schemas['PlexDiscoveredServerDto'];
+export type PlexDiscoveredServersResponse = Schemas['PlexDiscoveredServersResponse'];
+export type PlexSelectServerRequest = Schemas['PlexSelectServerRequest'];
+export type PlexSelectServerResponse = Schemas['PlexSelectServerResponse'];
+
 export type StatsRange = '7d' | '30d' | '90d' | 'all';

@@ -9,6 +9,8 @@ object MediaServersTable : Table("media_servers") {
     val serverType = text("server_type")
     val machineId = text("machine_id").uniqueIndex()
     val baseUrl = text("base_url")
+    val encryptedToken = text("encrypted_token").nullable()
+    val clientIdentifier = text("client_identifier").nullable()
     val createdAtMs = long("created_at_ms")
     val updatedAtMs = long("updated_at_ms")
 

@@ -234,4 +234,67 @@ class AppConfigLoaderTest :
             val disabledErr = AppConfigLoader.load(env = disabledOidcMode).shouldBeLeft()
             disabledErr.fieldErrors shouldContainKey "OIDC_ENABLED"
         }
+
+        test("allows zero-config startup when both PLEX_URL and PLEX_TOKEN are omitted") {
+            val config =
+                AppConfigLoader
+                    .load(env = mapOf("AUTH_SESSION_SECRET" to validSecret))
+                    .shouldBeRight()
+
+            config.plex.baseUrl shouldBe ""
+            config.plex.token shouldBe ""
+            config.plex.isStaticConfigured shouldBe false
+        }
+
+        test("rejects partial Plex configuration when only one of PLEX_URL or PLEX_TOKEN is set") {
+            val urlOnly =
+                AppConfigLoader
+                    .load(
+                        env =
+                            mapOf(
+                                "PLEX_URL" to "http://plex.local:32400",
+                                "AUTH_SESSION_SECRET" to validSecret,
+                            ),
+                    ).shouldBeLeft()
+            urlOnly.fieldErrors.keys shouldBe setOf("PLEX_TOKEN")
+
+            val tokenOnly =
+                AppConfigLoader
+                    .load(
+                        env =
+                            mapOf(
+                                "PLEX_TOKEN" to "some-token",
+                                "AUTH_SESSION_SECRET" to validSecret,
+                            ),
+                    ).shouldBeLeft()
+            tokenOnly.fieldErrors.keys shouldBe setOf("PLEX_URL")
+        }
+
+        test("validates MIRU_ENCRYPTION_KEY length, loads PLEX_CLIENT_IDENTIFIER, and redacts encryptionKey") {
+            val shortKeyErr =
+                AppConfigLoader
+                    .load(
+                        env =
+                            mapOf(
+                                "AUTH_SESSION_SECRET" to validSecret,
+                                "MIRU_ENCRYPTION_KEY" to "too-short",
+                            ),
+                    ).shouldBeLeft()
+            shortKeyErr.fieldErrors.keys shouldBe setOf("MIRU_ENCRYPTION_KEY")
+
+            val encKey = "encryption-key-at-least-32-characters-long"
+            val config =
+                AppConfigLoader
+                    .load(
+                        env =
+                            mapOf(
+                                "AUTH_SESSION_SECRET" to validSecret,
+                                "MIRU_ENCRYPTION_KEY" to encKey,
+                                "PLEX_CLIENT_IDENTIFIER" to "miru-custom-client-id",
+                            ),
+                    ).shouldBeRight()
+            config.plex.encryptionKey shouldBe encKey
+            config.plex.clientIdentifier shouldBe "miru-custom-client-id"
+            config.toString() shouldNotContain encKey
+        }
     })

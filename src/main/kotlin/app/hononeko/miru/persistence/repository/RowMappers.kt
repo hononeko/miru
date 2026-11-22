@@ -28,6 +28,8 @@ internal fun ResultRow.toMediaServerRecord(): MediaServerRecord =
         serverType = this[MediaServersTable.serverType],
         machineId = this[MediaServersTable.machineId],
         baseUrl = this[MediaServersTable.baseUrl],
+        encryptedToken = this[MediaServersTable.encryptedToken],
+        clientIdentifier = this[MediaServersTable.clientIdentifier],
         createdAtMs = this[MediaServersTable.createdAtMs],
         updatedAtMs = this[MediaServersTable.updatedAtMs],
     )

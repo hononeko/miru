@@ -87,16 +87,32 @@ class ArtworkProxyService(
     private val externalAvatarClient: HttpClient,
     private val cache: BoundedArtworkCache = BoundedArtworkCache(),
     allowedAvatarHosts: Set<String> = DEFAULT_ALLOWED_AVATAR_HOSTS,
-    plexBaseUrl: String? = null,
+    private val plexBaseUrlProvider: () -> String? = { null },
 ) {
+    constructor(
+        adapter: MediaServerAdapter,
+        userRepository: UserRepository,
+        externalAvatarClient: HttpClient,
+        cache: BoundedArtworkCache = BoundedArtworkCache(),
+        allowedAvatarHosts: Set<String> = DEFAULT_ALLOWED_AVATAR_HOSTS,
+        plexBaseUrl: String?,
+    ) : this(
+        adapter = adapter,
+        userRepository = userRepository,
+        externalAvatarClient = externalAvatarClient,
+        cache = cache,
+        allowedAvatarHosts = allowedAvatarHosts,
+        plexBaseUrlProvider = { plexBaseUrl },
+    )
+
     private val normalizedAllowedHosts: Set<String> =
         allowedAvatarHosts
             .map { it.trim().lowercase().trimEnd('.') }
             .filter { it.isNotEmpty() }
             .toSet()
 
-    private val parsedPlexOrigin: NormalizedOrigin? =
-        plexBaseUrl
+    private fun currentPlexOrigin(): NormalizedOrigin? =
+        plexBaseUrlProvider()
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
             ?.let(::parseOrigin)
@@ -214,6 +230,7 @@ class ArtworkProxyService(
             }
 
             val origin = NormalizedOrigin(scheme = scheme, host = host, port = effectivePort(scheme, uri.port))
+            val parsedPlexOrigin = currentPlexOrigin()
             if (parsedPlexOrigin != null && origin == parsedPlexOrigin) {
                 val plexPath = uri.rawPath?.takeIf { it.isNotEmpty() } ?: "/"
                 ensure(isSafeRelativePlexPath(plexPath)) {

@@ -30,6 +30,7 @@ interface MediaServerAdapter {
         sectionKey: String,
         start: Int = 0,
         size: Int = 100,
+        mediaTypeCode: Int? = null,
     ): Either<MiruError, LibraryItemsPage>
 
     suspend fun fetchArtwork(

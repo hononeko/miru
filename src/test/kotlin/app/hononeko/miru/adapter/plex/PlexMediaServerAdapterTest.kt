@@ -218,7 +218,13 @@ class PlexMediaServerAdapterTest :
                             respondJson(PlexFixtures.libraryCountFallbackSizeJson)
                         request.url.encodedPath == "/library/sections/1/all" &&
                             request.url.parameters["X-Plex-Container-Start"] == "20" &&
-                            request.url.parameters["X-Plex-Container-Size"] == "50" ->
+                            request.url.parameters["X-Plex-Container-Size"] == "50" &&
+                            request.url.parameters["type"] == null ->
+                            respondJson(PlexFixtures.libraryItemsPageJson)
+                        request.url.encodedPath == "/library/sections/2/all" &&
+                            request.url.parameters["X-Plex-Container-Start"] == "0" &&
+                            request.url.parameters["X-Plex-Container-Size"] == "25" &&
+                            request.url.parameters["type"] == "4" ->
                             respondJson(PlexFixtures.libraryItemsPageJson)
                         else -> error("Unexpected request: ${request.url}")
                     }
@@ -234,12 +240,19 @@ class PlexMediaServerAdapterTest :
             page.totalSize shouldBe 412
             page.offset shouldBe 20
             page.items shouldHaveSize 2
-            requests shouldHaveSize 4
+
+            val episodePage = adapter.fetchLibraryItems("2", start = 0, size = 25, mediaTypeCode = 4).shouldBeRight()
+            episodePage.items shouldHaveSize 2
+            requests shouldHaveSize 5
 
             adapter.fetchLibraryCount("../bad").shouldBeLeft().shouldBeInstanceOf<MiruError.ValidationError>()
             adapter.fetchLibraryCount("1", mediaTypeCode = 0).shouldBeLeft().shouldBeInstanceOf<MiruError.ValidationError>()
             adapter.fetchLibraryItems("1", start = -1, size = 10).shouldBeLeft().shouldBeInstanceOf<MiruError.ValidationError>()
             adapter.fetchLibraryItems("1", start = 0, size = 0).shouldBeLeft().shouldBeInstanceOf<MiruError.ValidationError>()
+            adapter
+                .fetchLibraryItems("1", start = 0, size = 10, mediaTypeCode = 0)
+                .shouldBeLeft()
+                .shouldBeInstanceOf<MiruError.ValidationError>()
         }
 
         test("fetchArtwork supports direct and transcoded requests and blocks SSRF or path traversal") {

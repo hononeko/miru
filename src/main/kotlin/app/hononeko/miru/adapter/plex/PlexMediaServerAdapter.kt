@@ -177,6 +177,7 @@ class PlexMediaServerAdapter(
         sectionKey: String,
         start: Int,
         size: Int,
+        mediaTypeCode: Int?,
     ): Either<MiruError, LibraryItemsPage> =
         either {
             validateSectionKey(sectionKey).bind()
@@ -192,6 +193,14 @@ class PlexMediaServerAdapter(
                     fieldErrors = mapOf("size" to "must be greater than 0"),
                 )
             }
+            if (mediaTypeCode != null) {
+                ensure(mediaTypeCode > 0) {
+                    MiruError.ValidationError(
+                        message = "Invalid media type code",
+                        fieldErrors = mapOf("mediaTypeCode" to "must be greater than 0"),
+                    )
+                }
+            }
 
             val response =
                 executeJsonGet<PlexLibraryItemsResponse>(
@@ -202,6 +211,9 @@ class PlexMediaServerAdapter(
                 ) {
                     parameter("X-Plex-Container-Start", start)
                     parameter("X-Plex-Container-Size", size)
+                    if (mediaTypeCode != null) {
+                        parameter("type", mediaTypeCode)
+                    }
                 }.bind()
 
             PlexMapper.mapLibraryItemsPage(

@@ -181,5 +181,28 @@ test.describe('Admin console: Plex PIN OAuth, Tautulli import, local accounts & 
 			headers: { 'X-Api-Key': rawKey }
 		});
 		expect(authRevoked.status()).toBe(401);
+
+		// --- 5. Stream Guardrails Configuration & Audit Log ---
+		const guardrailsSection = page.locator('section').filter({ hasText: 'Stream Guardrails & Termination Audit' });
+		await expect(guardrailsSection).toBeVisible();
+		await expect(guardrailsSection).toContainText('4K Video Transcode');
+		await expect(guardrailsSection).toContainText('Paused Stream Timeout');
+		await expect(guardrailsSection).toContainText('Per-User Concurrent Stream Cap');
+		await expect(guardrailsSection).toContainText('DISABLED');
+
+		await guardrailsSection.getByRole('button', { name: 'Configure' }).first().click();
+		const guardrailDialog = page.getByRole('dialog');
+		await expect(guardrailDialog.getByText('Configure 4K Video Transcode')).toBeVisible();
+		await guardrailDialog.getByLabel('Rule Mode').selectOption('WARN');
+		await guardrailDialog.getByLabel(/Viewer Message/i).fill('Dry-run 4K notice');
+		await guardrailDialog.getByRole('button', { name: 'Save Guardrail Rule' }).click();
+		await expect(guardrailDialog).not.toBeVisible();
+
+		await expect(guardrailsSection).toContainText('DRY-RUN WARN');
+		await expect(guardrailsSection).toContainText('Dry-run 4K notice');
+
+		await page.reload();
+		await expect(guardrailsSection).toContainText('DRY-RUN WARN');
+		await expect(guardrailsSection).toContainText('Dry-run 4K notice');
 	});
 });

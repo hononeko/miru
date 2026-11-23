@@ -212,4 +212,80 @@ describe('Live Activity page fixes', () => {
 			Boolean(playersHeading.compareDocumentPosition(heatmapHeading) & Node.DOCUMENT_POSITION_FOLLOWING)
 		).toBe(true);
 	});
+
+	it('allows admins to open Terminate sheet, fill preset/custom reason, submit, and shows error or confirmation', async () => {
+		streamsStore.streams = [makeStream('s-1', 'rk-1', 'Ep 1')];
+		const postSpy = vi.spyOn(api, 'POST').mockResolvedValueOnce({
+			data: {
+				sessionId: 's-1',
+				sessionKey: 's-1',
+				reason: 'Custom maintenance stop',
+				auditEventId: 'aud-1',
+				terminatedAtMs: Date.now()
+			},
+			response: new Response(null, { status: 200 })
+		} as never);
+
+		render(LiveActivityPage);
+
+		const terminateBtn = screen.getByRole('button', { name: 'Terminate' });
+		await fireEvent.click(terminateBtn);
+
+		await waitFor(() => {
+			expect(screen.getByRole('heading', { name: 'Terminate Active Stream' })).toBeTruthy();
+		});
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Maintenance' }));
+		const textarea = screen.getByPlaceholderText(/Optional message shown/i) as HTMLTextAreaElement;
+		expect(textarea.value).toContain('maintenance');
+
+		await fireEvent.input(textarea, { target: { value: 'Custom maintenance stop' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Terminate Stream' }));
+
+		await waitFor(() => {
+			expect(postSpy).toHaveBeenCalledWith('/api/v1/streams/{sessionId}/terminate', {
+				params: { path: { sessionId: 's-1' } },
+				body: { reason: 'Custom maintenance stop' }
+			});
+			expect(screen.getByRole('status').textContent).toContain('Termination requested for Vehkiya');
+			expect(screen.getByRole('button', { name: 'Terminating…' })).toBeTruthy();
+		});
+	});
+
+	it('displays RFC 7807 error inside Terminate sheet and hides Terminate buttons for USER role', async () => {
+		streamsStore.streams = [makeStream('s-1', 'rk-1', 'Ep 1')];
+		vi.spyOn(api, 'POST').mockResolvedValueOnce({
+			error: {
+				type: 'https://miru.hononeko.app/errors/upstream-unavailable',
+				title: 'Upstream Unavailable',
+				status: 502,
+				detail: 'Plex server is unavailable'
+			},
+			response: new Response(null, { status: 502 })
+		} as never);
+
+		render(LiveActivityPage);
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Terminate' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Terminate Stream' }));
+
+		await waitFor(() => {
+			expect(screen.getByRole('alert').textContent).toContain('Plex server is unavailable');
+		});
+
+		cleanup();
+		authStore.principal = {
+			accountId: 'acc-2',
+			username: 'viewer',
+			email: null,
+			role: 'USER',
+			linkedMediaUserIds: ['u-1'],
+			authSource: 'SESSION_COOKIE',
+			avatarUrl: null
+		};
+
+		render(LiveActivityPage);
+		expect(screen.getByRole('heading', { name: 'Archer (2009)' })).toBeTruthy();
+		expect(screen.queryByRole('button', { name: 'Terminate' })).toBeNull();
+	});
 });

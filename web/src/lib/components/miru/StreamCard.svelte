@@ -1,7 +1,10 @@
 <script lang="ts">
+	import { OctagonX } from 'lucide-svelte';
 	import type { ActiveStreamDto } from '$api/types';
 	import Badge from '$components/ui/Badge.svelte';
+	import Button from '$components/ui/Button.svelte';
 	import ProxiedImage from './ProxiedImage.svelte';
+	import { authStore } from '$stores/auth.svelte';
 	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
 	import {
 		cn,
@@ -14,9 +17,11 @@
 	type Props = {
 		stream: ActiveStreamDto;
 		class?: string;
+		onTerminate?: (stream: ActiveStreamDto) => void;
+		terminating?: boolean;
 	};
 
-	let { stream, class: className = '' }: Props = $props();
+	let { stream, class: className = '', onTerminate, terminating = false }: Props = $props();
 
 	const titles = $derived(formatMediaTitle(stream.media));
 	const decision = $derived(getDecisionMeta(stream.technical.streamDecision, stream.technical.hwTranscode));
@@ -183,4 +188,22 @@
 			</span>
 		</div>
 	</div>
+
+	{#if authStore.isAdmin && onTerminate}
+		<div class="flex items-center justify-between gap-2 border-t border-border pt-2.5">
+			<span class="truncate font-mono text-[10px] text-fg-muted">
+				{stream.sessionId ? `Session ${stream.sessionId}` : `Key ${stream.sessionKey}`}
+			</span>
+			<Button
+				variant="destructive"
+				size="sm"
+				disabled={terminating}
+				onclick={() => onTerminate(stream)}
+				title={`Terminate stream for ${displayUser}`}
+			>
+				<OctagonX class="h-3.5 w-3.5" />
+				{terminating ? 'Terminating…' : 'Terminate'}
+			</Button>
+		</div>
+	{/if}
 </article>

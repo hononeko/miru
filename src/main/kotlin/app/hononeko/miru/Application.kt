@@ -28,6 +28,7 @@ import app.hononeko.miru.http.openApiRoutes
 import app.hononeko.miru.http.plexOAuthRoutes
 import app.hononeko.miru.http.respondError
 import app.hononeko.miru.http.staticWebRoutes
+import app.hononeko.miru.http.streamControlRoutes
 import app.hononeko.miru.http.streamsAndUsersRoutes
 import app.hononeko.miru.importer.TautulliCli
 import app.hononeko.miru.importer.TautulliImporterService
@@ -36,12 +37,14 @@ import app.hononeko.miru.persistence.DatabaseFactory
 import app.hononeko.miru.persistence.DatabaseHandle
 import app.hononeko.miru.persistence.DatabaseReadinessCheck
 import app.hononeko.miru.persistence.repository.ExposedActiveSessionRepository
+import app.hononeko.miru.persistence.repository.ExposedApiKeyRepository
 import app.hononeko.miru.persistence.repository.ExposedAuthAccountRepository
 import app.hononeko.miru.persistence.repository.ExposedAuthSessionRepository
-import app.hononeko.miru.persistence.repository.ExposedApiKeyRepository
+import app.hononeko.miru.persistence.repository.ExposedGuardrailRuleRepository
 import app.hononeko.miru.persistence.repository.ExposedLibraryRepository
 import app.hononeko.miru.persistence.repository.ExposedMediaServerRepository
 import app.hononeko.miru.persistence.repository.ExposedPlaybackHistoryRepository
+import app.hononeko.miru.persistence.repository.ExposedStreamTerminationAuditRepository
 import app.hononeko.miru.persistence.repository.ExposedUserPreferencesRepository
 import app.hononeko.miru.persistence.repository.ExposedUserRepository
 import app.hononeko.miru.service.HistoryAndStatsService
@@ -49,6 +52,8 @@ import app.hononeko.miru.service.LibraryQueryService
 import app.hononeko.miru.service.LibrarySyncTrigger
 import app.hononeko.miru.service.MediaDetailsService
 import app.hononeko.miru.service.PlexUserSyncService
+import app.hononeko.miru.service.StreamControlService
+import app.hononeko.miru.service.StreamGuardrailRunner
 import app.hononeko.miru.service.StreamsAndUsersService
 import app.hononeko.miru.session.SessionEvent
 import io.ktor.http.HttpHeaders
@@ -120,18 +125,9 @@ private fun runServer() {
     val (oidcClient, oidcAuthService) =
         initOidcServices(appConfig, authService, accountRepository, emailLinker)
     val historyAndStatsService =
-        HistoryAndStatsService(
-            playbackHistoryRepository = playbackHistoryRepository,
-            userRepository = userRepository,
-        )
+        HistoryAndStatsService(playbackHistoryRepository = playbackHistoryRepository, userRepository = userRepository)
     val tautulliImporterService =
-        TautulliImporterService(
-            mediaServerRepository = mediaServerRepository,
-            userRepository = userRepository,
-            playbackHistoryRepository = playbackHistoryRepository,
-            fallbackBaseUrl = appConfig.plex.baseUrl,
-            defaultWatchedThresholdPercent = appConfig.session.watchedThresholdPercent,
-        )
+        createTautulliImporterService(mediaServerRepository, userRepository, playbackHistoryRepository, appConfig)
 
     val plexRuntimeManager =
         PlexRuntimeManager(
@@ -157,18 +153,26 @@ private fun runServer() {
             externalAvatarClient = externalAvatarClient,
             plexBaseUrlProvider = { plexRuntimeManager.currentBaseUrl() },
         )
+    val activeSessionRepository = ExposedActiveSessionRepository(databaseHandle)
     val streamsAndUsersService =
-        StreamsAndUsersService(
-            activeSessionRepository = ExposedActiveSessionRepository(databaseHandle),
+        createStreamsAndUsersService(activeSessionRepository, userRepository, playbackHistoryRepository, plexRuntimeManager)
+    val streamControlService =
+        createStreamControlService(
+            plexRuntimeManager = plexRuntimeManager,
+            activeSessionRepository = activeSessionRepository,
             userRepository = userRepository,
-            playbackHistoryRepository = playbackHistoryRepository,
-            liveTechnicalProvider = { plexRuntimeManager.sessionEngine.currentLiveTechnical() },
-            serverNameProvider = { plexRuntimeManager.currentServerName() },
+            databaseHandle = databaseHandle,
+            appConfig = appConfig,
         )
     val libraryRepository = ExposedLibraryRepository(databaseHandle)
     val libraryQueryService = LibraryQueryService(libraryRepository = libraryRepository)
     val syncServices =
-        createSyncServices(plexRuntimeManager, libraryRepository, userRepository) {
+        createSyncServices(
+            plexRuntimeManager = plexRuntimeManager,
+            libraryRepository = libraryRepository,
+            userRepository = userRepository,
+            streamControlService = streamControlService,
+        ) {
             emailLinker.relinkAll().onLeft { error ->
                 logger.warn("Linking SSO accounts by email after the user sync failed: {}", error.message)
             }
@@ -197,6 +201,7 @@ private fun runServer() {
                 oidcAuthService = oidcAuthService,
                 artworkProxyService = artworkProxyService,
                 streamsAndUsersService = streamsAndUsersService,
+                streamControlService = streamControlService,
                 sessionEvents = plexRuntimeManager.sessionEngine.sessionEvents,
                 historyAndStatsService = historyAndStatsService,
                 libraryQueryService = libraryQueryService,
@@ -221,17 +226,64 @@ private fun runServer() {
     }
 }
 
+private fun createTautulliImporterService(
+    mediaServerRepository: ExposedMediaServerRepository,
+    userRepository: ExposedUserRepository,
+    playbackHistoryRepository: ExposedPlaybackHistoryRepository,
+    appConfig: AppConfig,
+): TautulliImporterService =
+    TautulliImporterService(
+        mediaServerRepository = mediaServerRepository,
+        userRepository = userRepository,
+        playbackHistoryRepository = playbackHistoryRepository,
+        fallbackBaseUrl = appConfig.plex.baseUrl,
+        defaultWatchedThresholdPercent = appConfig.session.watchedThresholdPercent,
+    )
+
+private fun createStreamsAndUsersService(
+    activeSessionRepository: ExposedActiveSessionRepository,
+    userRepository: ExposedUserRepository,
+    playbackHistoryRepository: ExposedPlaybackHistoryRepository,
+    plexRuntimeManager: PlexRuntimeManager,
+): StreamsAndUsersService =
+    StreamsAndUsersService(
+        activeSessionRepository = activeSessionRepository,
+        userRepository = userRepository,
+        playbackHistoryRepository = playbackHistoryRepository,
+        liveTechnicalProvider = { plexRuntimeManager.sessionEngine.currentLiveTechnical() },
+        serverNameProvider = { plexRuntimeManager.currentServerName() },
+    )
+
+private fun createStreamControlService(
+    plexRuntimeManager: PlexRuntimeManager,
+    activeSessionRepository: ExposedActiveSessionRepository,
+    userRepository: ExposedUserRepository,
+    databaseHandle: DatabaseHandle,
+    appConfig: AppConfig,
+): StreamControlService =
+    StreamControlService(
+        adapter = plexRuntimeManager.adapter,
+        activeSessionRepository = activeSessionRepository,
+        userRepository = userRepository,
+        guardrailRuleRepository = ExposedGuardrailRuleRepository(databaseHandle),
+        auditRepository = ExposedStreamTerminationAuditRepository(databaseHandle),
+        guardrailsConfig = appConfig.guardrails,
+    )
+
 internal data class SyncServices(
     val libraryCollectorScope: CoroutineScope,
     val libraryStatsCollector: LibraryStatsCollector,
     val userSyncScope: CoroutineScope,
     val plexUserSyncService: PlexUserSyncService,
+    val guardrailScope: CoroutineScope? = null,
+    val streamGuardrailRunner: StreamGuardrailRunner? = null,
 )
 
 internal fun createSyncServices(
     plexRuntimeManager: PlexRuntimeManager,
     libraryRepository: app.hononeko.miru.persistence.repository.LibraryRepository,
     userRepository: app.hononeko.miru.persistence.repository.UserRepository,
+    streamControlService: StreamControlService? = null,
     afterUserSync: suspend () -> Unit = {},
 ): SyncServices {
     val libraryCollectorScope =
@@ -253,6 +305,20 @@ internal fun createSyncServices(
             scope = userSyncScope,
             onUsersSynced = afterUserSync,
         )
+    val guardrailScope =
+        streamControlService?.let {
+            CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("stream-guardrail-runner"))
+        }
+    val streamGuardrailRunner =
+        if (streamControlService != null && guardrailScope != null) {
+            StreamGuardrailRunner(
+                sessionEngine = plexRuntimeManager.sessionEngine,
+                streamControlService = streamControlService,
+                scope = guardrailScope,
+            )
+        } else {
+            null
+        }
     plexRuntimeManager.setOnReloadLibrarySync {
         libraryStatsCollector.syncFastCounts()
         plexUserSyncService.syncOnce().onLeft { error ->
@@ -264,6 +330,8 @@ internal fun createSyncServices(
         libraryStatsCollector = libraryStatsCollector,
         userSyncScope = userSyncScope,
         plexUserSyncService = plexUserSyncService,
+        guardrailScope = guardrailScope,
+        streamGuardrailRunner = streamGuardrailRunner,
     )
 }
 
@@ -276,6 +344,7 @@ internal fun Application.registerLifecycleHandlers(
         logger.info("Starting library stats collector and Plex user sync")
         syncServices.libraryStatsCollector.start()
         syncServices.plexUserSyncService.start()
+        syncServices.streamGuardrailRunner?.start()
     }
     monitor.subscribe(ApplicationStopping) {
         logger.info("Stopping library stats collector and Plex user sync")
@@ -284,9 +353,14 @@ internal fun Application.registerLifecycleHandlers(
                 ?: logger.warn("Library stats collector did not stop within {}", REALTIME_SHUTDOWN_TIMEOUT)
             withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { syncServices.plexUserSyncService.stop() }
                 ?: logger.warn("Plex user sync did not stop within {}", REALTIME_SHUTDOWN_TIMEOUT)
+            syncServices.streamGuardrailRunner?.let { runner ->
+                withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { runner.stop() }
+                    ?: logger.warn("Stream guardrail runner did not stop within {}", REALTIME_SHUTDOWN_TIMEOUT)
+            }
         }
         syncServices.libraryCollectorScope.cancel()
         syncServices.userSyncScope.cancel()
+        syncServices.guardrailScope?.cancel()
     }
     monitor.subscribe(ApplicationStopped) {
         logger.info("Closing external HTTP clients and database handle")
@@ -310,10 +384,14 @@ internal fun cleanupOnStartupFailure(
     runBlocking {
         withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { syncServices.libraryStatsCollector.stop() }
         withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { syncServices.plexUserSyncService.stop() }
+        syncServices.streamGuardrailRunner?.let { runner ->
+            withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { runner.stop() }
+        }
         withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { plexRuntimeManager.stop() }
     }
     syncServices.libraryCollectorScope.cancel()
     syncServices.userSyncScope.cancel()
+    syncServices.guardrailScope?.cancel()
     clients.forEach { client ->
         if (client != null) {
             runCatching { client.close() }
@@ -417,6 +495,7 @@ fun Application.miruModule(
     oidcAuthService: OidcAuthService? = null,
     artworkProxyService: ArtworkProxyService? = null,
     streamsAndUsersService: StreamsAndUsersService? = null,
+    streamControlService: StreamControlService? = null,
     sessionEvents: SharedFlow<SessionEvent>? = null,
     sseKeepaliveInterval: Duration = DEFAULT_SSE_KEEPALIVE_INTERVAL,
     historyAndStatsService: HistoryAndStatsService? = null,
@@ -493,6 +572,13 @@ fun Application.miruModule(
                     streamsAndUsersService = streamsAndUsersService,
                     sessionEvents = sessionEvents,
                     keepaliveInterval = sseKeepaliveInterval,
+                )
+            }
+            if (streamControlService != null) {
+                streamControlRoutes(
+                    streamControlService = streamControlService,
+                    authService = authService,
+                    authMode = config.auth.mode,
                 )
             }
             if (historyAndStatsService != null) {

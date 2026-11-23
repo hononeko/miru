@@ -1,5 +1,6 @@
 package app.hononeko.miru.config
 
+import app.hononeko.miru.persistence.model.GuardrailMode
 import io.kotest.assertions.arrow.core.shouldBeLeft
 import io.kotest.assertions.arrow.core.shouldBeRight
 import io.kotest.core.spec.style.FunSpec
@@ -337,5 +338,82 @@ class AppConfigLoaderTest :
                             ),
                     ).shouldBeLeft()
             invalid.fieldErrors.keys shouldBe setOf("PLEX_TV_BASE_URL")
+        }
+
+        test("loads default disabled guardrails, env/HOCON overrides, and validates guardrail settings") {
+            val defaults = AppConfigLoader.load(env = baseSqliteEnv()).shouldBeRight()
+            defaults.guardrails.transcode4kMode shouldBe GuardrailMode.DISABLED
+            defaults.guardrails.pausedTimeoutMode shouldBe GuardrailMode.DISABLED
+            defaults.guardrails.pausedTimeoutMinutes shouldBe 30
+            defaults.guardrails.concurrentStreamsMode shouldBe GuardrailMode.DISABLED
+            defaults.guardrails.concurrentStreamsMax shouldBe 2
+
+            val configured =
+                AppConfigLoader
+                    .load(
+                        env =
+                            baseSqliteEnv(
+                                mapOf(
+                                    "GUARDRAIL_4K_TRANSCODE_MODE" to "warn",
+                                    "GUARDRAIL_4K_TRANSCODE_MESSAGE" to "Use Direct Play",
+                                    "GUARDRAIL_PAUSED_TIMEOUT_MODE" to "enforce",
+                                    "GUARDRAIL_PAUSED_TIMEOUT_MINUTES" to "45",
+                                    "GUARDRAIL_PAUSED_TIMEOUT_MESSAGE" to "Paused too long",
+                                    "GUARDRAIL_CONCURRENT_STREAMS_MODE" to "WARN",
+                                    "GUARDRAIL_CONCURRENT_STREAMS_MAX" to "3",
+                                    "GUARDRAIL_CONCURRENT_STREAMS_MESSAGE" to "Too many streams",
+                                ),
+                            ),
+                    ).shouldBeRight()
+            configured.guardrails.transcode4kMode shouldBe GuardrailMode.WARN
+            configured.guardrails.transcode4kMessage shouldBe "Use Direct Play"
+            configured.guardrails.pausedTimeoutMode shouldBe GuardrailMode.ENFORCE
+            configured.guardrails.pausedTimeoutMinutes shouldBe 45
+            configured.guardrails.pausedTimeoutMessage shouldBe "Paused too long"
+            configured.guardrails.concurrentStreamsMode shouldBe GuardrailMode.WARN
+            configured.guardrails.concurrentStreamsMax shouldBe 3
+            configured.guardrails.concurrentStreamsMessage shouldBe "Too many streams"
+
+            val hoconConfigured =
+                AppConfigLoader
+                    .load(
+                        env = mapOf("AUTH_SESSION_SECRET" to validSecret),
+                        hocon =
+                            MapApplicationConfig(
+                                "miru.guardrails.transcode4k.mode" to "enforce",
+                                "miru.guardrails.pausedTimeout.minutes" to "15",
+                                "miru.guardrails.concurrentStreams.max" to "4",
+                            ),
+                    ).shouldBeRight()
+            hoconConfigured.guardrails.transcode4kMode shouldBe GuardrailMode.ENFORCE
+            hoconConfigured.guardrails.pausedTimeoutMinutes shouldBe 15
+            hoconConfigured.guardrails.concurrentStreamsMax shouldBe 4
+
+            val invalid =
+                AppConfigLoader
+                    .load(
+                        env =
+                            baseSqliteEnv(
+                                mapOf(
+                                    "GUARDRAIL_4K_TRANSCODE_MODE" to "kill",
+                                    "GUARDRAIL_4K_TRANSCODE_MESSAGE" to "x".repeat(501),
+                                    "GUARDRAIL_PAUSED_TIMEOUT_MODE" to "maybe",
+                                    "GUARDRAIL_PAUSED_TIMEOUT_MINUTES" to "0",
+                                    "GUARDRAIL_PAUSED_TIMEOUT_MESSAGE" to "line1\nline2",
+                                    "GUARDRAIL_CONCURRENT_STREAMS_MODE" to "alert",
+                                    "GUARDRAIL_CONCURRENT_STREAMS_MAX" to "51",
+                                ),
+                            ),
+                    ).shouldBeLeft()
+            invalid.fieldErrors.keys shouldBe
+                setOf(
+                    "GUARDRAIL_4K_TRANSCODE_MODE",
+                    "GUARDRAIL_4K_TRANSCODE_MESSAGE",
+                    "GUARDRAIL_PAUSED_TIMEOUT_MODE",
+                    "GUARDRAIL_PAUSED_TIMEOUT_MINUTES",
+                    "GUARDRAIL_PAUSED_TIMEOUT_MESSAGE",
+                    "GUARDRAIL_CONCURRENT_STREAMS_MODE",
+                    "GUARDRAIL_CONCURRENT_STREAMS_MAX",
+                )
         }
     })

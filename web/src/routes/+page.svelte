@@ -1,18 +1,21 @@
 <script lang="ts">
 	import { api, MiruApiError, unwrap } from '$api/client';
 	import type {
+		ActiveStreamDto,
 		AnalyticsMetricPreference,
 		ClientStatsResponse,
 		HeatmapRange,
 		HeatmapStatsResponse,
 		OverviewStatsResponse,
 		PlexConnectionStatus,
-		StatsRange
+		StatsRange,
+		TerminateStreamResponse
 	} from '$api/types';
 	import Badge from '$components/ui/Badge.svelte';
 	import RangeTabs from '$components/ui/RangeTabs.svelte';
 	import KpiCard from '$components/miru/KpiCard.svelte';
 	import StreamCard from '$components/miru/StreamCard.svelte';
+	import TerminateStreamSheet from '$components/miru/TerminateStreamSheet.svelte';
 	import UnlinkedUserEmptyState from '$components/miru/UnlinkedUserEmptyState.svelte';
 	import BarChart, { type BarPoint, type BarSegment } from '$components/miru/BarChart.svelte';
 	import ViewingHeatmap from '$components/miru/ViewingHeatmap.svelte';
@@ -29,9 +32,10 @@
 		formatRelativeTime,
 		formatStatPercent,
 		getCalendarDateAxisParts,
-		statBarWidth
+		statBarWidth,
+		streamKey
 	} from '$lib/utils';
-	import { Link2, Radio, Server, Tv } from 'lucide-svelte';
+	import { CheckCircle2, Link2, Radio, Server, Tv, X } from 'lucide-svelte';
 
 	let lastDefaultRange = preferencesStore.prefs.defaultStatsRange;
 	let range = $state<StatsRange>(lastDefaultRange);
@@ -43,6 +47,34 @@
 	let loadingHeatmap = $state(true);
 	let statsError = $state<string | null>(null);
 	let plexStatus = $state<PlexConnectionStatus | null>(null);
+	let terminateTarget = $state<ActiveStreamDto | null>(null);
+	let terminateSheetOpen = $state(false);
+	let terminatingKeys = $state<string[]>([]);
+	let terminationNotice = $state<{ message: string; reason: string } | null>(null);
+
+	$effect(() => {
+		const activeKeys = new Set(streamsStore.streams.map((s) => streamKey(s)));
+		if (terminatingKeys.some((key) => !activeKeys.has(key))) {
+			terminatingKeys = terminatingKeys.filter((key) => activeKeys.has(key));
+		}
+	});
+
+	function openTerminateSheet(stream: ActiveStreamDto) {
+		terminateTarget = stream;
+		terminateSheetOpen = true;
+	}
+
+	function handleStreamTerminated(result: TerminateStreamResponse, stream: ActiveStreamDto) {
+		const key = streamKey(stream);
+		if (!terminatingKeys.includes(key)) {
+			terminatingKeys = [...terminatingKeys, key];
+		}
+		const userLabel = stream.user.displayName || stream.user.username || 'viewer';
+		terminationNotice = {
+			message: `Termination requested for ${userLabel} — ${stream.media.title}`,
+			reason: result.reason
+		};
+	}
 
 	$effect(() => {
 		const nextDefault = preferencesStore.prefs.defaultStatsRange;
@@ -435,6 +467,31 @@
 			{/if}
 		</div>
 
+		{#if terminationNotice}
+			<div
+				role="status"
+				class="flex items-start justify-between gap-3 rounded-xl border border-direct-play/40 bg-direct-play-soft px-3.5 py-2.5 text-xs"
+			>
+				<div class="flex items-start gap-2.5">
+					<CheckCircle2 class="mt-0.5 h-4 w-4 shrink-0 text-direct-play" />
+					<div>
+						<p class="font-heading font-semibold text-fg-primary">{terminationNotice.message}</p>
+						<p class="mt-0.5 text-[11px] text-fg-secondary">
+							Viewer message: &ldquo;{terminationNotice.reason}&rdquo; · Waiting for SSE stream removal
+						</p>
+					</div>
+				</div>
+				<button
+					type="button"
+					onclick={() => (terminationNotice = null)}
+					aria-label="Dismiss termination notice"
+					class="cursor-pointer rounded-md p-1 text-fg-muted hover:bg-surface hover:text-fg-primary"
+				>
+					<X class="h-3.5 w-3.5" />
+				</button>
+			</div>
+		{/if}
+
 		{#if streamsStore.streams.length === 0}
 			<div
 				class="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border-strong bg-surface/60 px-6 py-12 text-center"
@@ -451,7 +508,11 @@
 			{@const isEvenStreams = streamsStore.streams.length % 2 === 0}
 			<div class="grid grid-cols-1 gap-4 xl:grid-cols-2">
 				{#each streamsStore.streams as stream (`${stream.serverId}:${stream.sessionKey}:${stream.media.ratingKey}`)}
-					<StreamCard {stream} />
+					<StreamCard
+						{stream}
+						onTerminate={authStore.isAdmin ? openTerminateSheet : undefined}
+						terminating={terminatingKeys.includes(streamKey(stream))}
+					/>
 				{/each}
 
 				<div
@@ -667,3 +728,12 @@
 	{/if}
 	{/if}
 </div>
+
+{#if authStore.isAdmin}
+	<TerminateStreamSheet
+		stream={terminateTarget}
+		bind:open={terminateSheetOpen}
+		onOpenChange={(v) => (terminateSheetOpen = v)}
+		onTerminated={handleStreamTerminated}
+	/>
+{/if}

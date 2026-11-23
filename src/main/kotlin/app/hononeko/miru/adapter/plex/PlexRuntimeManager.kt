@@ -122,6 +122,12 @@ class DelegatingMediaServerAdapter(
     ): Either<MiruError, ArtworkData> =
         withDelegate { it.fetchArtwork(path, width, height) }
 
+    override suspend fun terminateSession(
+        sessionId: String,
+        reason: String,
+    ): Either<MiruError, Unit> =
+        withDelegate { it.terminateSession(sessionId, reason) }
+
     override fun events(): Flow<MediaServerEvent> = _events.asSharedFlow()
 
     private inline fun <T> withDelegate(block: (MediaServerAdapter) -> Either<MiruError, T>): Either<MiruError, T> {

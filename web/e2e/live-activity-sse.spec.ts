@@ -144,4 +144,108 @@ test.describe('Live Activity SSE, stream lifecycle, KPI strip & Top Watched rang
 		await expect(page.getByRole('heading', { name: 'Top Players & Apps' })).toBeVisible();
 		await expect(page.getByRole('heading', { name: 'Transcode & Remux Reasons' })).toBeVisible();
 	});
+
+	test('admins can terminate an active stream with custom reason while USER principals cannot see or invoke termination', async ({
+		page,
+		browser
+	}) => {
+		const adminCookie = await miru.apiLogin(E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
+		const users = await miru.apiGetUsers(adminCookie);
+		const alice = users.find((u) => u.username === 'alice');
+		if (!alice) {
+			throw new Error(`Expected alice user in ${JSON.stringify(users)}`);
+		}
+
+		const viewerUsername = 'e2e_stream_viewer';
+		const viewerPassword = 'StreamViewerPass123!';
+		await miru.apiCreateAccount(adminCookie, {
+			username: viewerUsername,
+			password: viewerPassword,
+			role: 'USER',
+			linkedMediaUserIds: [alice.id]
+		});
+
+		await loginViaUi(page, miru.baseUrl, E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
+		await expect(page.getByText('SSE connected')).toBeVisible();
+
+		mockPlex.clearTerminatedSessions();
+		const activeSession: MockPlexSession = {
+			sessionKey: 'term-sess-1',
+			sessionId: 'term-plex-id-1',
+			ratingKey: '101',
+			type: 'movie',
+			title: 'Spirited Away',
+			year: 2001,
+			durationMs: 7_500_000,
+			viewOffsetMs: 1_200_000,
+			state: 'playing',
+			user: { id: '1001', title: 'alice' },
+			player: {
+				machineIdentifier: 'appletv-living-room',
+				product: 'Plex for Apple TV',
+				platform: 'tvOS',
+				device: 'Apple TV',
+				title: 'Living Room Apple TV',
+				address: '192.168.1.42',
+				local: true
+			},
+			bandwidthKbps: 18_500,
+			location: 'lan',
+			decision: 'transcode',
+			hwTranscode: true,
+			videoResolution: '4k',
+			videoCodec: 'hevc',
+			audioCodec: 'eac3'
+		};
+
+		mockPlex.setActiveSessions([activeSession]);
+		mockPlex.pushPlayingNotification(activeSession.sessionKey, activeSession.ratingKey, 'playing', activeSession.viewOffsetMs);
+
+		const adminStreamCard = page.locator('article').filter({ hasText: 'Spirited Away' });
+		await expect(adminStreamCard).toBeVisible();
+		await expect(adminStreamCard.getByRole('button', { name: 'Terminate' })).toBeVisible();
+
+		// Verify USER principal sees the stream card without any Terminate button and gets 403 on direct POST
+		const viewerContext = await browser.newContext();
+		try {
+			const viewerPage = await viewerContext.newPage();
+			await loginViaUi(viewerPage, miru.baseUrl, viewerUsername, viewerPassword);
+			const viewerCard = viewerPage.locator('article').filter({ hasText: 'Spirited Away' });
+			await expect(viewerCard).toBeVisible();
+			await expect(viewerCard.getByRole('button', { name: 'Terminate' })).toHaveCount(0);
+
+			const forbiddenResp = await viewerPage.request.post(`${miru.baseUrl}/api/v1/streams/term-plex-id-1/terminate`, {
+				data: { reason: 'Should fail' }
+			});
+			expect(forbiddenResp.status()).toBe(403);
+		} finally {
+			await viewerContext.close();
+		}
+
+		// Admin opens sheet, fills preset, customizes reason, submits, and sees SSE remove the stream + audit entry in /admin
+		await adminStreamCard.getByRole('button', { name: 'Terminate' }).click();
+		const dialog = page.getByRole('dialog');
+		await expect(dialog.getByText('Terminate Active Stream')).toBeVisible();
+		await expect(dialog).toContainText('Alice Admin');
+		await expect(dialog).toContainText('Spirited Away');
+
+		await dialog.getByRole('button', { name: '4K Transcode' }).click();
+		const reasonInput = dialog.getByPlaceholder(/Optional message shown/i);
+		await expect(reasonInput).toHaveValue(/4K video transcoding/);
+		await reasonInput.fill('Please switch to 1080p for now');
+		await dialog.getByRole('button', { name: 'Terminate Stream' }).click();
+		await expect(dialog).not.toBeVisible();
+
+		await expect(page.getByRole('status')).toContainText('Termination requested for Alice Admin — Spirited Away');
+		await expect(page.getByRole('heading', { name: 'Active Streams (0)' })).toBeVisible();
+		expect(mockPlex.getTerminatedSessions()).toEqual([
+			{ sessionId: 'term-plex-id-1', reason: 'Please switch to 1080p for now' }
+		]);
+
+		await page.getByRole('navigation', { name: 'Primary navigation' }).getByRole('link', { name: 'Admin' }).click();
+		await expect(page).toHaveURL(`${miru.baseUrl}/admin`);
+		const guardrailsSection = page.locator('section').filter({ hasText: 'Stream Guardrails & Termination Audit' });
+		await expect(guardrailsSection).toContainText('Please switch to 1080p for now');
+		await expect(guardrailsSection).toContainText('Alice Admin');
+	});
 });

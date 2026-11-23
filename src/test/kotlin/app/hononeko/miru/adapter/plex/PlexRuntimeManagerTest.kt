@@ -83,6 +83,11 @@ private class DelegatingTestStubAdapter(
 
     override suspend fun fetchUserLibraryAccess(): Either<MiruError, List<MediaUserLibraryAccess>> =
         listOf(MediaUserLibraryAccess(externalUserId = "2002", allLibraries = false, sectionKeys = setOf("1"))).right()
+
+    override suspend fun terminateSession(
+        sessionId: String,
+        reason: String,
+    ): Either<MiruError, Unit> = Unit.right()
 }
 
 class PlexRuntimeManagerTest :
@@ -99,6 +104,7 @@ class PlexRuntimeManagerTest :
             adapter.fetchLibraryItems("1").shouldBeLeft().shouldBeInstanceOf<MiruError.UpstreamUnavailable>()
             adapter.fetchArtwork("/library/metadata/1/thumb").shouldBeLeft().shouldBeInstanceOf<MiruError.UpstreamUnavailable>()
             adapter.fetchUserLibraryAccess().shouldBeLeft().shouldBeInstanceOf<MiruError.UpstreamUnavailable>()
+            adapter.terminateSession("s-1", "Maintenance").shouldBeLeft().shouldBeInstanceOf<MiruError.UpstreamUnavailable>()
 
             val stub = DelegatingTestStubAdapter()
             adapter.setDelegate(stub)
@@ -113,6 +119,7 @@ class PlexRuntimeManagerTest :
             adapter.fetchArtwork("/library/metadata/1/thumb").shouldBeRight().contentType shouldBe "image/png"
             adapter.fetchUserLibraryAccess().shouldBeRight() shouldBe
                 listOf(MediaUserLibraryAccess(externalUserId = "2002", allLibraries = false, sectionKeys = setOf("1")))
+            adapter.terminateSession("s-1", "Maintenance").shouldBeRight()
 
             val event = MediaServerEvent.PlayingEvent(sessionKey = "10", ratingKey = "20", state = PlaybackState.PLAYING)
             val received = CompletableDeferred<MediaServerEvent>()

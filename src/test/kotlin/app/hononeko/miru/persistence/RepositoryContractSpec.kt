@@ -9,6 +9,9 @@ import app.hononeko.miru.persistence.model.ActiveSessionRecord
 import app.hononeko.miru.persistence.model.ApiKeyRecord
 import app.hononeko.miru.persistence.model.AuthAccountRecord
 import app.hononeko.miru.persistence.model.AuthSessionRecord
+import app.hononeko.miru.persistence.model.GuardrailMode
+import app.hononeko.miru.persistence.model.GuardrailRuleRecord
+import app.hononeko.miru.persistence.model.GuardrailRuleType
 import app.hononeko.miru.persistence.model.HistoryFilter
 import app.hononeko.miru.persistence.model.HistorySortDirection
 import app.hononeko.miru.persistence.model.HistorySortField
@@ -24,6 +27,10 @@ import app.hononeko.miru.persistence.model.PlayerRecord
 import app.hononeko.miru.persistence.model.ResolvedLibraryAccess
 import app.hononeko.miru.persistence.model.StaleMediaSort
 import app.hononeko.miru.persistence.model.StreamTechRecord
+import app.hononeko.miru.persistence.model.StreamTerminationAuditRecord
+import app.hononeko.miru.persistence.model.TerminationAuditAction
+import app.hononeko.miru.persistence.model.TerminationAuditFilter
+import app.hononeko.miru.persistence.model.TerminationAuditSource
 import app.hononeko.miru.persistence.model.UserLibraryAccessRecord
 import app.hononeko.miru.persistence.model.UserPlaybackSummary
 import app.hononeko.miru.persistence.model.UserPreferencesRecord
@@ -36,14 +43,18 @@ import app.hononeko.miru.persistence.repository.ExposedActiveSessionRepository
 import app.hononeko.miru.persistence.repository.ExposedApiKeyRepository
 import app.hononeko.miru.persistence.repository.ExposedAuthAccountRepository
 import app.hononeko.miru.persistence.repository.ExposedAuthSessionRepository
+import app.hononeko.miru.persistence.repository.ExposedGuardrailRuleRepository
 import app.hononeko.miru.persistence.repository.ExposedLibraryRepository
 import app.hononeko.miru.persistence.repository.ExposedMediaServerRepository
 import app.hononeko.miru.persistence.repository.ExposedPlaybackHistoryRepository
+import app.hononeko.miru.persistence.repository.ExposedStreamTerminationAuditRepository
 import app.hononeko.miru.persistence.repository.ExposedUserPreferencesRepository
 import app.hononeko.miru.persistence.repository.ExposedUserRepository
+import app.hononeko.miru.persistence.repository.GuardrailRuleRepository
 import app.hononeko.miru.persistence.repository.LibraryRepository
 import app.hononeko.miru.persistence.repository.MediaServerRepository
 import app.hononeko.miru.persistence.repository.PlaybackHistoryRepository
+import app.hononeko.miru.persistence.repository.StreamTerminationAuditRepository
 import app.hononeko.miru.persistence.repository.UserPreferencesRepository
 import app.hononeko.miru.persistence.repository.UserRepository
 import app.hononeko.miru.service.HistoryAndStatsService
@@ -80,6 +91,8 @@ private class ContractContext(
     val authSessions: AuthSessionRepository = ExposedAuthSessionRepository(handle)
     val apiKeys: ApiKeyRepository = ExposedApiKeyRepository(handle)
     val userPreferences: UserPreferencesRepository = ExposedUserPreferencesRepository(handle)
+    val guardrails: GuardrailRuleRepository = ExposedGuardrailRuleRepository(handle)
+    val terminationAudit: StreamTerminationAuditRepository = ExposedStreamTerminationAuditRepository(handle)
 }
 
 fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
@@ -92,6 +105,8 @@ fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
                 conn.createStatement().use { stmt ->
                     stmt.executeUpdate("DELETE FROM auth_accounts")
                     stmt.executeUpdate("DELETE FROM media_servers")
+                    stmt.executeUpdate("DELETE FROM guardrail_rules")
+                    stmt.executeUpdate("DELETE FROM stream_termination_audit")
                 }
             }
             ctx = ContractContext(handle)
@@ -118,6 +133,7 @@ fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
         tinyPositivePercentTests { ctx }
         tautulliBatchAndImporterTests { ctx }
         userLibraryAccessTests { ctx }
+        guardrailAndAuditTests { ctx }
     }
 
 private fun FunSpecRootScope.mediaServerTests(ctxProvider: () -> ContractContext) {
@@ -2236,6 +2252,133 @@ private fun FunSpecRootScope.userLibraryAccessTests(ctxProvider: () -> ContractC
             ctx.servers.delete("srv-1").shouldBeRight() shouldBe true
             ctx.library.findUserLibraryAccessByServer("srv-1").shouldBeRight().shouldBeEmpty()
             ctx.library.findUserLibraryAccessByServer("srv-2").shouldBeRight() shouldHaveSize 1
+        }
+    }
+}
+
+private fun FunSpecRootScope.guardrailAndAuditTests(ctxProvider: () -> ContractContext) {
+    context("GuardrailRuleRepository and StreamTerminationAuditRepository") {
+        test("upserts guardrail rules and queries termination audit log with filters and pagination") {
+            val ctx = ctxProvider()
+
+            ctx.guardrails.findAll().shouldBeRight().shouldBeEmpty()
+            ctx.guardrails.findByRuleType(GuardrailRuleType.PAUSED_TIMEOUT).shouldBeRight().shouldBeNull()
+
+            val paused =
+                GuardrailRuleRecord(
+                    ruleType = GuardrailRuleType.PAUSED_TIMEOUT,
+                    mode = GuardrailMode.WARN,
+                    thresholdInt = 25,
+                    message = "Stream paused too long",
+                    updatedAtMs = 1_000L,
+                    updatedBy = "admin",
+                )
+            ctx.guardrails.upsert(paused).shouldBeRight() shouldBe paused
+            ctx.guardrails.findByRuleType(GuardrailRuleType.PAUSED_TIMEOUT).shouldBeRight() shouldBe paused
+
+            val updatedPaused =
+                paused.copy(
+                    mode = GuardrailMode.ENFORCE,
+                    thresholdInt = 40,
+                    updatedAtMs = 2_000L,
+                    updatedBy = "admin2",
+                )
+            ctx.guardrails.upsert(updatedPaused).shouldBeRight() shouldBe updatedPaused
+
+            val transcode4k =
+                GuardrailRuleRecord(
+                    ruleType = GuardrailRuleType.TRANSCODE_4K,
+                    mode = GuardrailMode.WARN,
+                    thresholdInt = null,
+                    message = "No 4K transcode",
+                    updatedAtMs = 1_500L,
+                    updatedBy = "admin",
+                )
+            ctx.guardrails.upsert(transcode4k).shouldBeRight()
+
+            val allRules = ctx.guardrails.findAll().shouldBeRight()
+            allRules shouldHaveSize 2
+            allRules.first { it.ruleType == GuardrailRuleType.PAUSED_TIMEOUT } shouldBe updatedPaused
+
+            val e1 =
+                StreamTerminationAuditRecord(
+                    id = "aud-1",
+                    createdAtMs = 1_000L,
+                    serverId = "srv-1",
+                    sessionId = "plex-1",
+                    sessionKey = "10",
+                    source = TerminationAuditSource.MANUAL,
+                    action = TerminationAuditAction.TERMINATED,
+                    ruleType = null,
+                    actorAccountId = "acc-1",
+                    actorName = "admin",
+                    targetUserId = "u-1",
+                    targetUsername = "Alice",
+                    mediaRatingKey = "mov-1",
+                    mediaTitle = "Spirited Away",
+                    streamDecision = "transcode",
+                    videoResolution = "4k",
+                    reason = "Maintenance",
+                )
+            val e2 =
+                StreamTerminationAuditRecord(
+                    id = "aud-2",
+                    createdAtMs = 2_000L,
+                    serverId = "srv-1",
+                    sessionId = "plex-2",
+                    sessionKey = "11",
+                    source = TerminationAuditSource.GUARDRAIL,
+                    action = TerminationAuditAction.WARNED,
+                    ruleType = GuardrailRuleType.TRANSCODE_4K,
+                    actorAccountId = null,
+                    actorName = "Guardrail: 4K Transcode",
+                    targetUserId = "u-2",
+                    targetUsername = "Bob",
+                    mediaRatingKey = "mov-2",
+                    mediaTitle = "Dune",
+                    streamDecision = "transcode",
+                    videoResolution = "4k",
+                    reason = "No 4K transcode",
+                )
+            val e3 =
+                e2.copy(
+                    id = "aud-3",
+                    createdAtMs = 3_000L,
+                    action = TerminationAuditAction.TERMINATE_FAILED,
+                    ruleType = GuardrailRuleType.PAUSED_TIMEOUT,
+                    actorName = "Guardrail: Paused Timeout",
+                    errorDetail = "Plex returned HTTP 502",
+                )
+
+            ctx.terminationAudit.insert(e1).shouldBeRight()
+            ctx.terminationAudit.insert(e2).shouldBeRight()
+            ctx.terminationAudit.insert(e3).shouldBeRight()
+
+            val allAudit = ctx.terminationAudit.query(TerminationAuditFilter(limit = 2, offset = 0)).shouldBeRight()
+            allAudit.totalCount shouldBe 3L
+            allAudit.items shouldContainExactly listOf(e3, e2)
+
+            val page2 = ctx.terminationAudit.query(TerminationAuditFilter(limit = 2, offset = 2)).shouldBeRight()
+            page2.totalCount shouldBe 3L
+            page2.items shouldContainExactly listOf(e1)
+
+            val manualOnly =
+                ctx.terminationAudit
+                    .query(TerminationAuditFilter(source = TerminationAuditSource.MANUAL))
+                    .shouldBeRight()
+            manualOnly.totalCount shouldBe 1L
+            manualOnly.items shouldContainExactly listOf(e1)
+
+            val warnedOnly =
+                ctx.terminationAudit
+                    .query(
+                        TerminationAuditFilter(
+                            source = TerminationAuditSource.GUARDRAIL,
+                            action = TerminationAuditAction.WARNED,
+                        ),
+                    ).shouldBeRight()
+            warnedOnly.totalCount shouldBe 1L
+            warnedOnly.items shouldContainExactly listOf(e2)
         }
     }
 }

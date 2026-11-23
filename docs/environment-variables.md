@@ -60,6 +60,21 @@ Miru connects to Plex in one of two ways:
 | `RESUME_MERGE_WINDOW_SECONDS` | `120` | When a user resumes the same item on the same player within this many seconds of stopping, Miru extends the earlier history entry instead of adding a new one. `0` turns merging off. |
 | `WATCHED_THRESHOLD_PERCENT` | `85` | Progress, in percent, at which a play counts as watched. From 1 to 100. Also the default for Tautulli imports. |
 
+## Stream Guardrails
+
+Automated stream guardrails default to `disabled`. Setting a rule's mode to `warn` runs it in dry-run mode (recording structured warnings and audit log entries without terminating Plex sessions), while `enforce` automatically terminates matching Plex streams and sends the configured message to the viewer. Rules can also be adjusted at runtime from the Admin Console.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `GUARDRAIL_4K_TRANSCODE_MODE` | `disabled` | `disabled`, `warn` (dry-run), or `enforce` for 4K/UHD video transcode protection. Audio-only transcodes of 4K direct-stream video do not trigger this rule. |
+| `GUARDRAIL_4K_TRANSCODE_MESSAGE` | `4K video transcoding is disabled on this server. Please select Direct Play or a 1080p version.` | Message displayed on the viewer's Plex client when terminated by the 4K transcode guardrail (max 500 characters). |
+| `GUARDRAIL_PAUSED_TIMEOUT_MODE` | `disabled` | `disabled`, `warn` (dry-run), or `enforce` for streams paused longer than the configured threshold. |
+| `GUARDRAIL_PAUSED_TIMEOUT_MINUTES` | `30` | Continuous pause duration threshold in minutes (`1` to `1440`). Resets when playback resumes. |
+| `GUARDRAIL_PAUSED_TIMEOUT_MESSAGE` | `Your stream was terminated because it remained paused for too long.` | Message displayed on the viewer's Plex client when terminated for remaining paused too long (max 500 characters). |
+| `GUARDRAIL_CONCURRENT_STREAMS_MODE` | `disabled` | `disabled`, `warn` (dry-run), or `enforce` for enforcing a per-user simultaneous stream limit. |
+| `GUARDRAIL_CONCURRENT_STREAMS_MAX` | `2` | Maximum concurrent active streams allowed per media user (`1` to `50`). Excess newest streams are targeted first. |
+| `GUARDRAIL_CONCURRENT_STREAMS_MESSAGE` | `You have exceeded the maximum number of simultaneous streams allowed for your account.` | Message displayed on the viewer's Plex client when terminated for exceeding the concurrent stream limit (max 500 characters). |
+
 ## Authentication
 
 | Variable | Default | Description |

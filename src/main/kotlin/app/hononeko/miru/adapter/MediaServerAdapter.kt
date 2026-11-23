@@ -44,5 +44,10 @@ interface MediaServerAdapter {
         height: Int? = null,
     ): Either<MiruError, ArtworkData>
 
+    suspend fun terminateSession(
+        sessionId: String,
+        reason: String,
+    ): Either<MiruError, Unit>
+
     fun events(): Flow<MediaServerEvent> = emptyFlow()
 }

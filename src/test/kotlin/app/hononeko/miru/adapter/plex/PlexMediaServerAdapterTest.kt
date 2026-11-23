@@ -750,4 +750,53 @@ class PlexMediaServerAdapterTest :
                 }
             disabledTvAdapter.fetchUserLibraryAccess().shouldBeRight().shouldBeEmpty()
         }
+
+        test("terminateSession sends GET /status/sessions/terminate with query params and token header") {
+            val (adapter, requests) =
+                adapterWithMock { request ->
+                    request.url.encodedPath shouldBe "/status/sessions/terminate"
+                    request.url.parameters["sessionId"] shouldBe "sess-42"
+                    request.url.parameters["reason"] shouldBe "4K transcode limit"
+                    respond("", HttpStatusCode.OK)
+                }
+
+            adapter.terminateSession(" sess-42 ", " 4K transcode limit ").shouldBeRight()
+            requests shouldHaveSize 1
+            assertTokenHeaderAndSafeUrl(requests.single())
+        }
+
+        test("terminateSession validates inputs and maps 404, 401/403, and 500 without leaking token") {
+            val (adapter, _) =
+                adapterWithMock { request ->
+                    when (request.url.parameters["sessionId"]) {
+                        "missing" -> respond("not found", HttpStatusCode.NotFound)
+                        "unauthorized" -> respond("denied", HttpStatusCode.Unauthorized)
+                        else -> respond("boom $TEST_TOKEN", HttpStatusCode.InternalServerError)
+                    }
+                }
+
+            adapter.terminateSession("   ", "reason").shouldBeLeft().shouldBeInstanceOf<MiruError.ValidationError>()
+            adapter.terminateSession("s1\n", "reason").shouldBeLeft().shouldBeInstanceOf<MiruError.ValidationError>()
+            adapter
+                .terminateSession("s1", "a".repeat(501))
+                .shouldBeLeft()
+                .shouldBeInstanceOf<MiruError.ValidationError>()
+            adapter.terminateSession("s1", "bad\u0000msg").shouldBeLeft().shouldBeInstanceOf<MiruError.ValidationError>()
+
+            val notFound = adapter.terminateSession("missing", "bye").shouldBeLeft().shouldBeInstanceOf<MiruError.NotFound>()
+            notFound.resource shouldBe "Stream session"
+            notFound.id shouldBe "missing"
+
+            adapter
+                .terminateSession("unauthorized", "bye")
+                .shouldBeLeft()
+                .shouldBeInstanceOf<MiruError.UpstreamAuthError>()
+
+            val unavailable =
+                adapter
+                    .terminateSession("err", "bye")
+                    .shouldBeLeft()
+                    .shouldBeInstanceOf<MiruError.UpstreamUnavailable>()
+            unavailable.message shouldNotContain TEST_TOKEN
+        }
     })

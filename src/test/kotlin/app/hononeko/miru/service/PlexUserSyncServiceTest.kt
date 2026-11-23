@@ -114,6 +114,11 @@ private class FakeUserAdapter(
     override suspend fun fetchMediaDetails(ratingKey: String): Either<MiruError, MediaItemDetails> =
         MiruError.NotFound("Media", ratingKey).left()
 
+    override suspend fun terminateSession(
+        sessionId: String,
+        reason: String,
+    ): Either<MiruError, Unit> = Unit.right()
+
     override fun events(): Flow<MediaServerEvent> = emptyFlow()
 }
 

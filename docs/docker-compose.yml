@@ -1,0 +1,109 @@
+# Example Docker Compose setup for Miru: one container with a SQLite database on a named volume.
+#
+# 1. Copy this file into an empty directory as docker-compose.yml.
+# 2. Next to it, create a .env file with two different random values of at least 32 characters
+#    (e.g. `openssl rand -base64 48`), and keep it out of version control:
+#
+#      AUTH_SESSION_SECRET=...
+#      MIRU_ENCRYPTION_KEY=...
+#
+# 3. Run `docker compose up -d`, open http://localhost:8080, create the first admin account,
+#    then connect your Plex server from Admin.
+#
+# Every setting is listed in environment-variables.md, next to this file.
+
+name: miru
+
+services:
+  miru:
+    # Pin the release you want: https://github.com/hononeko/miru/pkgs/container/miru
+    image: ghcr.io/hononeko/miru:0.1.0
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # SQLite database in the miru-data volume. For PostgreSQL, see the end of this file.
+      DB_ENGINE: sqlite
+      SQLITE_PATH: /data/miru.db
+
+      # Leave PLEX_URL and PLEX_TOKEN unset to sign in to Plex from the Admin UI, which stores the
+      # credentials encrypted with MIRU_ENCRYPTION_KEY. Or set both to use a static token:
+      # PLEX_URL: http://plex:32400                    # Plex in this Compose project
+      # PLEX_URL: http://host.docker.internal:32400    # Plex on the Docker host (see extra_hosts)
+      # PLEX_TOKEN: ${PLEX_TOKEN}
+
+      # "local", "oidc" or "none" (no login at all; only for trusted networks).
+      # With "none", remove AUTH_SESSION_SECRET below.
+      AUTH_MODE: local
+      AUTH_SESSION_SECRET: ${AUTH_SESSION_SECRET:?set AUTH_SESSION_SECRET in .env}
+      MIRU_ENCRYPTION_KEY: ${MIRU_ENCRYPTION_KEY:?set MIRU_ENCRYPTION_KEY in .env}
+
+      # Optional: create the first admin on startup instead of using the first-run setup page.
+      # The password needs 12+ characters with an uppercase letter, a lowercase letter and a digit.
+      # MIRU_ADMIN_USERNAME: admin
+      # MIRU_ADMIN_PASSWORD: ${MIRU_ADMIN_PASSWORD}
+
+      # Single sign-on: set AUTH_MODE=oidc, or OIDC_ENABLED=true to offer it next to local logins.
+      # Register http://localhost:8080/api/v1/auth/oidc/callback (or your public URL) with the provider.
+      # OIDC_ENABLED: "true"
+      # OIDC_ISSUER_URL: https://auth.example.com/application/o/miru/
+      # OIDC_CLIENT_ID: miru
+      # OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
+      # OIDC_REDIRECT_URI: http://localhost:8080/api/v1/auth/oidc/callback
+      # OIDC_ADMIN_GROUPS: miru-admins
+      # OIDC_USER_GROUPS: miru-users
+
+      LOG_LEVEL: INFO
+    volumes:
+      # A named volume inherits the image's ownership (UID/GID 10001). If you bind-mount a host
+      # directory instead, `chown 10001:10001` it first.
+      - miru-data:/data
+    # Lets PLEX_URL=http://host.docker.internal:32400 reach Plex on the Docker host under Linux.
+    # extra_hosts:
+    #   - host.docker.internal:host-gateway
+    read_only: true
+    tmpfs:
+      # The SQLite driver loads its native library from /tmp, so it must allow exec.
+      - /tmp:exec
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  miru-data:
+
+# --- PostgreSQL instead of SQLite ---------------------------------------------------------------
+# 1. Add POSTGRES_PASSWORD=... to .env.
+# 2. In the miru service, replace DB_ENGINE and SQLITE_PATH with:
+#
+#      DB_ENGINE: postgres
+#      DATABASE_URL: jdbc:postgresql://postgres:5432/miru
+#      DATABASE_USER: miru
+#      DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+#
+#    and add, at the same level as `environment:`:
+#
+#      depends_on:
+#        postgres:
+#          condition: service_healthy
+#
+# 3. Add this service under `services:`:
+#
+#      postgres:
+#        image: postgres:16-alpine
+#        restart: unless-stopped
+#        environment:
+#          POSTGRES_DB: miru
+#          POSTGRES_USER: miru
+#          POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+#        volumes:
+#          - postgres-data:/var/lib/postgresql/data
+#        healthcheck:
+#          test: ["CMD-SHELL", "pg_isready -U miru -d miru"]
+#          interval: 10s
+#          timeout: 5s
+#          retries: 5
+#
+# 4. Add `postgres-data:` under `volumes:`. Miru keeps nothing on disk with PostgreSQL, so you can
+#    drop the miru-data volume.

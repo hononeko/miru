@@ -28,7 +28,7 @@ These files are documentation. Nothing deploys them from this repository: copy t
 
    Keep the filled-in file out of version control. To use External Secrets, Sealed Secrets, SOPS or `kubectl create secret` instead, remove `secret.yaml` from `kustomization.yaml` and provide a Secret named `miru-secrets` with the same keys.
 
-3. **Settings.** Review `configmap.yaml`. The defaults use SQLite and local logins, and leave Plex to be connected from the Admin UI.
+3. **Settings.** Review `configmap.yaml`. The defaults use SQLite and local logins, and leave Plex to be connected from the Admin UI. Every available setting is listed in [`../environment-variables.md`](../environment-variables.md).
 
 4. **Image.** Set `images[0].newTag` in `kustomization.yaml` to the release you want from [`ghcr.io/hononeko/miru`](https://github.com/hononeko/miru/pkgs/container/miru). Pin a digest (`<version>@sha256:<digest>`) for repeatable deploys.
 

@@ -100,6 +100,7 @@ data class CreateApiKeyRequest(
     val name: String,
     val role: MiruRole = MiruRole.ADMIN,
     val expiresAtMs: Long? = null,
+    val expiresIn: String? = null,
 )
 
 @Serializable

@@ -302,6 +302,7 @@ private fun Route.adminApiKeyRoutes(authService: AuthService) {
                                 name = request.name,
                                 role = request.role,
                                 expiresAtMs = request.expiresAtMs,
+                                expiresIn = request.expiresIn,
                             ).bind()
                     CreateApiKeyResponse(
                         apiKey = created.record.toResponse(),

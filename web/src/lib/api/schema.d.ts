@@ -842,8 +842,16 @@ export interface components {
             accountId?: string | null;
             name: string;
             role?: components["schemas"]["MiruRole"];
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Optional explicit expiration timestamp in epoch milliseconds (must be in the future).
+             */
             expiresAtMs?: number | null;
+            /**
+             * @description Optional preset expiration interval when expiresAtMs is not provided.
+             * @enum {string|null}
+             */
+            expiresIn?: "7d" | "30d" | "90d" | "1y" | "never" | null;
         };
         ApiKeyResponse: {
             id: string;

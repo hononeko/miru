@@ -2128,6 +2128,12 @@ components:
           type: integer
           format: int64
           nullable: true
+          description: Optional explicit expiration timestamp in epoch milliseconds (must be in the future).
+        expiresIn:
+          type: string
+          enum: [7d, 30d, 90d, 1y, never]
+          nullable: true
+          description: Optional preset expiration interval when expiresAtMs is not provided.
 
     ApiKeyResponse:
       type: object

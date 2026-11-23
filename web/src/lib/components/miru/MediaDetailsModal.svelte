@@ -548,7 +548,7 @@
 							? 'flex flex-col gap-3 rounded-xl border border-border bg-elevated/70 p-4'
 							: 'flex flex-col gap-3 rounded-xl border border-border bg-elevated/70 p-4 md:col-span-2'}
 					>
-						<div class="flex items-center justify-between gap-2">
+						<div class="flex flex-wrap items-center justify-between gap-2">
 							<div class="flex items-center gap-2">
 								<Play class="h-4 w-4 text-direct-play" />
 								<h2 class="font-heading text-xs font-semibold uppercase tracking-wider text-direct-play">
@@ -557,7 +557,7 @@
 							</div>
 							{#if data.playSummary.avgCompletionPercent != null}
 								<Badge tone="direct-play" mono>
-									{formatStatPercent(data.playSummary.avgCompletionPercent, 0)} AVG
+									{formatStatPercent(data.playSummary.avgCompletionPercent, 0)} AVG COMPLETION
 								</Badge>
 							{/if}
 						</div>

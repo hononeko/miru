@@ -83,7 +83,7 @@ describe('MediaDetailsModal', () => {
 
 		const { container } = render(MediaDetailsModal);
 
-		expect(screen.getByText('<1% AVG')).toBeTruthy();
+		expect(screen.getByText('<1% AVG COMPLETION')).toBeTruthy();
 
 		const backdrop = () => container.querySelector<HTMLImageElement>('img[aria-hidden="true"]');
 		expect(backdrop()?.getAttribute('src')).toBe('/api/v1/media/54000/art?w=960');

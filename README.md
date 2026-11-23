@@ -86,7 +86,41 @@ Miru keeps live sessions in sync with Plex through two complementary paths:
 
 Both stop cleanly when the Ktor application shuts down.
 
-## Container & Kubernetes Deployment
+## Deployment
+
+Miru ships as a multi-arch (amd64, arm64) container image at
+[`ghcr.io/hononeko/miru`](https://github.com/hononeko/miru/pkgs/container/miru). It listens on port 8080 and keeps
+its SQLite database in `/data`, or uses PostgreSQL instead.
+
+### Docker Compose
+
+[`docs/docker-compose.yml`](docs/docker-compose.yml) runs Miru with SQLite on a named volume, with notes for
+switching to PostgreSQL. Copy it into an empty directory, add a `.env` file next to it with two random secrets of at
+least 32 characters, and start it:
+
+```sh
+cat > .env <<EOF
+AUTH_SESSION_SECRET=$(openssl rand -base64 48)
+MIRU_ENCRYPTION_KEY=$(openssl rand -base64 48)
+EOF
+docker compose up -d
+```
+
+Then open <http://localhost:8080>, create the first admin account, and connect Plex from **Admin**.
+
+### Kubernetes
+
+[`docs/k8s/`](docs/k8s/README.md) holds example Kustomize manifests for a single pod with SQLite on a persistent
+volume, under the `restricted` Pod Security Standard, with optional Gateway API route, Ingress and NetworkPolicy.
+Copy the directory into your own deployment repository, fill in the secret, and apply it with `kubectl apply -k`.
+Its [README](docs/k8s/README.md) covers PostgreSQL, single sign-on and connecting Plex.
+
+### Configuration
+
+Every setting is an environment variable. See [`docs/environment-variables.md`](docs/environment-variables.md)
+for the full list with defaults and validation rules.
+
+### Building the image
 
 Build and smoke-test the container image locally:
 
@@ -98,6 +132,4 @@ docker run --rm -p 8080:8080 \
   -e AUTH_MODE=none \
   miru:local
 ```
-
-Example Kubernetes Kustomize manifests, to copy into your own deployment repository and adapt, are in [`docs/k8s/`](docs/k8s/README.md).
 

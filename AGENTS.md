@@ -46,7 +46,9 @@ Versions follow the rules shared by all hononeko repositories in [`hononeko/acti
 ├── config/detekt/detekt.yml      # Detekt rules
 ├── docs/
 │   ├── screenshots/              # README screenshots
-│   └── k8s/                      # Example Kustomize manifests (documentation only, not deployed)
+│   ├── k8s/                      # Example Kustomize manifests (documentation only, not deployed)
+│   ├── docker-compose.yml        # Example Docker Compose setup (documentation only)
+│   └── environment-variables.md  # Reference for every configuration variable
 ├── gradle/libs.versions.toml     # Dependency version catalog
 ├── src/
 │   ├── main/

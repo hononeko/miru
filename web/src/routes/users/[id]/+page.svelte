@@ -26,7 +26,9 @@
 		formatMediaTitle,
 		formatRelativeTime,
 		formatShortDateTime,
-		getDecisionMeta
+		formatStatPercent,
+		getDecisionMeta,
+		statBarWidth
 	} from '$lib/utils';
 
 	let lastDefaultRange = preferencesStore.prefs.defaultStatsRange;
@@ -236,7 +238,7 @@
 			/>
 			<KpiCard
 				label="Avg Completion"
-				value={`${stats.averageCompletionPercent.toFixed(1)}%`}
+				value={formatStatPercent(stats.averageCompletionPercent)}
 				subtitle={`${stats.completedPlays.toLocaleString()} completed plays`}
 				dotClass="bg-direct-play"
 			/>
@@ -248,13 +250,13 @@
 			/>
 			<KpiCard
 				label="Direct Play"
-				value={`${stats.decisionBreakdown.directPlayPercent.toFixed(1)}%`}
+				value={formatStatPercent(stats.decisionBreakdown.directPlayPercent)}
 				subtitle={`${stats.decisionBreakdown.directPlay} Direct · ${stats.decisionBreakdown.directStream} Remux`}
 				dotClass="bg-direct-play"
 			/>
 			<KpiCard
 				label="HW Transcode"
-				value={`${stats.decisionBreakdown.hwTranscodePercent.toFixed(1)}%`}
+				value={formatStatPercent(stats.decisionBreakdown.hwTranscodePercent)}
 				subtitle={`${stats.decisionBreakdown.hwTranscode} GPU · ${stats.decisionBreakdown.transcode} total transcodes`}
 				dotClass="bg-hw-transcode"
 			/>
@@ -330,13 +332,13 @@
 								<div class="flex items-center justify-between text-xs">
 									<span class="truncate font-medium text-fg-primary">{plat.platform}</span>
 									<span class="shrink-0 font-mono text-[11px] text-fg-secondary tabular-nums">
-										{analyticsMetric === 'duration' ? formatDurationSec(plat.watchDurationSec) : plat.playCount} · {plat.percent.toFixed(1)}%
+										{analyticsMetric === 'duration' ? formatDurationSec(plat.watchDurationSec) : plat.playCount} · {formatStatPercent(plat.percent)}
 									</span>
 								</div>
 								<div class="h-1.5 w-full overflow-hidden rounded-full bg-subtle">
 									<div
-										class={idx === 0 ? 'h-full rounded-full bg-primary' : 'h-full rounded-full bg-cyan'}
-										style:width={`${Math.max(4, plat.percent)}%`}
+										class={`h-full rounded-full ${idx === 0 ? 'bg-primary' : 'bg-cyan'} ${plat.percent > 0 ? 'min-w-0.5' : ''}`}
+										style:width={statBarWidth(plat.percent)}
 									></div>
 								</div>
 							</div>
@@ -348,7 +350,7 @@
 					<div class="flex flex-wrap gap-1.5 border-t border-border pt-3">
 						{#each stats.libraryBreakdown as lib}
 							<Badge tone="cyan" mono>
-								Sec {lib.librarySectionKey} · {lib.percent.toFixed(0)}%
+								Sec {lib.librarySectionKey} · {formatStatPercent(lib.percent, 0)}
 							</Badge>
 						{/each}
 					</div>
@@ -426,7 +428,7 @@
 							Binge & Completion
 						</span>
 						<p class="mt-1 font-mono text-base font-bold text-cyan-hi tabular-nums">
-							{wrapped.longestBingeStreakDays}d streak · {wrapped.averageCompletionPercent.toFixed(0)}%
+							{wrapped.longestBingeStreakDays}d streak · {formatStatPercent(wrapped.averageCompletionPercent, 0)}
 						</p>
 						<p class="text-[10px] text-fg-secondary">
 							{wrapped.completedPlays.toLocaleString()} completed sessions
@@ -535,7 +537,7 @@
 						{wrapped.longestBingeStreakDays} days
 					</p>
 					<p class="text-[10px] text-fg-secondary">
-						{wrapped.averageCompletionPercent.toFixed(1)}% avg completion
+						{formatStatPercent(wrapped.averageCompletionPercent)} avg completion
 					</p>
 				</div>
 			</div>

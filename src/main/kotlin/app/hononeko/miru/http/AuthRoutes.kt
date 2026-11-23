@@ -231,7 +231,10 @@ private fun Route.adminAccountRoutes(authService: AuthService) {
         get {
             val result =
                 authService.listAccounts().map { accounts ->
-                    AccountListResponse(accounts = accounts.map { it.toResponse() })
+                    AccountListResponse(
+                        accounts = accounts.map { it.toResponse() },
+                        emailLinkingEnabled = authService.emailLinkingEnabled,
+                    )
                 }
             call.respondEither(result)
         }
@@ -271,6 +274,18 @@ private fun Route.adminAccountRoutes(authService: AuthService) {
                     .setLinkedMediaUsers(
                         accountId = targetId,
                         mediaUserIds = request.mediaUserIds,
+                    ).map { it.toResponse() }
+            call.respondEither(result)
+        }
+
+        put("/{id}/media-user-link-mode") {
+            val targetId = call.parameters["id"].orEmpty()
+            val request = call.receive<SetMediaUserLinkModeRequest>()
+            val result =
+                authService
+                    .setMediaUserLinkMode(
+                        accountId = targetId,
+                        mode = request.mode,
                     ).map { it.toResponse() }
             call.respondEither(result)
         }

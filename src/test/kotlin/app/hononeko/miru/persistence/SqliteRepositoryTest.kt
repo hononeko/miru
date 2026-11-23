@@ -64,5 +64,14 @@ class SqliteRepositoryTest :
             DatabaseReadinessCheck(ephemeral.dataSource).check().shouldBeLeft()
         }
 
+        test("V8 marks existing SSO accounts AUTO only when their links are all email matches") {
+            val dir = Files.createTempDirectory("miru-sqlite-link-mode-")
+            try {
+                assertMediaUserLinkModeBackfill(DatabaseConfig.Sqlite(dir.resolve("miru.db").toString()))
+            } finally {
+                dir.toFile().deleteRecursively()
+            }
+        }
+
         include(repositoryContractSpec { requireHandle() })
     })

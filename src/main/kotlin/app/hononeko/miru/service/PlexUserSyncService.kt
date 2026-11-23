@@ -38,6 +38,8 @@ class PlexUserSyncService(
     private val syncInterval: Duration = DEFAULT_SYNC_INTERVAL,
     private val clock: () -> Long = System::currentTimeMillis,
     private val idGenerator: () -> String = { UUID.randomUUID().toString() },
+    /** Runs after each successful sync, while the sync lock is held (e.g. to relink accounts by email). */
+    private val onUsersSynced: suspend () -> Unit = {},
 ) : RealtimeLifecycle {
     init {
         require(syncInterval.isPositive()) { "syncInterval must be positive" }
@@ -65,7 +67,7 @@ class PlexUserSyncService(
 
     suspend fun syncOnce(): Either<MiruError, Int> =
         syncMutex.withLock {
-            syncOnceLocked()
+            syncOnceLocked().onRight { onUsersSynced() }
         }
 
     private suspend fun syncOnceLocked(): Either<MiruError, Int> =

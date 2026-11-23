@@ -1,5 +1,6 @@
 package app.hononeko.miru.auth
 
+import app.hononeko.miru.auth.oidc.OidcAuthService.Companion.PROVIDER_OIDC
 import app.hononeko.miru.config.AuthConfig
 import app.hononeko.miru.config.AuthMode
 import app.hononeko.miru.domain.error.MiruError
@@ -67,6 +68,7 @@ class AuthService(
     private val clock: () -> Long = { System.currentTimeMillis() },
     private val idGenerator: () -> String = { UUID.randomUUID().toString() },
     private val preferencesRepository: UserPreferencesRepository? = null,
+    private val emailLinker: EmailMediaUserLinker? = null,
 ) {
     private val logger = LoggerFactory.getLogger(AuthService::class.java)
     private val setupMutex = Mutex()
@@ -319,6 +321,10 @@ class AuthService(
             null
         }
 
+    /** Whether SSO sign-in links AUTO accounts to media users by email (OIDC enabled and OIDC_AUTO_LINK_BY_EMAIL on). */
+    val emailLinkingEnabled: Boolean
+        get() = authConfig.oidcEnabled && authConfig.oidc.autoLinkByEmail
+
     suspend fun listAccounts(): Either<MiruError, List<AccountWithLinks>> =
         either {
             val accounts = accountRepository.findAll().bind()
@@ -388,6 +394,10 @@ class AuthService(
             }
         }
 
+    /**
+     * Replaces the account's linked media users with an admin's choice and switches the account to
+     * [MediaUserLinkMode.MANUAL], so SSO sign-in never relinks it by email afterwards.
+     */
     suspend fun setLinkedMediaUsers(
         accountId: String,
         mediaUserIds: Set<String>,
@@ -398,8 +408,41 @@ class AuthService(
                     ?: raise(MiruError.NotFound(resource = "Account", id = accountId))
             val normalizedLinks = mediaUserIds.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
             validateMediaUserIdsExist(normalizedLinks).bind()
-            accountRepository.replaceLinkedMediaUserIds(accountId, normalizedLinks, clock()).bind()
-            AccountWithLinks(account = account, linkedMediaUserIds = normalizedLinks)
+            val now = clock()
+            val manual = MediaUserLinkMode.MANUAL.name
+            accountRepository.replaceLinkedMediaUserIds(accountId, normalizedLinks, now, linkMode = manual).bind()
+            AccountWithLinks(
+                account = account.copy(mediaUserLinkMode = manual, updatedAtMs = now),
+                linkedMediaUserIds = normalizedLinks,
+            )
+        }
+
+    /**
+     * Sets how the account's linked media users are maintained. [MediaUserLinkMode.AUTO] applies only to SSO
+     * accounts and relinks the account right away from the email its last sign-in recorded; an account with no
+     * recorded verification keeps its links until its next sign-in.
+     */
+    suspend fun setMediaUserLinkMode(
+        accountId: String,
+        mode: MediaUserLinkMode,
+    ): Either<MiruError, AccountWithLinks> =
+        either {
+            val account =
+                accountRepository.findById(accountId).bind()
+                    ?: raise(MiruError.NotFound(resource = "Account", id = accountId))
+            ensure(mode == MediaUserLinkMode.MANUAL || account.authProvider.equals(PROVIDER_OIDC, ignoreCase = true)) {
+                MiruError.Conflict("Automatic media user linking by email is only available for SSO accounts")
+            }
+            val updated =
+                accountRepository.updateMediaUserLinkMode(accountId, mode.name, clock()).bind()
+                    ?: raise(MiruError.NotFound(resource = "Account", id = accountId))
+            val links =
+                if (mode == MediaUserLinkMode.AUTO && emailLinker != null) {
+                    emailLinker.relink(updated).bind()
+                } else {
+                    accountRepository.findLinkedMediaUserIds(accountId).bind()
+                }
+            AccountWithLinks(account = updated, linkedMediaUserIds = links)
         }
 
     suspend fun listApiKeys(accountId: String? = null): Either<MiruError, List<ApiKeyRecord>> =

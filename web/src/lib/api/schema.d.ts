@@ -1221,6 +1221,8 @@ export interface components {
             serverId: string;
             userId: string;
             username?: string | null;
+            /** @description The user's name from the media server (e.g. a Plex friend's first name), when it has one. */
+            displayName?: string | null;
             ratingKey: string;
             mediaType: string;
             title: string;
@@ -1296,6 +1298,8 @@ export interface components {
             serverId: string;
             userId: string;
             username?: string | null;
+            /** @description The user's name from the media server (e.g. a Plex friend's first name), when it has one. */
+            displayName?: string | null;
             externalImportKey?: string | null;
             media: components["schemas"]["HistoryMediaDto"];
             /** Format: int64 */

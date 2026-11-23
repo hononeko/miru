@@ -1,6 +1,7 @@
 package app.hononeko.miru.http
 
 import app.hononeko.miru.persistence.model.PlaybackHistoryRecord
+import app.hononeko.miru.persistence.model.UserRecord
 import kotlinx.serialization.Serializable
 
 internal fun buildThumbUrl(
@@ -17,6 +18,8 @@ data class HistoryItemDto(
     val serverId: String,
     val userId: String,
     val username: String? = null,
+    /** The user's name from the media server (e.g. a Plex friend's first name), when it has one. */
+    val displayName: String? = null,
     val ratingKey: String,
     val mediaType: String,
     val title: String,
@@ -95,6 +98,8 @@ data class HistoryDetailResponse(
     val serverId: String,
     val userId: String,
     val username: String? = null,
+    /** The user's name from the media server (e.g. a Plex friend's first name), when it has one. */
+    val displayName: String? = null,
     val externalImportKey: String? = null,
     val media: HistoryMediaDto,
     val viewOffsetMs: Long,
@@ -275,12 +280,13 @@ data class UserStatsResponse(
     val libraryBreakdown: List<LibraryBreakdownStatDto>,
 )
 
-internal fun PlaybackHistoryRecord.toHistoryItemDto(username: String?): HistoryItemDto =
+internal fun PlaybackHistoryRecord.toHistoryItemDto(user: UserRecord?): HistoryItemDto =
     HistoryItemDto(
         id = id,
         serverId = serverId,
         userId = userId,
-        username = username,
+        username = user?.username,
+        displayName = user?.displayName?.takeIf { it.isNotBlank() },
         ratingKey = media.ratingKey,
         mediaType = media.mediaType,
         title = media.title,
@@ -307,12 +313,13 @@ internal fun PlaybackHistoryRecord.toHistoryItemDto(username: String?): HistoryI
         stoppedAtMs = stoppedAtMs,
     )
 
-internal fun PlaybackHistoryRecord.toHistoryDetailResponse(username: String?): HistoryDetailResponse =
+internal fun PlaybackHistoryRecord.toHistoryDetailResponse(user: UserRecord?): HistoryDetailResponse =
     HistoryDetailResponse(
         id = id,
         serverId = serverId,
         userId = userId,
-        username = username,
+        username = user?.username,
+        displayName = user?.displayName?.takeIf { it.isNotBlank() },
         externalImportKey = externalImportKey,
         media =
             HistoryMediaDto(

@@ -102,6 +102,27 @@ tasks.shadowJar {
     exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA")
 }
 
+// Everything `shadowJar` resolves: the libraries, plus the Kotlin compiler and its serialization plugin.
+val shadowJarBuildClasspaths =
+    setOf(
+        "compileClasspath",
+        "runtimeClasspath",
+        "annotationProcessor",
+        "kotlinCompilerClasspath",
+        "kotlinCompilerPluginClasspathMain",
+        "kotlinBuildToolsApiClasspath",
+    )
+
+// The Docker build runs this with only the build scripts copied in, so the downloaded jars live in a layer that only
+// changes with the build scripts, and a source-only change builds the image without downloading anything.
+tasks.register("downloadDependencies") {
+    description = "Downloads every dependency shadowJar needs, without compiling anything."
+    val classpaths = files(configurations.matching { it.name in shadowJarBuildClasspaths })
+    doLast {
+        logger.lifecycle("Downloaded {} dependency files", classpaths.files.size)
+    }
+}
+
 detekt {
     buildUponDefaultConfig = true
     parallel = true

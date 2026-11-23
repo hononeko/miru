@@ -244,3 +244,25 @@ data class MediaItemCacheRecord(
     val addedAtMs: Long,
     val updatedAtMs: Long,
 )
+
+data class UserLibraryAccessRecord(
+    val serverId: String,
+    val externalUserId: String,
+    val allLibraries: Boolean = false,
+    val sectionKeys: Set<String> = emptySet(),
+    val updatedAtMs: Long,
+)
+
+data class ResolvedLibraryAccess(
+    val allLibrariesServerIds: Set<String> = emptySet(),
+    val allowedSections: Set<Pair<String, String>> = emptySet(),
+) {
+    fun canAccess(
+        serverId: String,
+        sectionKey: String,
+    ): Boolean = serverId in allLibrariesServerIds || (serverId to sectionKey) in allowedSections
+
+    companion object {
+        val EMPTY = ResolvedLibraryAccess()
+    }
+}

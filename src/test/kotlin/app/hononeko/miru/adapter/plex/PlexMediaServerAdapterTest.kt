@@ -3,6 +3,7 @@ package app.hononeko.miru.adapter.plex
 import app.hononeko.miru.adapter.ArtworkData
 import app.hononeko.miru.adapter.MediaServerEvent
 import app.hononeko.miru.adapter.MediaType
+import app.hononeko.miru.adapter.MediaUserLibraryAccess
 import app.hononeko.miru.adapter.PlaybackState
 import app.hononeko.miru.adapter.StreamDecision
 import app.hononeko.miru.adapter.StreamLocation
@@ -548,5 +549,66 @@ class PlexMediaServerAdapterTest :
 
             val invalidErr = missingAdapter.fetchMediaDetails("../bad").shouldBeLeft().shouldBeInstanceOf<MiruError.ValidationError>()
             invalidErr.message shouldNotContain TEST_TOKEN
+        }
+
+        test("fetchUserLibraryAccess parses Plex.tv shared_servers XML, merges owner access, and rejects XXE/HTTP errors") {
+            val (adapter, requests) =
+                adapterWithMock(plexTvBaseUrl = TEST_PLEX_TV_URL) { request ->
+                    when (request.url.encodedPath) {
+                        "/api/v2/user" -> respondJson(PlexFixtures.plexTvUserJson)
+                        "/" -> respondJson(PlexFixtures.serverRootJson)
+                        "/api/servers/abc123machine/shared_servers" ->
+                            respond(
+                                content = PlexFixtures.sharedServersXml,
+                                status = HttpStatusCode.OK,
+                                headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Xml.toString()),
+                            )
+                        else -> respond("not found", HttpStatusCode.NotFound)
+                    }
+                }
+
+            val access = adapter.fetchUserLibraryAccess().shouldBeRight()
+            access shouldBe
+                listOf(
+                    MediaUserLibraryAccess(
+                        externalUserId = "99887766",
+                        allLibraries = true,
+                    ),
+                    MediaUserLibraryAccess(
+                        externalUserId = "2002",
+                        allLibraries = false,
+                        sectionKeys = setOf("1", "3"),
+                    ),
+                    MediaUserLibraryAccess(
+                        externalUserId = "3003",
+                        allLibraries = true,
+                        sectionKeys = emptySet(),
+                    ),
+                )
+            requests.map { it.url.encodedPath } shouldBe
+                listOf("/api/v2/user", "/", "/api/servers/abc123machine/shared_servers")
+
+            val (xxeAdapter, _) =
+                adapterWithMock(plexTvBaseUrl = TEST_PLEX_TV_URL) { request ->
+                    when (request.url.encodedPath) {
+                        "/api/v2/user" -> respondJson(PlexFixtures.plexTvUserJson)
+                        "/" -> respondJson(PlexFixtures.serverRootJson)
+                        "/api/servers/abc123machine/shared_servers" ->
+                            respond(
+                                content = PlexFixtures.xxeSharedServersXml,
+                                status = HttpStatusCode.OK,
+                                headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Xml.toString()),
+                            )
+                        else -> respond("not found", HttpStatusCode.NotFound)
+                    }
+                }
+            val xxeError = xxeAdapter.fetchUserLibraryAccess().shouldBeLeft().shouldBeInstanceOf<MiruError.UpstreamUnavailable>()
+            xxeError.message shouldNotContain TEST_TOKEN
+
+            val (disabledTvAdapter, _) =
+                adapterWithMock(plexTvBaseUrl = null) { _ ->
+                    respondJson(PlexFixtures.serverRootJson)
+                }
+            disabledTvAdapter.fetchUserLibraryAccess().shouldBeRight().shouldBeEmpty()
         }
     })

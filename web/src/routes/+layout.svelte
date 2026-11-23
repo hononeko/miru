@@ -17,6 +17,15 @@
 	let { children }: Props = $props();
 
 	const isAuthPage = $derived(page.url.pathname === '/login' || page.url.pathname === '/setup');
+	const isAdminOnlyRoute = $derived.by(() => {
+		const pathname = page.url.pathname;
+		return (
+			pathname === '/admin' ||
+			pathname.startsWith('/admin/') ||
+			pathname === '/users' ||
+			pathname.startsWith('/users/')
+		);
+	});
 
 	onMount(() => {
 		void authStore.init();
@@ -57,7 +66,7 @@
 			return;
 		}
 
-		if (pathname === '/admin' && !authStore.isAdmin) {
+		if (isAdminOnlyRoute && !authStore.isAdmin) {
 			void goto('/');
 			return;
 		}
@@ -79,6 +88,12 @@
 	{@render children?.()}
 {:else}
 	<AppShell>
-		{@render children?.()}
+		{#if isAdminOnlyRoute && !authStore.isAdmin}
+			<div class="rounded-xl border border-border bg-surface p-10 text-center font-mono text-xs text-fg-muted">
+				Redirecting…
+			</div>
+		{:else}
+			{@render children?.()}
+		{/if}
 	</AppShell>
 {/if}

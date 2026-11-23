@@ -1,10 +1,12 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { Search } from 'lucide-svelte';
 	import { api, MiruApiError, unwrap } from '$api/client';
 	import type { UserSummaryDto } from '$api/types';
 	import Badge from '$components/ui/Badge.svelte';
 	import ProxiedImage from '$components/miru/ProxiedImage.svelte';
+	import { authStore } from '$stores/auth.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
 	import { cn, formatDurationSec, formatRelativeTime } from '$lib/utils';
 
@@ -14,6 +16,10 @@
 	let query = $state('');
 
 	async function loadUsers() {
+		if (!authStore.isAdmin) {
+			loading = false;
+			return;
+		}
 		loading = true;
 		error = null;
 		try {
@@ -27,6 +33,10 @@
 	}
 
 	onMount(() => {
+		if (!authStore.loading && !authStore.isAdmin) {
+			void goto('/');
+			return;
+		}
 		void loadUsers();
 	});
 
@@ -49,6 +59,11 @@
 </svelte:head>
 
 <div class="flex flex-col gap-5">
+	{#if !authStore.isAdmin}
+		<div role="alert" class="rounded-xl border border-danger/50 bg-danger-soft px-4 py-3 text-xs text-danger">
+			Administrator role is required to view media users.
+		</div>
+	{:else}
 	<div class="flex flex-wrap items-center justify-between gap-3">
 		<div>
 			<h1 class="font-display text-2xl font-bold tracking-wide text-fg-primary sm:text-3xl">
@@ -154,5 +169,6 @@
 				</a>
 			{/each}
 		</div>
+	{/if}
 	{/if}
 </div>

@@ -21,7 +21,9 @@ import app.hononeko.miru.persistence.model.MediaPlaySummary
 import app.hononeko.miru.persistence.model.MediaServerRecord
 import app.hononeko.miru.persistence.model.PlaybackHistoryRecord
 import app.hononeko.miru.persistence.model.PlayerRecord
+import app.hononeko.miru.persistence.model.ResolvedLibraryAccess
 import app.hononeko.miru.persistence.model.StreamTechRecord
+import app.hononeko.miru.persistence.model.UserLibraryAccessRecord
 import app.hononeko.miru.persistence.model.UserPlaybackSummary
 import app.hononeko.miru.persistence.model.UserPreferencesRecord
 import app.hononeko.miru.persistence.model.UserRecord
@@ -108,6 +110,7 @@ fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
         userPreferencesTests { ctx }
         historyAndStatsServiceTests { ctx }
         tautulliBatchAndImporterTests { ctx }
+        userLibraryAccessTests { ctx }
     }
 
 private fun FunSpecRootScope.mediaServerTests(ctxProvider: () -> ContractContext) {
@@ -1568,6 +1571,129 @@ private fun FunSpecRootScope.tautulliBatchAndImporterTests(ctxProvider: () -> Co
             } finally {
                 tempDir.toFile().deleteRecursively()
             }
+        }
+    }
+}
+
+private fun FunSpecRootScope.userLibraryAccessTests(ctxProvider: () -> ContractContext) {
+    context("UserLibraryAccess") {
+        test("replaces per-server library shares, resolves union across linked users + owners, and cascades on server delete") {
+            val ctx = ctxProvider()
+            ctx.servers.upsert(sampleServer(id = "srv-1", name = "Main", machineId = "mach-1")).shouldBeRight()
+            ctx.servers.upsert(sampleServer(id = "srv-2", name = "Backup", machineId = "mach-2")).shouldBeRight()
+
+            ctx.users
+                .upsert(
+                    sampleUser(id = "mu-owner", serverId = "srv-1", externalUserId = "1", username = "owner")
+                        .copy(isAdmin = true),
+                ).shouldBeRight()
+            ctx.users
+                .upsert(sampleUser(id = "mu-bob", serverId = "srv-1", externalUserId = "1002", username = "bob"))
+                .shouldBeRight()
+            ctx.users
+                .upsert(sampleUser(id = "mu-carol", serverId = "srv-1", externalUserId = "1003", username = "carol"))
+                .shouldBeRight()
+            ctx.users
+                .upsert(sampleUser(id = "mu-dave", serverId = "srv-2", externalUserId = "1004", username = "dave"))
+                .shouldBeRight()
+
+            ctx.library
+                .replaceUserLibraryAccess(
+                    serverId = "srv-1",
+                    records =
+                        listOf(
+                            UserLibraryAccessRecord(
+                                serverId = "srv-1",
+                                externalUserId = "1002",
+                                allLibraries = false,
+                                sectionKeys = setOf("1", "3"),
+                                updatedAtMs = 5_000L,
+                            ),
+                            UserLibraryAccessRecord(
+                                serverId = "srv-1",
+                                externalUserId = "1003",
+                                allLibraries = true,
+                                sectionKeys = emptySet(),
+                                updatedAtMs = 5_000L,
+                            ),
+                        ),
+                ).shouldBeRight()
+            ctx.library
+                .replaceUserLibraryAccess(
+                    serverId = "srv-2",
+                    records =
+                        listOf(
+                            UserLibraryAccessRecord(
+                                serverId = "srv-2",
+                                externalUserId = "1004",
+                                allLibraries = false,
+                                sectionKeys = setOf("2"),
+                                updatedAtMs = 5_000L,
+                            ),
+                        ),
+                ).shouldBeRight()
+
+            val srv1Rows = ctx.library.findUserLibraryAccessByServer("srv-1").shouldBeRight()
+            srv1Rows shouldHaveSize 2
+            srv1Rows.first { it.externalUserId == "1002" }.sectionKeys shouldContainExactlyInAnyOrder listOf("1", "3")
+            srv1Rows.first { it.externalUserId == "1003" }.allLibraries shouldBe true
+
+            ctx.library.findAccessibleLibrariesForMediaUsers(emptySet()).shouldBeRight() shouldBe ResolvedLibraryAccess.EMPTY
+
+            val bobAccess = ctx.library.findAccessibleLibrariesForMediaUsers(setOf("mu-bob")).shouldBeRight()
+            bobAccess.canAccess("srv-1", "1") shouldBe true
+            bobAccess.canAccess("srv-1", "2") shouldBe false
+            bobAccess.canAccess("srv-1", "3") shouldBe true
+            bobAccess.canAccess("srv-2", "1") shouldBe false
+
+            val carolAccess = ctx.library.findAccessibleLibrariesForMediaUsers(setOf("mu-carol")).shouldBeRight()
+            carolAccess.allLibrariesServerIds shouldContainExactlyInAnyOrder listOf("srv-1")
+            carolAccess.canAccess("srv-1", "999") shouldBe true
+            carolAccess.canAccess("srv-2", "1") shouldBe false
+
+            // Owner (isAdmin = true) receives allLibraries access on srv-1 even without explicit row
+            val ownerAccess = ctx.library.findAccessibleLibrariesForMediaUsers(setOf("mu-owner")).shouldBeRight()
+            ownerAccess.allLibrariesServerIds shouldContainExactlyInAnyOrder listOf("srv-1")
+            ownerAccess.canAccess("srv-1", "2") shouldBe true
+
+            // Union across multiple linked media users spans servers
+            val unionAccess = ctx.library.findAccessibleLibrariesForMediaUsers(setOf("mu-bob", "mu-dave")).shouldBeRight()
+            unionAccess.canAccess("srv-1", "1") shouldBe true
+            unionAccess.canAccess("srv-2", "2") shouldBe true
+            unionAccess.canAccess("srv-1", "2") shouldBe false
+
+            // Atomically replacing srv-1 revokes missing users without disturbing srv-2
+            ctx.library
+                .replaceUserLibraryAccess(
+                    serverId = "srv-1",
+                    records =
+                        listOf(
+                            UserLibraryAccessRecord(
+                                serverId = "srv-1",
+                                externalUserId = "1002",
+                                allLibraries = false,
+                                sectionKeys = setOf("1"),
+                                updatedAtMs = 6_000L,
+                            ),
+                        ),
+                ).shouldBeRight()
+            ctx.library.findUserLibraryAccessByServer("srv-1") shouldBeRight
+                listOf(
+                    UserLibraryAccessRecord(
+                        serverId = "srv-1",
+                        externalUserId = "1002",
+                        allLibraries = false,
+                        sectionKeys = setOf("1"),
+                        updatedAtMs = 6_000L,
+                    ),
+                )
+            ctx.library.findUserLibraryAccessByServer("srv-2").shouldBeRight() shouldHaveSize 1
+            ctx.library.findAccessibleLibrariesForMediaUsers(setOf("mu-carol")).shouldBeRight() shouldBe ResolvedLibraryAccess.EMPTY
+
+            // Deleting srv-1 cascades user_library_access rows
+            ctx.servers.delete("srv-1").shouldBeRight() shouldBe true
+            ctx.library.findUserLibraryAccessByServer("srv-1").shouldBeRight().shouldBeEmpty()
+            ctx.library.findUserLibraryAccessByServer("srv-2").shouldBeRight() shouldHaveSize 1
         }
     }
 }

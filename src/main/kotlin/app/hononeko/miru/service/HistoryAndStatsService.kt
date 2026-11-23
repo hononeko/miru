@@ -149,6 +149,9 @@ class HistoryAndStatsService(
             ensure(trimmedId.isNotEmpty()) {
                 MiruError.ValidationError("Invalid history record id", mapOf("id" to "Must not be blank"))
             }
+            if (!principal.isAdmin() && principal.linkedMediaUserIds.isEmpty()) {
+                raise(MiruError.Forbidden("Access to playback history is forbidden"))
+            }
 
             val record =
                 playbackHistoryRepository.findById(trimmedId).bind()

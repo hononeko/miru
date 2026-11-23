@@ -13,17 +13,32 @@ const VIEWER_PASSWORD = 'LibraryViewer123!';
 test.describe('Libraries browsing, admin-triggered deep sync & media details', () => {
 	let mockPlex: MockPlexServer;
 	let miru: MiruServer;
+	let adminCookie: string;
 
 	test.beforeAll(async () => {
 		mockPlex = await startMockPlexServer();
 		miru = await startMiruServer({ mockPlex });
 
-		const adminCookie = await miru.apiLogin(E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
+		adminCookie = await miru.apiLogin(E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
 		await miru.waitForLibraries(adminCookie, 2);
+		const users = await miru.waitForUsers(adminCookie, 2);
+		const bob = users.find((u) => u.username === 'bob');
+		if (!bob) {
+			throw new Error(`Expected bob in users list, got: ${JSON.stringify(users)}`);
+		}
+		await miru.apiTriggerLibrarySync(adminCookie, false);
+
 		await miru.apiCreateAccount(adminCookie, {
-			username: 'library_viewer',
+			username: 'bob_viewer',
 			password: VIEWER_PASSWORD,
-			role: 'USER'
+			role: 'USER',
+			linkedMediaUserIds: [bob.id]
+		});
+		await miru.apiCreateAccount(adminCookie, {
+			username: 'unlinked_viewer',
+			password: VIEWER_PASSWORD,
+			role: 'USER',
+			linkedMediaUserIds: []
 		});
 	});
 
@@ -79,13 +94,31 @@ test.describe('Libraries browsing, admin-triggered deep sync & media details', (
 		await mediaDialog.getByRole('button', { name: 'Close', exact: true }).click();
 	});
 
-	test('non-admin USER can browse libraries but cannot trigger sync', async ({ page }) => {
-		await loginViaUi(page, miru.baseUrl, 'library_viewer', VIEWER_PASSWORD);
+	test('non-admin USER sees only shared Plex libraries, handles unshared /403 routes, and updates on revocation', async ({ page }) => {
+		await loginViaUi(page, miru.baseUrl, 'bob_viewer', VIEWER_PASSWORD);
 		await page.getByRole('navigation', { name: 'Primary navigation' }).getByRole('link', { name: 'Libraries' }).click();
 		await expect(page).toHaveURL(`${miru.baseUrl}/libraries`);
 
+		// Bob has Movies (key 1) shared in mockPlex, not TV Shows (key 2)
 		await expect(page.getByRole('button', { name: /Movies/ })).toBeVisible();
-		await expect(page.getByRole('button', { name: /TV Shows/ })).toBeVisible();
+		await expect(page.getByRole('button', { name: /TV Shows/ })).toHaveCount(0);
 		await expect(page.getByRole('button', { name: 'Sync Libraries' })).toHaveCount(0);
+
+		// Direct navigation to unshared section shows access unavailable instead of crashing
+		await page.goto(`${miru.baseUrl}/libraries/2`);
+		await expect(page.getByText('Library access unavailable')).toBeVisible();
+
+		// Revoke Bob's shared access and trigger admin sync -> USER now sees empty shared-library state
+		mockPlex.setSharedServers([]);
+		await miru.apiTriggerLibrarySync(adminCookie, false);
+		await page.goto(`${miru.baseUrl}/libraries`);
+		await expect(page.getByText('No libraries shared with your account')).toBeVisible();
+	});
+
+	test('unlinked USER sees unlinked empty state on /libraries', async ({ page }) => {
+		await loginViaUi(page, miru.baseUrl, 'unlinked_viewer', VIEWER_PASSWORD);
+		await page.getByRole('navigation', { name: 'Primary navigation' }).getByRole('link', { name: 'Libraries' }).click();
+		await expect(page).toHaveURL(`${miru.baseUrl}/libraries`);
+		await expect(page.getByText('No Plex user linked to your account')).toBeVisible();
 	});
 });

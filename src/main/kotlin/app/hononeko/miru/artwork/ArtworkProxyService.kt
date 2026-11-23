@@ -172,25 +172,26 @@ class ArtworkProxyService(
         userId: String,
     ): Either<MiruError, CachedArtwork> =
         either {
-            ensure(userId.isNotBlank()) {
+            val trimmedUserId = userId.trim()
+            ensure(trimmedUserId.isNotEmpty()) {
                 MiruError.ValidationError(
                     message = "Invalid user id",
                     fieldErrors = mapOf("id" to "must not be blank"),
                 )
             }
-            principal.requireMediaUserAccess(userId).bind()
+            principal.requireMediaUserAccess(trimmedUserId).bind()
 
             val user =
-                userRepository.findById(userId).bind()
-                    ?: raise(MiruError.NotFound(resource = "User", id = userId))
+                userRepository.findById(trimmedUserId).bind()
+                    ?: raise(MiruError.NotFound(resource = "User", id = trimmedUserId))
 
             val rawThumbUrl =
                 user.thumbUrl?.trim()?.takeIf { it.isNotEmpty() }
-                    ?: raise(MiruError.NotFound(resource = "User avatar", id = userId))
+                    ?: raise(MiruError.NotFound(resource = "User avatar", id = trimmedUserId))
 
             val target = validateAvatarTarget(rawThumbUrl).bind()
 
-            val cacheKey = "avatar:$userId:${BoundedArtworkCache.sha256Hex(rawThumbUrl).take(AVATAR_CACHE_KEY_HASH_LEN)}"
+            val cacheKey = "avatar:$trimmedUserId:${BoundedArtworkCache.sha256Hex(rawThumbUrl).take(AVATAR_CACHE_KEY_HASH_LEN)}"
             cache.get(cacheKey)?.let { return@either it }
 
             when (target) {
@@ -209,7 +210,7 @@ class ArtworkProxyService(
                 is AvatarTarget.ExternalHttpsUrl -> {
                     fetchExternalAvatar(
                         url = target.url,
-                        userId = userId,
+                        userId = trimmedUserId,
                         cacheKey = cacheKey,
                     ).bind()
                 }

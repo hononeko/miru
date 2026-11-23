@@ -585,13 +585,38 @@ class ArtworkRoutesTest :
                     harness.plexRequests shouldHaveSize 2
                     harness.externalRequests shouldHaveSize 2
 
-                    // Missing user / missing thumbUrl -> 404
+                    val unlinkedAccount =
+                        harness.authService
+                            .createAccount(
+                                username = "unlinked-miru",
+                                password = "Unlinked-password-1234",
+                                role = MiruRole.USER,
+                                linkedMediaUserIds = emptySet(),
+                            ).shouldBeRight()
+                    val unlinkedKey =
+                        harness.authService
+                            .createApiKey(
+                                accountId = unlinkedAccount.account.id,
+                                name = "unlinked-key",
+                                role = MiruRole.USER,
+                            ).shouldBeRight()
+                            .rawKey
+
+                    // Missing user / missing thumbUrl -> 404 for ADMIN
                     client
                         .get("/api/v1/users/unknown-user/avatar") { header("X-Api-Key", adminKey) }
                         .status shouldBe HttpStatusCode.NotFound
                     client
                         .get("/api/v1/users/user-no-avatar/avatar") { header("X-Api-Key", adminKey) }
                         .status shouldBe HttpStatusCode.NotFound
+
+                    // Unlinked USER gets 403 Forbidden for any user avatar
+                    client
+                        .get("/api/v1/users/user-plex-tv/avatar") { header("X-Api-Key", unlinkedKey) }
+                        .status shouldBe HttpStatusCode.Forbidden
+                    client
+                        .get("/api/v1/users/user-gravatar/avatar") { header("X-Api-Key", unlinkedKey) }
+                        .status shouldBe HttpStatusCode.Forbidden
                 }
             }
         }

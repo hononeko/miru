@@ -178,3 +178,13 @@ object MediaItemsCacheTable : Table("media_items_cache") {
 
     override val primaryKey = PrimaryKey(serverId, ratingKey)
 }
+
+object UserLibraryAccessTable : Table("user_library_access") {
+    val serverId = text("server_id").references(MediaServersTable.id, onDelete = ReferenceOption.CASCADE)
+    val externalUserId = text("external_user_id")
+    val allLibraries = bool("all_libraries").default(false)
+    val sectionKeysJson = text("section_keys_json").default("[]")
+    val updatedAtMs = long("updated_at_ms")
+
+    override val primaryKey = PrimaryKey(serverId, externalUserId)
+}

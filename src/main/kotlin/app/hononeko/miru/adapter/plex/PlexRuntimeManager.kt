@@ -8,6 +8,7 @@ import app.hononeko.miru.adapter.MediaItemDetails
 import app.hononeko.miru.adapter.MediaServerAdapter
 import app.hononeko.miru.adapter.MediaServerEvent
 import app.hononeko.miru.adapter.MediaUser
+import app.hononeko.miru.adapter.MediaUserLibraryAccess
 import app.hononeko.miru.adapter.ServerIdentity
 import app.hononeko.miru.auth.CredentialCrypto
 import app.hononeko.miru.config.PlexConfig
@@ -90,6 +91,9 @@ class DelegatingMediaServerAdapter(
 
     override suspend fun fetchUsers(): Either<MiruError, List<MediaUser>> =
         withDelegate { it.fetchUsers() }
+
+    override suspend fun fetchUserLibraryAccess(): Either<MiruError, List<MediaUserLibraryAccess>> =
+        withDelegate { it.fetchUserLibraryAccess() }
 
     override suspend fun fetchLibrarySections(): Either<MiruError, List<LibrarySectionInfo>> =
         withDelegate { it.fetchLibrarySections() }

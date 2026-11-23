@@ -745,6 +745,33 @@ class HistoryStatsRoutesTest :
                                 }.bodyAsText(),
                         )
                     unlinkedOverview.totalPlays shouldBe 0L
+                    unlinkedOverview.totalWatchDurationSec shouldBe 0L
+                    unlinkedOverview.activeUsers shouldBe 0
+                    unlinkedOverview.playsPerDay.shouldBeEmpty()
+                    unlinkedOverview.topMovies.shouldBeEmpty()
+                    unlinkedOverview.topShows.shouldBeEmpty()
+                    unlinkedOverview.decisionBreakdown.directPlay shouldBe 0L
+                    unlinkedOverview.decisionBreakdown.directStream shouldBe 0L
+                    unlinkedOverview.decisionBreakdown.transcode shouldBe 0L
+                    unlinkedOverview.decisionBreakdown.directPlayPercent shouldBe 0.0
+
+                    // Unlinked USER gets 403 on other user's filter, history details, and user stats
+                    client
+                        .get("/api/v1/history?userId=u-alice") {
+                            cookie(SESSION_COOKIE_NAME, unlinkedLogin.signedToken)
+                        }.status shouldBe HttpStatusCode.Forbidden
+                    client
+                        .get("/api/v1/history/hist-1") {
+                            cookie(SESSION_COOKIE_NAME, unlinkedLogin.signedToken)
+                        }.status shouldBe HttpStatusCode.Forbidden
+                    client
+                        .get("/api/v1/history/does-not-exist") {
+                            cookie(SESSION_COOKIE_NAME, unlinkedLogin.signedToken)
+                        }.status shouldBe HttpStatusCode.Forbidden
+                    client
+                        .get("/api/v1/users/u-alice/stats") {
+                            cookie(SESSION_COOKIE_NAME, unlinkedLogin.signedToken)
+                        }.status shouldBe HttpStatusCode.Forbidden
                 }
             }
         }

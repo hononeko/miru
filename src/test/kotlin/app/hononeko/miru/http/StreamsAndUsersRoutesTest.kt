@@ -39,6 +39,7 @@ import app.hononeko.miru.session.SessionEvent
 import app.hononeko.miru.session.StopReason
 import io.kotest.assertions.arrow.core.shouldBeRight
 import io.kotest.core.spec.style.FunSpec
+import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.collections.shouldHaveSize
@@ -224,6 +225,14 @@ class StreamsAndUsersRoutesTest :
                         linkedMediaUserIds = setOf("mu-bob"),
                     ).shouldBeRight()
                 val bobLogin = harness.authService.login("bobuser", "Bob-password-123").shouldBeRight()
+                harness.authService
+                    .createAccount(
+                        username = "unlinkeduser",
+                        password = "Unlinked-password-123",
+                        role = MiruRole.USER,
+                        linkedMediaUserIds = emptySet(),
+                    ).shouldBeRight()
+                val unlinkedLogin = harness.authService.login("unlinkeduser", "Unlinked-password-123").shouldBeRight()
 
                 val movieSession =
                     ActiveSessionRecord(
@@ -409,6 +418,16 @@ class StreamsAndUsersRoutesTest :
                     bobBody.totalCount shouldBe 1
                     bobBody.serverName shouldBe "Main Plex"
                     bobBody.streams.single().user.id shouldBe "mu-bob"
+
+                    // Unlinked USER sees zero streams
+                    val unlinkedResp =
+                        client.get("/api/v1/streams") {
+                            cookie(SESSION_COOKIE_NAME, unlinkedLogin.signedToken)
+                        }
+                    unlinkedResp.status shouldBe HttpStatusCode.OK
+                    val unlinkedBody = MiruJson.decodeFromString<ActiveStreamsResponse>(unlinkedResp.bodyAsText())
+                    unlinkedBody.totalCount shouldBe 0
+                    unlinkedBody.streams.shouldBeEmpty()
                 }
             }
         }
@@ -425,6 +444,14 @@ class StreamsAndUsersRoutesTest :
                         linkedMediaUserIds = setOf("mu-bob"),
                     ).shouldBeRight()
                 val bobLogin = harness.authService.login("bobuser", "Bob-password-123").shouldBeRight()
+                harness.authService
+                    .createAccount(
+                        username = "unlinkeduser",
+                        password = "Unlinked-password-123",
+                        role = MiruRole.USER,
+                        linkedMediaUserIds = emptySet(),
+                    ).shouldBeRight()
+                val unlinkedLogin = harness.authService.login("unlinkeduser", "Unlinked-password-123").shouldBeRight()
 
                 val aliceSession =
                     ActiveSessionRecord(
@@ -605,6 +632,71 @@ class StreamsAndUsersRoutesTest :
                     // Disconnect client
                     bobJob.cancel()
 
+                    // Also verify unlinked USER receives empty snapshot, ping, and zero stream events
+                    val unlinkedFrames = Channel<ParsedSseFrame>(capacity = Channel.UNLIMITED)
+                    val unlinkedConnected = CompletableDeferred<Unit>()
+                    val unlinkedJob =
+                        async {
+                            client
+                                .prepareGet("/api/v1/streams/events") {
+                                    cookie(SESSION_COOKIE_NAME, unlinkedLogin.signedToken)
+                                }.execute { response ->
+                                    response.status shouldBe HttpStatusCode.OK
+                                    val channel = response.bodyAsChannel()
+                                    unlinkedConnected.complete(Unit)
+                                    var currentEvent: String? = null
+                                    val dataLines = mutableListOf<String>()
+                                    while (!channel.isClosedForRead) {
+                                        val line = channel.readLine() ?: break
+                                        when {
+                                            line.isEmpty() -> {
+                                                if (currentEvent != null || dataLines.isNotEmpty()) {
+                                                    unlinkedFrames.trySend(
+                                                        ParsedSseFrame(
+                                                            event = currentEvent,
+                                                            data = dataLines.joinToString("\n").ifEmpty { null },
+                                                        ),
+                                                    )
+                                                    currentEvent = null
+                                                    dataLines.clear()
+                                                }
+                                            }
+                                            line.startsWith(":") -> {
+                                                unlinkedFrames.trySend(ParsedSseFrame(comment = line.removePrefix(":").trim()))
+                                            }
+                                            line.startsWith("event:") -> {
+                                                currentEvent = line.removePrefix("event:").trim()
+                                            }
+                                            line.startsWith("data:") -> {
+                                                dataLines += line.removePrefix("data:").trim()
+                                            }
+                                        }
+                                    }
+                                }
+                        }
+                    withTimeout(5_000L) {
+                        unlinkedConnected.await()
+                        val initFrame = unlinkedFrames.receive()
+                        initFrame.event shouldBe "snapshot"
+                        MiruJson.decodeFromString<ActiveStreamsResponse>(initFrame.data.shouldNotBeNull()).totalCount shouldBe 0
+
+                        while (harness.sessionEvents.subscriptionCount.value < 1) {
+                            delay(10.milliseconds)
+                        }
+                        harness.sessionEvents.emit(
+                            SessionEvent.SessionStarted(
+                                serverId = "srv-1",
+                                key = bobSession.key,
+                                timestampMs = 4_000L,
+                                session = bobSession,
+                            ),
+                        )
+                        val nextFrame = unlinkedFrames.receive()
+                        nextFrame.comment shouldBe "ping"
+                        nextFrame.event.shouldBeNull()
+                    }
+                    unlinkedJob.cancel()
+
                     // Also verify ADMIN receives Alice's stream in initial snapshot
                     val adminSnapshot = CompletableDeferred<ActiveStreamsResponse>()
                     val adminJob =
@@ -656,6 +748,14 @@ class StreamsAndUsersRoutesTest :
                         linkedMediaUserIds = setOf("mu-bob"),
                     ).shouldBeRight()
                 val bobLogin = harness.authService.login("bobuser", "Bob-password-123").shouldBeRight()
+                harness.authService
+                    .createAccount(
+                        username = "unlinkeduser",
+                        password = "Unlinked-password-123",
+                        role = MiruRole.USER,
+                        linkedMediaUserIds = emptySet(),
+                    ).shouldBeRight()
+                val unlinkedLogin = harness.authService.login("unlinkeduser", "Unlinked-password-123").shouldBeRight()
 
                 // Seed 12 history plays for Alice across movies & TV + different clients/decisions
                 for (i in 1..12) {
@@ -755,14 +855,27 @@ class StreamsAndUsersRoutesTest :
                     bobSummary.totalPlays shouldBe 0L
                     bobSummary.totalWatchDurationSec shouldBe 0L
 
-                    // USER bob only sees mu-bob in list
+                    // USER bob gets 403 on GET /api/v1/users (ADMIN only)
                     val bobUsersResp =
                         client.get("/api/v1/users") {
                             cookie(SESSION_COOKIE_NAME, bobLogin.signedToken)
                         }
-                    bobUsersResp.status shouldBe HttpStatusCode.OK
-                    MiruJson.decodeFromString<UsersListResponse>(bobUsersResp.bodyAsText()).users.map { it.id } shouldContainExactly
-                        listOf("mu-bob")
+                    bobUsersResp.status shouldBe HttpStatusCode.Forbidden
+                    bobUsersResp.contentType()?.withoutParameters() shouldBe ContentType.Application.ProblemJson
+
+                    // Unlinked USER gets 403 on GET /api/v1/users and any /api/v1/users/{id}
+                    client
+                        .get("/api/v1/users") {
+                            cookie(SESSION_COOKIE_NAME, unlinkedLogin.signedToken)
+                        }.status shouldBe HttpStatusCode.Forbidden
+                    client
+                        .get("/api/v1/users/mu-alice") {
+                            cookie(SESSION_COOKIE_NAME, unlinkedLogin.signedToken)
+                        }.status shouldBe HttpStatusCode.Forbidden
+                    client
+                        .get("/api/v1/users/mu-bob") {
+                            cookie(SESSION_COOKIE_NAME, unlinkedLogin.signedToken)
+                        }.status shouldBe HttpStatusCode.Forbidden
 
                     // USER bob gets 403 accessing Alice or unknown user
                     client

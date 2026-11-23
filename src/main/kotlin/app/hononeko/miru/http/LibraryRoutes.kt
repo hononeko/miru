@@ -3,6 +3,7 @@ package app.hononeko.miru.http
 import app.hononeko.miru.auth.AuthService
 import app.hononeko.miru.auth.MiruRole
 import app.hononeko.miru.auth.authenticated
+import app.hononeko.miru.auth.requireMiruPrincipal
 import app.hononeko.miru.config.AuthMode
 import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.service.LibraryQueryService
@@ -29,8 +30,30 @@ fun Route.libraryRoutes(
             get {
                 val serverId = call.request.queryParameters["serverId"]
                 val result =
-                    libraryQueryService.listLibraries(serverId = serverId).map { sections ->
+                    either {
+                        val principal = call.requireMiruPrincipal().bind()
+                        val sections =
+                            libraryQueryService
+                                .listLibraries(principal = principal, serverId = serverId)
+                                .bind()
                         LibraryListResponse(libraries = sections.map { it.toResponse() })
+                    }
+                call.respondEither(result)
+            }
+
+            get("/{id}") {
+                val sectionId = call.parameters["id"].orEmpty()
+                val serverId = call.request.queryParameters["serverId"]
+                val result =
+                    either {
+                        val principal = call.requireMiruPrincipal().bind()
+                        libraryQueryService
+                            .getLibrarySection(
+                                principal = principal,
+                                sectionId = sectionId,
+                                serverId = serverId,
+                            ).bind()
+                            .toResponse()
                     }
                 call.respondEither(result)
             }
@@ -40,6 +63,7 @@ fun Route.libraryRoutes(
                 val query = call.request.queryParameters
                 val result =
                     either {
+                        val principal = call.requireMiruPrincipal().bind()
                         val fromMs = parseOptionalLongParam(query, "from").bind()
                         val toMs = parseOptionalLongParam(query, "to").bind()
                         val limit =
@@ -47,6 +71,7 @@ fun Route.libraryRoutes(
                         val serverId = query["serverId"]
                         libraryQueryService
                             .getLibraryStats(
+                                principal = principal,
                                 sectionId = sectionId,
                                 serverId = serverId,
                                 fromMs = fromMs,
@@ -63,11 +88,13 @@ fun Route.libraryRoutes(
                 val query = call.request.queryParameters
                 val result =
                     either {
+                        val principal = call.requireMiruPrincipal().bind()
                         val limit =
                             parseOptionalIntParam(query, "limit", LibraryQueryService.DEFAULT_RECENT_LIMIT).bind()
                         val serverId = query["serverId"]
                         libraryQueryService
                             .getRecentlyAdded(
+                                principal = principal,
                                 sectionId = sectionId,
                                 serverId = serverId,
                                 limit = limit,

@@ -21,6 +21,15 @@ export class AuthStore {
 		return this.principal?.role === 'ADMIN';
 	}
 
+	get isUnlinkedUser(): boolean {
+		return (
+			this.authMode !== 'none' &&
+			this.principal !== null &&
+			this.principal.role !== 'ADMIN' &&
+			this.principal.linkedMediaUserIds.length === 0
+		);
+	}
+
 	async init(): Promise<void> {
 		this.loading = true;
 		this.error = null;

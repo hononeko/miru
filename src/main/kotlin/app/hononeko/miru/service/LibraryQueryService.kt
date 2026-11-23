@@ -1,6 +1,7 @@
 package app.hononeko.miru.service
 
 import app.hononeko.miru.MiruJson
+import app.hononeko.miru.auth.MiruPrincipal
 import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.library.LibraryAggregates
 import app.hononeko.miru.library.LibrarySyncSummary
@@ -37,16 +38,45 @@ class LibraryQueryService(
 ) {
     private val logger = LoggerFactory.getLogger(LibraryQueryService::class.java)
 
-    suspend fun listLibraries(serverId: String? = null): Either<MiruError, List<LibrarySectionRecord>> {
-        val normalizedServerId = serverId?.trim()?.takeIf { it.isNotEmpty() }
-        return if (normalizedServerId != null) {
-            libraryRepository.findSectionsByServer(normalizedServerId)
-        } else {
-            libraryRepository.findAllSections()
+    suspend fun listLibraries(
+        principal: MiruPrincipal,
+        serverId: String? = null,
+    ): Either<MiruError, List<LibrarySectionRecord>> =
+        either {
+            if (!principal.isAdmin() && principal.linkedMediaUserIds.isEmpty()) {
+                return@either emptyList()
+            }
+            val normalizedServerId = serverId?.trim()?.takeIf { it.isNotEmpty() }
+            val sections =
+                if (normalizedServerId != null) {
+                    libraryRepository.findSectionsByServer(normalizedServerId).bind()
+                } else {
+                    libraryRepository.findAllSections().bind()
+                }
+            if (principal.isAdmin()) {
+                sections
+            } else {
+                val access =
+                    libraryRepository
+                        .findAccessibleLibrariesForMediaUsers(principal.linkedMediaUserIds)
+                        .bind()
+                sections.filter { access.canAccess(it.serverId, it.sectionKey) }
+            }
         }
-    }
+
+    suspend fun getLibrarySection(
+        principal: MiruPrincipal,
+        sectionId: String,
+        serverId: String? = null,
+    ): Either<MiruError, LibrarySectionRecord> =
+        resolveAccessibleSection(
+            principal = principal,
+            sectionId = sectionId,
+            serverId = serverId,
+        )
 
     suspend fun getLibraryStats(
+        principal: MiruPrincipal,
         sectionId: String,
         serverId: String? = null,
         fromMs: Long? = null,
@@ -55,7 +85,7 @@ class LibraryQueryService(
     ): Either<MiruError, LibraryStatsResult> =
         either {
             validateStatsParams(fromMs = fromMs, toMs = toMs, limit = limit).bind()
-            val section = resolveSection(sectionId = sectionId, serverId = serverId).bind()
+            val section = resolveAccessibleSection(principal = principal, sectionId = sectionId, serverId = serverId).bind()
 
             val snapshots =
                 libraryRepository
@@ -90,6 +120,7 @@ class LibraryQueryService(
         }
 
     suspend fun getRecentlyAdded(
+        principal: MiruPrincipal,
         sectionId: String,
         serverId: String? = null,
         limit: Int = DEFAULT_RECENT_LIMIT,
@@ -101,7 +132,7 @@ class LibraryQueryService(
                     fieldErrors = mapOf("limit" to "must be between 1 and $MAX_RECENT_LIMIT"),
                 )
             }
-            val section = resolveSection(sectionId = sectionId, serverId = serverId).bind()
+            val section = resolveAccessibleSection(principal = principal, sectionId = sectionId, serverId = serverId).bind()
             val items =
                 libraryRepository
                     .findRecentlyAdded(
@@ -116,7 +147,8 @@ class LibraryQueryService(
             )
         }
 
-    private suspend fun resolveSection(
+    private suspend fun resolveAccessibleSection(
+        principal: MiruPrincipal,
         sectionId: String,
         serverId: String?,
     ): Either<MiruError, LibrarySectionRecord> =
@@ -128,17 +160,56 @@ class LibraryQueryService(
                     fieldErrors = mapOf("id" to "must not be blank"),
                 )
             }
-
-            val normalizedServerId = serverId?.trim()?.takeIf { it.isNotEmpty() }
-            if (normalizedServerId != null) {
-                return@either libraryRepository.findSection(normalizedServerId, trimmedId).bind()
-                    ?: raise(MiruError.NotFound(resource = "Library section", id = trimmedId))
+            if (!principal.isAdmin() && principal.linkedMediaUserIds.isEmpty()) {
+                raise(MiruError.Forbidden("Access to library section '$trimmedId' is forbidden"))
             }
 
-            val matches = libraryRepository.findSectionsByKey(trimmedId).bind()
-            when (matches.size) {
-                0 -> raise(MiruError.NotFound(resource = "Library section", id = trimmedId))
-                1 -> matches.first()
+            val normalizedServerId = serverId?.trim()?.takeIf { it.isNotEmpty() }
+            val access =
+                if (principal.isAdmin()) {
+                    null
+                } else {
+                    val resolved =
+                        libraryRepository
+                            .findAccessibleLibrariesForMediaUsers(principal.linkedMediaUserIds)
+                            .bind()
+                    val allowedOnTarget =
+                        if (normalizedServerId != null) {
+                            resolved.canAccess(normalizedServerId, trimmedId)
+                        } else {
+                            resolved.allLibrariesServerIds.isNotEmpty() ||
+                                resolved.allowedSections.any { it.second == trimmedId }
+                        }
+                    ensure(allowedOnTarget) {
+                        MiruError.Forbidden("Access to library section '$trimmedId' is forbidden")
+                    }
+                    resolved
+                }
+
+            val candidates =
+                if (normalizedServerId != null) {
+                    listOfNotNull(libraryRepository.findSection(normalizedServerId, trimmedId).bind())
+                } else {
+                    libraryRepository.findSectionsByKey(trimmedId).bind()
+                }
+
+            if (candidates.isEmpty()) {
+                raise(MiruError.NotFound(resource = "Library section", id = trimmedId))
+            }
+
+            val visible =
+                if (access == null) {
+                    candidates
+                } else {
+                    val accessible = candidates.filter { access.canAccess(it.serverId, it.sectionKey) }
+                    ensure(accessible.isNotEmpty()) {
+                        MiruError.Forbidden("Access to library section '$trimmedId' is forbidden")
+                    }
+                    accessible
+                }
+
+            when (visible.size) {
+                1 -> visible.first()
                 else ->
                     raise(
                         MiruError.Conflict(

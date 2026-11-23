@@ -796,4 +796,32 @@ internal object PlexFixtures {
           }
         }
         """.trimIndent()
+
+    val sharedServersXml =
+        """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <MediaContainer size="4" friendlyName="Plex" identifier="com.plexapp.plugins.myplex">
+          <SharedServer id="101" userID="2002" allLibraries="0" owned="0" shared="1">
+            <Section id="11" key="1" title="Movies" type="movie" shared="1"/>
+            <Section id="12" key="2" title="TV Shows" type="show" shared="0"/>
+            <Section id="13" key="3" title="Music" type="artist" shared="1"/>
+          </SharedServer>
+          <SharedServer id="102" userID="3003" allLibraries="1" owned="0" shared="1">
+            <Section id="21" key="1" title="Movies" type="movie" shared="1"/>
+          </SharedServer>
+          <SharedServer id="103" userID="4004" allLibraries="0" owned="0" shared="0">
+            <Section id="31" key="1" title="Movies" type="movie" shared="1"/>
+          </SharedServer>
+          <SharedServer id="104" userID="0" allLibraries="1" shared="1"/>
+        </MediaContainer>
+        """.trimIndent()
+
+    val xxeSharedServersXml =
+        """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
+        <MediaContainer size="1">
+          <SharedServer userID="2002" allLibraries="1" shared="1"/>
+        </MediaContainer>
+        """.trimIndent()
 }

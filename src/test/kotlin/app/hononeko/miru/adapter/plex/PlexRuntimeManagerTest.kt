@@ -9,6 +9,7 @@ import app.hononeko.miru.adapter.MediaServerAdapter
 import app.hononeko.miru.adapter.MediaServerEvent
 import app.hononeko.miru.adapter.MediaType
 import app.hononeko.miru.adapter.MediaUser
+import app.hononeko.miru.adapter.MediaUserLibraryAccess
 import app.hononeko.miru.adapter.PlaybackState
 import app.hononeko.miru.adapter.ServerIdentity
 import app.hononeko.miru.auth.CredentialCrypto
@@ -79,6 +80,9 @@ private class DelegatingTestStubAdapter(
         width: Int?,
         height: Int?,
     ): Either<MiruError, ArtworkData> = ArtworkData(bytes = byteArrayOf(1, 2, 3), contentType = "image/png").right()
+
+    override suspend fun fetchUserLibraryAccess(): Either<MiruError, List<MediaUserLibraryAccess>> =
+        listOf(MediaUserLibraryAccess(externalUserId = "2002", allLibraries = false, sectionKeys = setOf("1"))).right()
 }
 
 class PlexRuntimeManagerTest :
@@ -94,6 +98,7 @@ class PlexRuntimeManagerTest :
             adapter.fetchLibraryCount("1").shouldBeLeft().shouldBeInstanceOf<MiruError.UpstreamUnavailable>()
             adapter.fetchLibraryItems("1").shouldBeLeft().shouldBeInstanceOf<MiruError.UpstreamUnavailable>()
             adapter.fetchArtwork("/library/metadata/1/thumb").shouldBeLeft().shouldBeInstanceOf<MiruError.UpstreamUnavailable>()
+            adapter.fetchUserLibraryAccess().shouldBeLeft().shouldBeInstanceOf<MiruError.UpstreamUnavailable>()
 
             val stub = DelegatingTestStubAdapter()
             adapter.setDelegate(stub)
@@ -106,6 +111,8 @@ class PlexRuntimeManagerTest :
             adapter.fetchLibraryCount("1").shouldBeRight() shouldBe 42
             adapter.fetchLibraryItems("1").shouldBeRight().totalSize shouldBe 0
             adapter.fetchArtwork("/library/metadata/1/thumb").shouldBeRight().contentType shouldBe "image/png"
+            adapter.fetchUserLibraryAccess().shouldBeRight() shouldBe
+                listOf(MediaUserLibraryAccess(externalUserId = "2002", allLibraries = false, sectionKeys = setOf("1")))
 
             val event = MediaServerEvent.PlayingEvent(sessionKey = "10", ratingKey = "20", state = PlaybackState.PLAYING)
             val received = CompletableDeferred<MediaServerEvent>()

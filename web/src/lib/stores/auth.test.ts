@@ -118,4 +118,41 @@ describe('AuthStore provider initialization and logout', () => {
 		expect(postSpy).toHaveBeenCalledWith('/api/v1/auth/logout');
 		expect(store.principal).toBeNull();
 	});
+
+	it('computes isUnlinkedUser accurately for USER and ADMIN roles', () => {
+		const store = new AuthStore();
+		expect(store.isUnlinkedUser).toBe(false);
+
+		store.principal = {
+			accountId: 'acc-unlinked',
+			username: 'bob',
+			email: null,
+			role: 'USER',
+			linkedMediaUserIds: [],
+			authSource: 'SESSION_COOKIE'
+		};
+		expect(store.isAdmin).toBe(false);
+		expect(store.isUnlinkedUser).toBe(true);
+
+		store.principal = {
+			accountId: 'acc-linked',
+			username: 'bob',
+			email: null,
+			role: 'USER',
+			linkedMediaUserIds: ['mu-bob'],
+			authSource: 'SESSION_COOKIE'
+		};
+		expect(store.isUnlinkedUser).toBe(false);
+
+		store.principal = {
+			accountId: 'acc-admin',
+			username: 'admin',
+			email: null,
+			role: 'ADMIN',
+			linkedMediaUserIds: [],
+			authSource: 'SESSION_COOKIE'
+		};
+		expect(store.isAdmin).toBe(true);
+		expect(store.isUnlinkedUser).toBe(false);
+	});
 });

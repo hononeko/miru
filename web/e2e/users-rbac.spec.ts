@@ -83,50 +83,55 @@ test.describe('Users & RBAC isolation (ADMIN vs scoped USER vs unlinked USER)', 
 		await expect(page.getByRole('heading', { name: 'Admin & Access Control' })).toBeVisible();
 	});
 
-	test('scoped USER sees only linked media user and is blocked from other users and /admin', async ({ page }) => {
+	test('scoped USER has hidden /users nav, blocked routes and /api/v1/users, and scoped history', async ({ page }) => {
 		await loginViaUi(page, miru.baseUrl, 'scoped_alice', USER_PASSWORD);
 		const nav = page.getByRole('navigation', { name: 'Primary navigation' });
 
-		// Admin nav link is hidden and direct /admin navigation redirects to /
+		// Users and Admin nav links are hidden for USER role
 		await expect(nav.getByRole('link', { name: 'Admin' })).toHaveCount(0);
-		await page.goto(`${miru.baseUrl}/admin`);
-		await expect(page).toHaveURL(`${miru.baseUrl}/`);
+		await expect(nav.getByRole('link', { name: 'Users' })).toHaveCount(0);
 
-		// /users shows ONLY Alice Admin, never Bob Viewer
-		await nav.getByRole('link', { name: 'Users' }).click();
-		await expect(page).toHaveURL(`${miru.baseUrl}/users`);
-		await expect(page.getByRole('link', { name: /Alice Admin/ })).toBeVisible();
-		await expect(page.getByRole('link', { name: /Bob Viewer/ })).toHaveCount(0);
+		// Direct navigation to /admin, /users, and /users/{id} redirects away to /
+		for (const protectedPath of [
+			'/admin',
+			'/users',
+			`/users/${aliceMediaUserId}`,
+			`/users/${bobMediaUserId}`
+		]) {
+			await page.goto(`${miru.baseUrl}${protectedPath}`);
+			await expect(page).toHaveURL(`${miru.baseUrl}/`);
+		}
 
-		// Can view Alice's profile
-		await page.getByRole('link', { name: /Alice Admin/ }).click();
-		await expect(page).toHaveURL(`${miru.baseUrl}/users/${aliceMediaUserId}`);
-		await expect(page.getByRole('heading', { name: 'Alice Admin' })).toBeVisible();
+		// Direct API call to GET /api/v1/users returns 403 Forbidden
+		const apiUsersResp = await page.request.get(`${miru.baseUrl}/api/v1/users`);
+		expect(apiUsersResp.status()).toBe(403);
 
-		// Direct navigation to Bob's profile is denied (403 error, no Bob profile rendered)
-		await page.goto(`${miru.baseUrl}/users/${bobMediaUserId}`);
-		await expect(page.getByRole('heading', { name: 'Bob Viewer' })).toHaveCount(0);
-		await expect(page.getByText(/forbidden|access|permission|denied|not allowed/i)).toBeVisible();
-
-		// History is scoped exclusively to Alice's 17 plays
+		// History is scoped exclusively to Alice's 17 plays and hides the user filter dropdown
 		await nav.getByRole('link', { name: 'History' }).click();
 		await expect(page.getByText('17 PLAYS')).toBeVisible();
+		await expect(page.getByLabel('Filter by user')).toHaveCount(0);
 		await expect(page.locator('table tbody')).not.toContainText(/\bbob\b/);
 	});
 
-	test('unlinked USER sees zero media users, empty history, and cannot access /admin', async ({ page }) => {
+	test('unlinked USER sees clear unlinked empty state across Live, History, and Libraries', async ({ page }) => {
 		await loginViaUi(page, miru.baseUrl, 'unlinked_user', USER_PASSWORD);
 		const nav = page.getByRole('navigation', { name: 'Primary navigation' });
 		await expect(nav.getByRole('link', { name: 'Admin' })).toHaveCount(0);
+		await expect(nav.getByRole('link', { name: 'Users' })).toHaveCount(0);
 
+		await expect(page.getByText('No Plex user linked to your account')).toBeVisible();
+		await expect(page.getByText(/administrator must link your Plex media user/i)).toBeVisible();
+
+		await page.goto(`${miru.baseUrl}/users`);
+		await expect(page).toHaveURL(`${miru.baseUrl}/`);
 		await page.goto(`${miru.baseUrl}/admin`);
 		await expect(page).toHaveURL(`${miru.baseUrl}/`);
 
-		await nav.getByRole('link', { name: 'Users' }).click();
-		await expect(page.getByText('No matching users found.')).toBeVisible();
-
 		await nav.getByRole('link', { name: 'History' }).click();
 		await expect(page.getByText('0 PLAYS')).toBeVisible();
-		await expect(page.locator('table').getByText('No playback records match your current filters.')).toBeVisible();
+		await expect(page.getByText('No Plex user linked to your account')).toBeVisible();
+
+		await nav.getByRole('link', { name: 'Libraries' }).click();
+		await expect(page.getByText('No Plex user linked to your account')).toBeVisible();
 	});
 });

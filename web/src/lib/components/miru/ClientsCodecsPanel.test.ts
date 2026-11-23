@@ -96,6 +96,31 @@ describe('ClientsCodecsPanel', () => {
 		expect(screen.queryByText('No codec telemetry in this range')).toBeNull();
 	});
 
+	it('sizes bars in proportion to each share and labels shares under 1% as "<1%"', () => {
+		const clientStats: ClientStatsResponse = {
+			range: '30d',
+			fromMs: 1_700_000_000_000,
+			totalPlays: 1000,
+			totalWatchDurationSec: 60_000,
+			transcodeOrRemuxPlays: 0,
+			players: [
+				{ name: 'Plex Web', playCount: 43, watchDurationSec: 600, percent: 4.3 },
+				{ name: 'Plexamp', playCount: 1, watchDurationSec: 10, percent: 0.1 }
+			],
+			platforms: [],
+			videoCodecs: [],
+			audioCodecs: [],
+			transcodeReasons: []
+		};
+
+		const { container } = render(ClientsCodecsPanel, { props: { clientStats, loading: false } });
+
+		expect(screen.getByText('43 · 4.3%')).toBeTruthy();
+		expect(screen.getByText('1 · <1%')).toBeTruthy();
+		const widths = [...container.querySelectorAll<HTMLElement>('div[title^="Plex"]')].map((bar) => bar.style.width);
+		expect(widths).toEqual(['4.3%', '0.1%']);
+	});
+
 	it('formats item values as playback duration when metric is duration', () => {
 		const clientStats: ClientStatsResponse = {
 			range: '30d',

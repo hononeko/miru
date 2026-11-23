@@ -79,6 +79,22 @@ export function formatBytes(bytes: number | null | undefined): string {
 	return `${value >= 100 ? value.toFixed(0) : value.toFixed(1)} ${units[idx]}`;
 }
 
+/**
+ * A statistic's percentage as a label, e.g. a share of plays or an average completion. A value above zero but
+ * under 1% reads "<1%", since a figure like 0.1% only suggests precision the stat does not have.
+ */
+export function formatStatPercent(value: number | null | undefined, decimals = 1): string {
+	if (value == null || !Number.isFinite(value) || value <= 0) return `${(0).toFixed(decimals)}%`;
+	if (value < 1) return '<1%';
+	return `${value.toFixed(decimals)}%`;
+}
+
+/** Width of a bar showing a percentage, proportional to it and clamped to 0–100%. */
+export function statBarWidth(value: number | null | undefined): string {
+	if (value == null || !Number.isFinite(value) || value <= 0) return '0%';
+	return `${Math.min(value, 100)}%`;
+}
+
 export function formatBandwidthKbps(kbps: number | null | undefined): string {
 	if (!kbps || kbps <= 0) return '0 Mbps';
 	if (kbps >= 1000) return `${(kbps / 1000).toFixed(1)} Mbps`;

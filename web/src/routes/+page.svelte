@@ -21,7 +21,7 @@
 	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
 	import { streamsStore } from '$stores/streams.svelte';
-	import { formatBandwidthKbps, formatDurationSec, formatRelativeTime } from '$lib/utils';
+	import { formatBandwidthKbps, formatDurationSec, formatRelativeTime, formatStatPercent } from '$lib/utils';
 	import { Link2, Radio, Server, Tv } from 'lucide-svelte';
 
 	let lastDefaultRange = preferencesStore.prefs.defaultStatsRange;
@@ -270,7 +270,7 @@
 		/>
 		<KpiCard
 			label={`Direct Play (${range})`}
-			value={overview ? `${overview.decisionBreakdown.directPlayPercent.toFixed(1)}%` : '—'}
+			value={overview ? formatStatPercent(overview.decisionBreakdown.directPlayPercent) : '—'}
 			subtitle={overview
 				? `${overview.decisionBreakdown.directPlay} Direct · ${overview.decisionBreakdown.directStream} Remux · ${overview.decisionBreakdown.transcode} Transcode`
 				: loadingStats

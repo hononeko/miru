@@ -13,7 +13,14 @@
 	import ProxiedImage from '$components/miru/ProxiedImage.svelte';
 	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
-	import { cn, formatBytes, formatDurationSec, formatRelativeTime, formatShortDateTime } from '$lib/utils';
+	import {
+		cn,
+		formatBytes,
+		formatDurationSec,
+		formatRelativeTime,
+		formatShortDateTime,
+		formatStatPercent
+	} from '$lib/utils';
 
 	type Props = {
 		stats: LibraryStatsResponse;
@@ -172,7 +179,7 @@
 								<div
 									class={`h-full rounded-full ${seg.colorClass}`}
 									style:width={`${Math.max(2, seg.pct)}%`}
-									title={`${seg.name}: ${seg.count} (${seg.pct.toFixed(1)}%)`}
+									title={`${seg.name}: ${seg.count} (${formatStatPercent(seg.pct)})`}
 								></div>
 							{/each}
 						</div>
@@ -180,7 +187,7 @@
 							{#each group.rows as seg}
 								<span class="inline-flex items-center gap-1.5 font-mono text-[10px] text-fg-secondary">
 									<span class={`h-2 w-2 rounded-full ${seg.colorClass}`}></span>
-									{seg.name} {seg.pct.toFixed(0)}%
+									{seg.name} {formatStatPercent(seg.pct, 0)}
 								</span>
 							{/each}
 						</div>

@@ -5,7 +5,7 @@
 		ClientStatsResponse
 	} from '$api/types';
 	import Badge from '$components/ui/Badge.svelte';
-	import { formatDurationSec } from '$lib/utils';
+	import { formatDurationSec, formatStatPercent, statBarWidth } from '$lib/utils';
 
 	type Props = {
 		clientStats: ClientStatsResponse | null;
@@ -118,13 +118,13 @@
 											{item.name}
 										</span>
 										<span class="shrink-0 font-mono text-[11px] text-fg-secondary tabular-nums">
-											{metric === 'duration' ? formatDurationSec(item.watchDurationSec) : item.playCount} · {item.percent.toFixed(1)}%
+											{metric === 'duration' ? formatDurationSec(item.watchDurationSec) : item.playCount} · {formatStatPercent(item.percent)}
 										</span>
 									</div>
 									<div class="h-1.5 w-full overflow-hidden rounded-full bg-subtle">
 										<div
-											class={`h-full rounded-full ${idx === 0 ? group.accentClass : 'bg-cyan/75'}`}
-											style:width={`${Math.max(4, Math.min(100, item.percent))}%`}
+											class={`h-full rounded-full ${idx === 0 ? group.accentClass : 'bg-cyan/75'} ${item.percent > 0 ? 'min-w-0.5' : ''}`}
+											style:width={statBarWidth(item.percent)}
 											title={`${item.name}: ${item.playCount} plays (${formatDurationSec(item.watchDurationSec)})`}
 										></div>
 									</div>

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+	formatStatPercent,
+	statBarWidth,
 	formatApiKeyExpiry,
 	formatBandwidthKbps,
 	formatBytes,
@@ -178,5 +180,27 @@ describe('Miru telemetry formatters', () => {
 		expect(formatApiKeyExpiry(now - 2 * dayMs, now, { dateFormat: 'iso', relativeTimestamps: false })).toBe(
 			'Expired 2026-11-20'
 		);
+	});
+});
+
+describe('statistic percentages', () => {
+	it('shows "<1%" for a share above zero but under 1%, and one decimal otherwise', () => {
+		expect(formatStatPercent(0.1)).toBe('<1%');
+		expect(formatStatPercent(0.99)).toBe('<1%');
+		expect(formatStatPercent(1)).toBe('1.0%');
+		expect(formatStatPercent(4.25)).toBe('4.3%');
+		expect(formatStatPercent(0.6, 0)).toBe('<1%');
+		expect(formatStatPercent(37.5, 0)).toBe('38%');
+		expect(formatStatPercent(0)).toBe('0.0%');
+		expect(formatStatPercent(null)).toBe('0.0%');
+		expect(formatStatPercent(Number.NaN)).toBe('0.0%');
+	});
+
+	it('sizes bars in proportion to the percentage, clamped to 0–100%', () => {
+		expect(statBarWidth(4.3)).toBe('4.3%');
+		expect(statBarWidth(0.1)).toBe('0.1%');
+		expect(statBarWidth(120)).toBe('100%');
+		expect(statBarWidth(-5)).toBe('0%');
+		expect(statBarWidth(undefined)).toBe('0%');
 	});
 });

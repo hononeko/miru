@@ -35,8 +35,19 @@
 	import Button from '$components/ui/Button.svelte';
 	import Sheet from '$components/ui/Sheet.svelte';
 	import { authStore } from '$stores/auth.svelte';
+	import { preferencesStore } from '$stores/preferences.svelte';
 	import { streamsStore } from '$stores/streams.svelte';
-	import { formatBytes, formatRelativeTime, safeInitial, validatePassword } from '$lib/utils';
+	import {
+		API_KEY_EXPIRY_PRESETS,
+		formatApiKeyExpiry,
+		formatBytes,
+		formatRelativeTime,
+		getApiKeyStatus,
+		resolveApiKeyExpiresAtMs,
+		safeInitial,
+		validatePassword,
+		type ApiKeyExpiryPreset
+	} from '$lib/utils';
 
 	type WizardStep = 'starting' | 'waiting' | 'expired' | 'discovering' | 'select' | 'saving' | 'done';
 
@@ -71,6 +82,9 @@
 	let createKeyOpen = $state(false);
 	let newKeyName = $state('');
 	let newKeyRole = $state<MiruRole>('USER');
+	let newKeyExpiryPreset = $state<ApiKeyExpiryPreset>('never');
+	let newKeyCustomDate = $state('');
+	let createKeyError = $state<string | null>(null);
 	let keySubmitting = $state(false);
 
 	// Tautulli Data Import
@@ -412,14 +426,21 @@
 
 	async function handleCreateKey(e: SubmitEvent) {
 		e.preventDefault();
-		keySubmitting = true;
+		createKeyError = null;
 		error = null;
+		const expiresAtMs = resolveApiKeyExpiresAtMs(newKeyExpiryPreset, newKeyCustomDate);
+		if (Number.isNaN(expiresAtMs)) {
+			createKeyError = 'Expiration date must be a valid future date.';
+			return;
+		}
+		keySubmitting = true;
 		try {
 			const res = unwrap(
 				await api.POST('/api/v1/admin/api-keys', {
 					body: {
 						name: newKeyName.trim(),
-						role: newKeyRole
+						role: newKeyRole,
+						expiresAtMs
 					}
 				})
 			);
@@ -428,9 +449,11 @@
 			createKeyOpen = false;
 			newKeyName = '';
 			newKeyRole = 'USER';
+			newKeyExpiryPreset = 'never';
+			newKeyCustomDate = '';
 			await loadAll();
 		} catch (err) {
-			error = err instanceof MiruApiError ? err.detail : 'Failed to create API key';
+			createKeyError = err instanceof MiruApiError ? err.detail : 'Failed to create API key';
 		} finally {
 			keySubmitting = false;
 		}
@@ -694,19 +717,21 @@
 		{:else}
 			<div class="flex flex-col gap-2">
 				{#each apiKeys as key (key.id)}
-					{@const revoked = Boolean(key.revokedAtMs)}
+					{@const status = getApiKeyStatus(key)}
+					{@const revoked = status === 'REVOKED'}
+					{@const expired = status === 'EXPIRED'}
 					<div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-elevated px-3.5 py-2.5">
 						<div>
-							<p class={revoked ? 'font-heading text-xs font-semibold text-fg-muted line-through' : 'font-heading text-xs font-semibold text-fg-primary'}>
+							<p class={revoked || expired ? 'font-heading text-xs font-semibold text-fg-muted line-through' : 'font-heading text-xs font-semibold text-fg-primary'}>
 								{key.name}
 							</p>
 							<p class="font-mono text-[10px] text-fg-muted">
-								{key.keyPrefix}… · {key.role} · {revoked ? `Revoked ${formatRelativeTime(key.revokedAtMs)}` : `Last used ${formatRelativeTime(key.lastUsedAtMs)}`}
+								{key.keyPrefix}… · {key.role} · {revoked ? `Revoked ${formatRelativeTime(key.revokedAtMs, Date.now(), preferencesStore.prefs)}` : `Last used ${formatRelativeTime(key.lastUsedAtMs, Date.now(), preferencesStore.prefs)}`} · {formatApiKeyExpiry(key.expiresAtMs, Date.now(), preferencesStore.prefs)}
 							</p>
 						</div>
 						<div class="flex items-center gap-2">
-							<Badge tone={revoked ? 'danger' : 'direct-play'} dot>
-								{revoked ? 'REVOKED' : 'ACTIVE'}
+							<Badge tone={revoked ? 'danger' : expired ? 'hw-transcode' : 'direct-play'} dot>
+								{status}
 							</Badge>
 							{#if !revoked}
 								<Button variant="destructive" size="sm" onclick={() => handleRevokeKey(key.id)}>
@@ -1174,8 +1199,20 @@
 </Sheet>
 
 <!-- Create API Key Sheet -->
-<Sheet bind:open={createKeyOpen} onOpenChange={(v) => (createKeyOpen = v)} title="Create API Key">
+<Sheet
+	bind:open={createKeyOpen}
+	onOpenChange={(v) => {
+		createKeyOpen = v;
+		if (!v) createKeyError = null;
+	}}
+	title="Create API Key"
+>
 	<form onsubmit={handleCreateKey} class="flex flex-col gap-3.5">
+		{#if createKeyError}
+			<div role="alert" class="rounded-lg border border-danger/50 bg-danger-soft px-3 py-2 text-xs text-danger">
+				{createKeyError}
+			</div>
+		{/if}
 		<label class="flex flex-col gap-1">
 			<span class="font-heading text-xs font-semibold text-fg-primary">Key Name</span>
 			<input
@@ -1196,6 +1233,28 @@
 				<option value="ADMIN">ADMIN</option>
 			</select>
 		</label>
+		<label class="flex flex-col gap-1">
+			<span class="font-heading text-xs font-semibold text-fg-primary">Expiration</span>
+			<select
+				bind:value={newKeyExpiryPreset}
+				class="rounded-lg border border-border-strong bg-canvas px-3 py-2 text-sm text-fg-primary focus:border-cyan focus:outline-none"
+			>
+				{#each API_KEY_EXPIRY_PRESETS as preset}
+					<option value={preset.value}>{preset.label}</option>
+				{/each}
+			</select>
+		</label>
+		{#if newKeyExpiryPreset === 'custom'}
+			<label class="flex flex-col gap-1">
+				<span class="font-heading text-xs font-semibold text-fg-primary">Custom Expiration Date</span>
+				<input
+					type="date"
+					required
+					bind:value={newKeyCustomDate}
+					class="rounded-lg border border-border-strong bg-canvas px-3 py-2 font-mono text-sm text-fg-primary focus:border-cyan focus:outline-none"
+				/>
+			</label>
+		{/if}
 		<Button type="submit" variant="cyan" size="lg" disabled={keySubmitting} class="mt-2 w-full">
 			{keySubmitting ? 'Generating…' : 'Generate API Key'}
 		</Button>

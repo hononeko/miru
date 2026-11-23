@@ -221,3 +221,90 @@ export function validatePassword(password: string): string | null {
 	}
 	return missing.length === 0 ? null : `Password must contain ${missing.join(', ')}.`;
 }
+
+export type ApiKeyExpiryPreset = 'never' | '7d' | '30d' | '90d' | '1y' | 'custom';
+export type ApiKeyLifecycleStatus = 'ACTIVE' | 'EXPIRED' | 'REVOKED';
+
+const MILLIS_PER_DAY = 86_400_000;
+
+export const API_KEY_EXPIRY_PRESETS: ReadonlyArray<{ value: ApiKeyExpiryPreset; label: string }> = [
+	{ value: 'never', label: 'Never expires' },
+	{ value: '7d', label: '7 days' },
+	{ value: '30d', label: '30 days' },
+	{ value: '90d', label: '90 days' },
+	{ value: '1y', label: '1 year (365 days)' },
+	{ value: 'custom', label: 'Custom date…' }
+];
+
+export function resolveApiKeyExpiresAtMs(
+	preset: ApiKeyExpiryPreset,
+	customDate = '',
+	nowMs = Date.now()
+): number | null {
+	switch (preset) {
+		case 'never':
+			return null;
+		case '7d':
+			return nowMs + 7 * MILLIS_PER_DAY;
+		case '30d':
+			return nowMs + 30 * MILLIS_PER_DAY;
+		case '90d':
+			return nowMs + 90 * MILLIS_PER_DAY;
+		case '1y':
+			return nowMs + 365 * MILLIS_PER_DAY;
+		case 'custom': {
+			const trimmed = customDate.trim();
+			const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+			if (!match) return Number.NaN;
+			const year = Number(match[1]);
+			const month = Number(match[2]);
+			const day = Number(match[3]);
+			const target = new Date(year, month - 1, day, 23, 59, 59, 999);
+			if (
+				target.getFullYear() !== year ||
+				target.getMonth() !== month - 1 ||
+				target.getDate() !== day
+			) {
+				return Number.NaN;
+			}
+			const ts = target.getTime();
+			return ts > nowMs ? ts : Number.NaN;
+		}
+	}
+}
+
+export function getApiKeyStatus(
+	key: { revokedAtMs?: number | null; expiresAtMs?: number | null },
+	nowMs = Date.now()
+): ApiKeyLifecycleStatus {
+	if (key.revokedAtMs != null) return 'REVOKED';
+	if (key.expiresAtMs != null && key.expiresAtMs <= nowMs) return 'EXPIRED';
+	return 'ACTIVE';
+}
+
+export function formatApiKeyExpiry(
+	expiresAtMs: number | null | undefined,
+	nowMs = Date.now(),
+	prefs?: UserDateTimePrefs
+): string {
+	if (expiresAtMs == null) return 'Never expires';
+	const dateText = formatDatePart(new Date(expiresAtMs), prefs?.dateFormat);
+	if (expiresAtMs <= nowMs) {
+		if (prefs?.relativeTimestamps === false) {
+			return `Expired ${dateText}`;
+		}
+		return `Expired ${formatRelativeTime(expiresAtMs, nowMs, prefs)}`;
+	}
+	const diffMs = expiresAtMs - nowMs;
+	let countdown: string;
+	if (diffMs < 60_000) {
+		countdown = 'in <1m';
+	} else if (diffMs < 3_600_000) {
+		countdown = `in ${Math.ceil(diffMs / 60_000)}m`;
+	} else if (diffMs < MILLIS_PER_DAY) {
+		countdown = `in ${Math.ceil(diffMs / 3_600_000)}h`;
+	} else {
+		countdown = `in ${Math.ceil(diffMs / MILLIS_PER_DAY)}d`;
+	}
+	return `Expires ${dateText} (${countdown})`;
+}

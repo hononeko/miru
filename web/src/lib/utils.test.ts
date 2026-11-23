@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	formatApiKeyExpiry,
 	formatBandwidthKbps,
 	formatBytes,
 	formatClockMs,
@@ -9,7 +10,9 @@ import {
 	formatPreferencePreview,
 	formatRelativeTime,
 	formatShortDateTime,
+	getApiKeyStatus,
 	getDecisionMeta,
+	resolveApiKeyExpiresAtMs,
 	safeInitial,
 	validatePassword
 } from './utils';
@@ -132,5 +135,48 @@ describe('Miru telemetry formatters', () => {
 				sample
 			)
 		).toBe('22/11/2026 9:05 PM');
+	});
+
+	it('computes API key expiration presets, status badges, and countdown labels', () => {
+		const now = new Date(2026, 10, 22, 12, 0, 0).getTime(); // Nov 22, 2026 12:00 local
+		const dayMs = 86_400_000;
+
+		expect(resolveApiKeyExpiresAtMs('never', '', now)).toBeNull();
+		expect(resolveApiKeyExpiresAtMs('7d', '', now)).toBe(now + 7 * dayMs);
+		expect(resolveApiKeyExpiresAtMs('30d', '', now)).toBe(now + 30 * dayMs);
+		expect(resolveApiKeyExpiresAtMs('90d', '', now)).toBe(now + 90 * dayMs);
+		expect(resolveApiKeyExpiresAtMs('1y', '', now)).toBe(now + 365 * dayMs);
+
+		const customFuture = resolveApiKeyExpiresAtMs('custom', '2026-12-31', now);
+		expect(customFuture).toBe(new Date(2026, 11, 31, 23, 59, 59, 999).getTime());
+		expect(Number.isNaN(resolveApiKeyExpiresAtMs('custom', '2026-11-20', now))).toBe(true);
+		expect(Number.isNaN(resolveApiKeyExpiresAtMs('custom', 'not-a-date', now))).toBe(true);
+		expect(Number.isNaN(resolveApiKeyExpiresAtMs('custom', '2026-02-30', now))).toBe(true);
+
+		expect(getApiKeyStatus({ revokedAtMs: null, expiresAtMs: null }, now)).toBe('ACTIVE');
+		expect(getApiKeyStatus({ revokedAtMs: null, expiresAtMs: now + 60_000 }, now)).toBe('ACTIVE');
+		expect(getApiKeyStatus({ revokedAtMs: null, expiresAtMs: now }, now)).toBe('EXPIRED');
+		expect(getApiKeyStatus({ revokedAtMs: null, expiresAtMs: now - 10_000 }, now)).toBe('EXPIRED');
+		expect(getApiKeyStatus({ revokedAtMs: now - 5_000, expiresAtMs: now - 10_000 }, now)).toBe('REVOKED');
+
+		expect(formatApiKeyExpiry(null, now)).toBe('Never expires');
+		expect(formatApiKeyExpiry(now + 30 * dayMs - 50, now, { dateFormat: 'iso' })).toBe(
+			'Expires 2026-12-22 (in 30d)'
+		);
+		expect(formatApiKeyExpiry(now + 3 * 3_600_000, now, { dateFormat: 'iso' })).toBe(
+			'Expires 2026-11-22 (in 3h)'
+		);
+		expect(formatApiKeyExpiry(now + 20 * 60_000, now, { dateFormat: 'iso' })).toBe(
+			'Expires 2026-11-22 (in 20m)'
+		);
+		expect(formatApiKeyExpiry(now + 15_000, now, { dateFormat: 'iso' })).toBe(
+			'Expires 2026-11-22 (in <1m)'
+		);
+		expect(formatApiKeyExpiry(now - 2 * dayMs, now, { dateFormat: 'iso', relativeTimestamps: true })).toBe(
+			'Expired 2d ago'
+		);
+		expect(formatApiKeyExpiry(now - 2 * dayMs, now, { dateFormat: 'iso', relativeTimestamps: false })).toBe(
+			'Expired 2026-11-20'
+		);
 	});
 });

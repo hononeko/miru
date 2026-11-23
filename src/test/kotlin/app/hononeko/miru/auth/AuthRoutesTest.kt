@@ -643,6 +643,118 @@ class AuthRoutesTest :
             }
         }
 
+        test("API key creation supports preset intervals (7d, 30d, 90d, 1y, never), rejects past timestamps, and enforces EXPIRED cutoff") {
+            createHarness().use { harness ->
+                val adminLogin = harness.authService.setupInitialAdmin("admin", "Admin-password-123").shouldBeRight()
+                val baseNow = harness.nowMs.get()
+                val dayMs = AuthService.MILLIS_PER_DAY
+
+                testApplication {
+                    setupAuthApp(harness)
+
+                    val presets =
+                        listOf(
+                            "7d" to baseNow + 7L * dayMs,
+                            "30d" to baseNow + 30L * dayMs,
+                            "90d" to baseNow + 90L * dayMs,
+                            "1y" to baseNow + 365L * dayMs,
+                            "never" to null,
+                        )
+
+                    for ((preset, expectedExpiry) in presets) {
+                        val resp =
+                            client.post("/api/v1/admin/api-keys") {
+                                cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                                contentType(ContentType.Application.Json)
+                                setBody(
+                                    MiruJson.encodeToString(
+                                        CreateApiKeyRequest(
+                                            name = "Key-$preset",
+                                            role = MiruRole.USER,
+                                            expiresIn = preset,
+                                        ),
+                                    ),
+                                )
+                            }
+                        resp.status shouldBe HttpStatusCode.Created
+                        val created = MiruJson.decodeFromString<CreateApiKeyResponse>(resp.bodyAsText())
+                        created.apiKey.expiresAtMs shouldBe expectedExpiry
+                    }
+
+                    // Reject past or equal expiresAtMs with 400 ValidationError
+                    val pastResp =
+                        client.post("/api/v1/admin/api-keys") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                            contentType(ContentType.Application.Json)
+                            setBody(
+                                MiruJson.encodeToString(
+                                    CreateApiKeyRequest(
+                                        name = "Past Key",
+                                        role = MiruRole.USER,
+                                        expiresAtMs = baseNow,
+                                    ),
+                                ),
+                            )
+                        }
+                    pastResp.status shouldBe HttpStatusCode.BadRequest
+                    val pastProblem = MiruJson.decodeFromString<ProblemDetails>(pastResp.bodyAsText())
+                    pastProblem.status shouldBe 400
+                    pastProblem.errors.shouldNotBeNull().keys shouldContainExactly setOf("expiresAtMs")
+
+                    // Reject unknown expiresIn preset with 400 ValidationError
+                    val badPresetResp =
+                        client.post("/api/v1/admin/api-keys") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                            contentType(ContentType.Application.Json)
+                            setBody(
+                                MiruJson.encodeToString(
+                                    CreateApiKeyRequest(
+                                        name = "Bad Preset Key",
+                                        role = MiruRole.USER,
+                                        expiresIn = "14d",
+                                    ),
+                                ),
+                            )
+                        }
+                    badPresetResp.status shouldBe HttpStatusCode.BadRequest
+                    val badPresetProblem = MiruJson.decodeFromString<ProblemDetails>(badPresetResp.bodyAsText())
+                    badPresetProblem.status shouldBe 400
+                    badPresetProblem.errors.shouldNotBeNull().keys shouldContainExactly setOf("expiresIn")
+
+                    // Verify exact boundary expiration: valid at expiresAtMs - 1, rejected at expiresAtMs
+                    val shortResp =
+                        client.post("/api/v1/admin/api-keys") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                            contentType(ContentType.Application.Json)
+                            setBody(
+                                MiruJson.encodeToString(
+                                    CreateApiKeyRequest(
+                                        name = "Boundary Key",
+                                        role = MiruRole.USER,
+                                        expiresAtMs = baseNow + 5_000L,
+                                    ),
+                                ),
+                            )
+                        }
+                    val boundaryKey = MiruJson.decodeFromString<CreateApiKeyResponse>(shortResp.bodyAsText())
+
+                    harness.nowMs.set(baseNow + 4_999L)
+                    client
+                        .get("/api/v1/auth/me") {
+                            header("X-Api-Key", boundaryKey.rawKey)
+                        }.status shouldBe HttpStatusCode.OK
+
+                    harness.nowMs.set(baseNow + 5_000L)
+                    val expiredAuth =
+                        client.get("/api/v1/auth/me") {
+                            header("X-Api-Key", boundaryKey.rawKey)
+                        }
+                    expiredAuth.status shouldBe HttpStatusCode.Unauthorized
+                    MiruJson.decodeFromString<ProblemDetails>(expiredAuth.bodyAsText()).detail shouldContain "expired"
+                }
+            }
+        }
+
         test("AUTH_MODE=none bypasses auth as DEV_BYPASS admin and system endpoints remain unauthenticated") {
             createHarness(mode = AuthMode.NONE, sessionSecret = "").use { harness ->
                 testApplication {

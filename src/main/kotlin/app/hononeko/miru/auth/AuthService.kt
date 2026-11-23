@@ -410,6 +410,7 @@ class AuthService(
         name: String,
         role: MiruRole,
         expiresAtMs: Long? = null,
+        expiresIn: String? = null,
     ): Either<MiruError, CreatedApiKey> =
         either {
             val trimmedName = name.trim()
@@ -418,9 +419,7 @@ class AuthService(
                 errors["name"] = "must be between 1 and $MAX_API_KEY_NAME_LENGTH characters"
             }
             val now = clock()
-            if (expiresAtMs != null && expiresAtMs <= now) {
-                errors["expiresAtMs"] = "must be in the future"
-            }
+            val resolvedExpiresAtMs = resolveApiKeyExpiration(now, expiresAtMs, expiresIn, errors)
             ensure(errors.isEmpty()) {
                 MiruError.ValidationError("Invalid API key request", fieldErrors = errors)
             }
@@ -438,13 +437,38 @@ class AuthService(
                     keyHash = TokenCrypto.sha256Hex(rawKey),
                     role = role.name,
                     lastUsedAtMs = null,
-                    expiresAtMs = expiresAtMs,
+                    expiresAtMs = resolvedExpiresAtMs,
                     revokedAtMs = null,
                     createdAtMs = now,
                 )
             apiKeyRepository.insert(record).bind()
             CreatedApiKey(record = record, rawKey = rawKey)
         }
+
+    private fun resolveApiKeyExpiration(
+        nowMs: Long,
+        expiresAtMs: Long?,
+        expiresIn: String?,
+        errors: MutableMap<String, String>,
+    ): Long? {
+        if (expiresAtMs != null && expiresAtMs <= nowMs) {
+            errors["expiresAtMs"] = "must be in the future"
+        }
+        val normalizedPreset = expiresIn?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
+        val presetExpiresAtMs =
+            when (normalizedPreset) {
+                null, "never" -> null
+                "7d" -> nowMs + DAYS_7 * MILLIS_PER_DAY
+                "30d" -> nowMs + DAYS_30 * MILLIS_PER_DAY
+                "90d" -> nowMs + DAYS_90 * MILLIS_PER_DAY
+                "1y" -> nowMs + DAYS_365 * MILLIS_PER_DAY
+                else -> {
+                    errors["expiresIn"] = "must be one of: 7d, 30d, 90d, 1y, never"
+                    null
+                }
+            }
+        return expiresAtMs ?: presetExpiresAtMs
+    }
 
     suspend fun revokeApiKey(id: String): Either<MiruError, Unit> =
         either {
@@ -656,6 +680,11 @@ class AuthService(
         const val MAX_USERNAME_LENGTH = 64
         const val MIN_PASSWORD_LENGTH = PasswordPolicy.MIN_LENGTH
         const val MAX_API_KEY_NAME_LENGTH = 100
+        const val MILLIS_PER_DAY = 24L * 60L * 60L * 1000L
+        private const val DAYS_7 = 7L
+        private const val DAYS_30 = 30L
+        private const val DAYS_90 = 90L
+        private const val DAYS_365 = 365L
         const val DEFAULT_SESSION_TTL_MS = 7L * 24L * 60L * 60L * 1000L
         const val DEFAULT_THEME = "system"
         const val DEFAULT_TIME_FORMAT = "24h"

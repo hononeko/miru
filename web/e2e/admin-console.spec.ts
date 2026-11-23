@@ -148,12 +148,13 @@ test.describe('Admin console: Plex PIN OAuth, Tautulli import, local accounts & 
 		await memberRow.getByRole('button', { name: 'Delete' }).click();
 		await expect(accountsSection.locator('> div > div').filter({ hasText: 'e2e_member' })).toHaveCount(0);
 
-		// --- 4. API Key Creation, Live Verification & Revocation ---
+		// --- 4. API Key Creation (with Expiration Interval), Live Verification & Revocation ---
 		await page.getByRole('button', { name: 'New API Key' }).click();
 		const keySheet = page.getByRole('dialog');
 		await expect(keySheet.getByText('Create API Key')).toBeVisible();
 		await keySheet.getByLabel('Key Name').fill('E2E Automation Key');
 		await keySheet.getByLabel('Role').selectOption('ADMIN');
+		await keySheet.getByLabel('Expiration').selectOption('30d');
 		await keySheet.getByRole('button', { name: 'Generate API Key' }).click();
 		await expect(keySheet).not.toBeVisible();
 
@@ -168,9 +169,10 @@ test.describe('Admin console: Plex PIN OAuth, Tautulli import, local accounts & 
 		});
 		expect(authOk.status()).toBe(200);
 
-		// Revoke API key
+		// Verify expiration countdown and revoke API key
 		const keyRow = keysSection.locator('> div > div').filter({ hasText: 'E2E Automation Key' });
 		await expect(keyRow).toContainText('ACTIVE');
+		await expect(keyRow).toContainText('(in 30d)');
 		await keyRow.getByRole('button', { name: 'Revoke' }).click();
 		await expect(keyRow).toContainText('REVOKED');
 

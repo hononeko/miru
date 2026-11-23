@@ -478,23 +478,25 @@ private fun mapStreamTechnicalInfo(
         selectedMedia?.videoResolution?.takeIf { it.isNotBlank() }
             ?: videoStream?.height?.let { "${it}p" }
 
+    // While Plex converts a stream, the session's Media/Part/Stream elements describe what it sends to the
+    // player, not the file. Their codec still matches the file for a copied stream, but not for a transcoded one.
+    val isConverting = ts != null
+    val sessionVideoCodec = selectedMedia?.videoCodec?.takeIf { it.isNotBlank() } ?: videoStream?.codec?.takeIf { it.isNotBlank() }
+    val sessionAudioCodec = selectedMedia?.audioCodec?.takeIf { it.isNotBlank() } ?: audioStream?.codec?.takeIf { it.isNotBlank() }
+    val sessionContainer =
+        selectedMedia?.container?.takeIf { it.isNotBlank() } ?: selectedPart?.container?.takeIf { it.isNotBlank() }
+
     return StreamTechnicalInfo(
         decision = overallDecision,
         videoDecision = videoDecision,
         audioDecision = audioDecision,
         isHwTranscode = isHwTranscode,
-        // The transcode session names the source codecs explicitly; prefer them when the server reports them.
-        videoCodec =
-            ts?.sourceVideoCodec?.takeIf { it.isNotBlank() }
-                ?: selectedMedia?.videoCodec?.takeIf { it.isNotBlank() }
-                ?: videoStream?.codec?.takeIf { it.isNotBlank() },
-        transcodeVideoCodec = ts?.videoCodec?.takeIf { it.isNotBlank() },
-        audioCodec =
-            ts?.sourceAudioCodec?.takeIf { it.isNotBlank() }
-                ?: selectedMedia?.audioCodec?.takeIf { it.isNotBlank() }
-                ?: audioStream?.codec?.takeIf { it.isNotBlank() },
-        transcodeAudioCodec = ts?.audioCodec?.takeIf { it.isNotBlank() },
-        container = selectedMedia?.container?.takeIf { it.isNotBlank() } ?: selectedPart?.container?.takeIf { it.isNotBlank() },
+        videoCodec = sourceCodec(ts?.sourceVideoCodec, sessionVideoCodec, isConverting, videoDecision),
+        transcodeVideoCodec = knownCodec(ts?.videoCodec)?.takeIf { videoDecision == StreamDecision.TRANSCODE },
+        audioCodec = sourceCodec(ts?.sourceAudioCodec, sessionAudioCodec, isConverting, audioDecision),
+        transcodeAudioCodec = knownCodec(ts?.audioCodec)?.takeIf { audioDecision == StreamDecision.TRANSCODE },
+        // A converting session's Media describes the output; the adapter fills in the file's container.
+        container = sessionContainer.takeIf { !isConverting },
         transcodeContainer = ts?.container?.takeIf { it.isNotBlank() },
         subtitleDecision = ts?.subtitleDecision?.trim()?.lowercase()?.takeIf { it.isNotEmpty() },
         videoResolution = resolution,
@@ -503,6 +505,22 @@ private fun mapStreamTechnicalInfo(
         transcodeSpeed = ts?.speed,
     )
 }
+
+/** Plex sometimes reports `*` for a codec it has not settled yet; treat it, like a blank, as unknown. */
+private fun knownCodec(raw: String?): String? = raw?.trim()?.takeIf { it.isNotEmpty() && it != "*" }
+
+/**
+ * The file's codec for one stream: the transcode session's source codec when Plex reports it, otherwise the
+ * session's own codec, except for a stream Plex is transcoding, whose session codec is the output's.
+ */
+private fun sourceCodec(
+    transcodeSessionSource: String?,
+    sessionCodec: String?,
+    isConverting: Boolean,
+    decision: StreamDecision?,
+): String? =
+    knownCodec(transcodeSessionSource)
+        ?: knownCodec(sessionCodec)?.takeIf { !isConverting || decision != StreamDecision.TRANSCODE }
 
 private fun resolveOverallDecision(
     transcodeSession: PlexTranscodeSessionDto?,

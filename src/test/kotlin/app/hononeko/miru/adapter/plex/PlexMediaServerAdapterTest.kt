@@ -52,6 +52,7 @@ private fun assertTokenHeaderAndSafeUrl(request: HttpRequestData) {
 
 private fun adapterWithMock(
     plexTvBaseUrl: String? = null,
+    clock: () -> Long = { System.currentTimeMillis() },
     handler: suspend MockRequestHandleScope.(HttpRequestData) -> HttpResponseData,
 ): Pair<PlexMediaServerAdapter, MutableList<HttpRequestData>> {
     val recorded = mutableListOf<HttpRequestData>()
@@ -67,6 +68,7 @@ private fun adapterWithMock(
             config = PlexConfig(baseUrl = TEST_PLEX_URL, token = TEST_TOKEN),
             httpClient = client,
             plexTvBaseUrl = plexTvBaseUrl,
+            clock = clock,
         )
     return adapter to recorded
 }
@@ -102,8 +104,11 @@ class PlexMediaServerAdapterTest :
             var index = 0
             val (adapter, _) =
                 adapterWithMock { request ->
-                    request.url.encodedPath shouldBe "/status/sessions"
-                    respondJson(payloads[index++])
+                    when (request.url.encodedPath) {
+                        "/status/sessions" -> respondJson(payloads[index++])
+                        "/library/metadata/54321" -> respondJson(PlexFixtures.episodeMetadataDetailsJson)
+                        else -> error("Unexpected request ${request.url.encodedPath}")
+                    }
                 }
 
             adapter.fetchActiveSessions().shouldBeRight().shouldBeEmpty()
@@ -118,6 +123,10 @@ class PlexMediaServerAdapterTest :
             episode.technical.decision shouldBe StreamDecision.TRANSCODE
             episode.technical.isHwTranscode shouldBe true
             episode.player.location shouldBe StreamLocation.WAN
+            // Filled in from the library item, since the session describes the transcoded output.
+            episode.technical.container shouldBe "mkv"
+            episode.technical.videoCodec shouldBe "hevc"
+            episode.technical.transcodeVideoCodec shouldBe "h264"
 
             val track = adapter.fetchActiveSessions().shouldBeRight().single()
             track.media.mediaType shouldBe MediaType.TRACK
@@ -127,6 +136,37 @@ class PlexMediaServerAdapterTest :
             live.media.mediaType shouldBe MediaType.LIVE_TV
             live.media.durationMs shouldBe null
             live.player.location shouldBe StreamLocation.LAN
+        }
+
+        test("looks up a converting session's source file once per item and retries a failed lookup later") {
+            var nowMs = 1_000_000L
+            var metadataFails = true
+            val (adapter, requests) =
+                adapterWithMock(clock = { nowMs }) { request ->
+                    when (request.url.encodedPath) {
+                        "/status/sessions" -> respondJson(PlexFixtures.episodeHwTranscodeWanJson)
+                        "/library/metadata/54321" ->
+                            if (metadataFails) {
+                                respondJson("{}", HttpStatusCode.InternalServerError)
+                            } else {
+                                respondJson(PlexFixtures.episodeMetadataDetailsJson)
+                            }
+                        else -> error("Unexpected request ${request.url.encodedPath}")
+                    }
+                }
+            fun metadataRequests() = requests.count { it.url.encodedPath == "/library/metadata/54321" }
+
+            // A failed lookup leaves the source unknown and is not retried right away.
+            adapter.fetchActiveSessions().shouldBeRight().single().technical.container shouldBe null
+            adapter.fetchActiveSessions().shouldBeRight()
+            metadataRequests() shouldBe 1
+
+            // After the retry delay it is looked up again; a successful result is then reused.
+            metadataFails = false
+            nowMs += 5L * 60L * 1000L
+            adapter.fetchActiveSessions().shouldBeRight().single().technical.container shouldBe "mkv"
+            adapter.fetchActiveSessions().shouldBeRight().single().technical.audioCodec shouldBe "eac3"
+            metadataRequests() shouldBe 2
         }
 
         test("normalizes local admin User.id == 1 consistently via /accounts and optional plex.tv") {

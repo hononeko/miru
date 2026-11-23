@@ -1017,7 +1017,11 @@ class HistoryAndStatsService(
 
         val labels = mutableListOf<String>()
         if (burnsSubtitles) labels += "Subtitle Burn-in"
-        if (isVideoTranscode) labels += describeCodecChange("Video", row.videoCodec, row.transcodeVideoCodec)
+        if (isVideoTranscode) {
+            val videoLabel = describeCodecChange("Video", row.videoCodec, row.transcodeVideoCodec)
+            // Burning subtitles is itself a video transcode; only a codec change is worth naming next to it.
+            if (!burnsSubtitles || videoLabel.contains(" → ")) labels += videoLabel
+        }
         if (isAudioTranscode) labels += describeCodecChange("Audio", row.audioCodec, row.transcodeAudioCodec)
         if (labels.isEmpty()) {
             when {
@@ -1046,7 +1050,7 @@ class HistoryAndStatsService(
 
     private fun knownCodec(raw: String?): String? =
         raw
-            ?.takeIf { it.isNotBlank() }
+            ?.takeIf { it.isNotBlank() && it.trim() != "*" }
             ?.let(LibraryNormalizer::normalizeCodec)
             ?.takeIf { !it.equals("unknown", ignoreCase = true) }
 

@@ -58,7 +58,7 @@ data class StreamTechRecord(
     val transcodeVideoCodec: String? = null,
     /** Audio codec the server transcoded to; null when audio was not transcoded or not reported. */
     val transcodeAudioCodec: String? = null,
-    /** Source file container. */
+    /** The file's container; null when unknown. */
     val container: String? = null,
     /** Container the server streamed in when it remuxed or transcoded. */
     val transcodeContainer: String? = null,

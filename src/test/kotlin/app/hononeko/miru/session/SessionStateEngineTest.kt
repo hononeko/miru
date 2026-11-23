@@ -867,6 +867,19 @@ class SessionStateEngineTest :
             }
         }
 
+        test("a merged history row keeps the more converted segment's stream details") {
+            val transcode = StreamTechRecord(streamDecision = "transcode", videoDecision = "transcode", subtitleDecision = "burn")
+            val remux = StreamTechRecord(streamDecision = "direct_stream", videoDecision = "copy")
+            val directPlay = StreamTechRecord(streamDecision = "direct_play")
+
+            moreConverted(earlier = transcode, later = directPlay) shouldBe transcode
+            moreConverted(earlier = remux, later = transcode) shouldBe transcode
+            moreConverted(earlier = directPlay, later = remux) shouldBe remux
+            // A tie keeps the later segment's details.
+            val laterTranscode = transcode.copy(subtitleDecision = null)
+            moreConverted(earlier = transcode, later = laterTranscode) shouldBe laterTranscode
+        }
+
         test("maintains live transcode technical metadata overlay across start, update, and stop") {
             runTest {
                 newEnv().use { env ->

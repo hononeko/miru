@@ -146,7 +146,9 @@ private fun createRichTautulliSchema(stmt: java.sql.Statement) {
             bitrate INTEGER,
             container TEXT,
             stream_container TEXT,
-            stream_subtitle_decision TEXT
+            stream_subtitle_decision TEXT,
+            transcode_container TEXT,
+            transcode_video_codec TEXT
         )
         """.trimIndent(),
     )
@@ -221,22 +223,22 @@ private fun seedRichTautulliData(stmt: java.sql.Statement) {
     stmt.executeUpdate(
         "INSERT INTO session_history_media_info VALUES " +
             "(1, 'direct play', 'direct play', 'direct play', 0, 0, 'h264', 'aac', '1080', NULL, NULL, NULL, 8000, 7500, " +
-            "'mp4', 'mp4', NULL)",
+            "'mp4', 'mp4', NULL, NULL, NULL)",
     )
     stmt.executeUpdate(
         "INSERT INTO session_history_media_info VALUES " +
             "(2, 'transcode', 'transcode', 'copy', 1, 0, 'hevc', 'aac', '4k', '1080', 'h264', 'aac', 12000, 10000, " +
-            "'mkv', 'mpegts', 'Burn')",
+            "'mkv', 'mpegts', 'Burn', 'mp4', 'hevc')",
     )
     stmt.executeUpdate(
         "INSERT INTO session_history_media_info VALUES " +
             "(3, 'copy', 'copy', 'copy', 0, 0, 'h264', 'ac3', '1080', NULL, NULL, NULL, NULL, 6000, " +
-            "'mkv', 'mp4', NULL)",
+            "'mkv', 'mp4', NULL, NULL, NULL)",
     )
     stmt.executeUpdate(
         "INSERT INTO session_history_media_info VALUES " +
             "(4, 'direct play', NULL, NULL, 0, 0, 'h264', 'dts', '1080', NULL, NULL, NULL, 5000, NULL, " +
-            "'mkv', 'mkv', NULL)",
+            "'mkv', 'mkv', NULL, NULL, NULL)",
     )
 }
 
@@ -324,10 +326,11 @@ class TautulliImporterTest :
                 grouped.streamTech.hwTranscode shouldBe true
                 grouped.streamTech.bandwidthKbps shouldBe 12_000
                 // Only the transcoded video stream gets a target codec; audio was copied.
-                grouped.streamTech.transcodeVideoCodec shouldBe "h264"
+                // transcode_* columns win over stream_* ones when both are present.
+                grouped.streamTech.transcodeVideoCodec shouldBe "hevc"
                 grouped.streamTech.transcodeAudioCodec shouldBe null
                 grouped.streamTech.container shouldBe "mkv"
-                grouped.streamTech.transcodeContainer shouldBe "mpegts"
+                grouped.streamTech.transcodeContainer shouldBe "mp4"
                 grouped.streamTech.subtitleDecision shouldBe "burn"
                 grouped.player.location shouldBe "lan"
                 grouped.media.thumbPath shouldBe "/thumb/ep1-v2"
@@ -554,12 +557,12 @@ class TautulliImporterTest :
                         stmt.executeUpdate(
                             "INSERT INTO session_history_media_info VALUES " +
                                 "(1, 'direct play', NULL, NULL, 0, 0, 'h264', 'aac', '1080', NULL, NULL, NULL, 8000, 8000, " +
-                                "NULL, NULL, NULL)",
+                                "NULL, NULL, NULL, NULL, NULL)",
                         )
                         stmt.executeUpdate(
                             "INSERT INTO session_history_media_info VALUES " +
                                 "(2, 'direct play', NULL, NULL, 0, 0, 'h264', 'aac', '1080', NULL, NULL, NULL, 8000, 8000, " +
-                                "NULL, NULL, NULL)",
+                                "NULL, NULL, NULL, NULL, NULL)",
                         )
                     }
                 }

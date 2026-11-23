@@ -414,6 +414,7 @@ private fun FunSpecRootScope.playbackHistoryTests(ctxProvider: () -> ContractCon
                     completionPercent = 92.5,
                     isWatched = true,
                     stoppedAtMs = 4_500L,
+                    streamTech = mergeCandidate.streamTech.withDistinctConversionDetails(),
                 )
             ctx.history.updateMergedSession(merged).shouldBeRight() shouldBe true
             ctx.history.findById("hist-1").shouldBeRight() shouldBe merged
@@ -1517,26 +1518,46 @@ private fun FunSpecRootScope.streamConversionTests(ctxProvider: () -> ContractCo
                 play("remux-unknown", StreamTechRecord(streamDecision = "direct_stream", videoDecision = "copy")),
                 play("legacy-video", StreamTechRecord(streamDecision = "transcode", videoDecision = "transcode", videoCodec = "hevc")),
                 play("legacy-stream", StreamTechRecord(streamDecision = "transcode")),
+                play(
+                    "starred",
+                    StreamTechRecord(
+                        streamDecision = "transcode",
+                        videoDecision = "transcode",
+                        videoCodec = "hevc",
+                        transcodeVideoCodec = "*",
+                    ),
+                ),
+                // Burning subtitles forces the re-encode, so it is not counted a second time as one.
+                play(
+                    "burn-same-codec",
+                    StreamTechRecord(
+                        streamDecision = "transcode",
+                        videoDecision = "transcode",
+                        videoCodec = "h264",
+                        transcodeVideoCodec = "h264",
+                        subtitleDecision = "burn",
+                    ),
+                ),
                 play("direct", StreamTechRecord(streamDecision = "direct_play", subtitleDecision = "burn")),
             ).forEach { ctx.history.insert(it).shouldBeRight() }
 
             ctx.history.findById("full").shouldBeRight().shouldNotBeNull().streamTech shouldBe fullTranscode
 
             val clients = service.getClientStats(admin, "30d").shouldBeRight()
-            clients.transcodeOrRemuxPlays shouldBe 7L
+            clients.transcodeOrRemuxPlays shouldBe 9L
             clients.transcodeReasons.associate { it.name to it.playCount } shouldBe
                 mapOf(
-                    "Subtitle Burn-in" to 1L,
+                    "Subtitle Burn-in" to 2L,
                     "Video HEVC → H.264" to 1L,
                     "Audio TRUEHD → AAC" to 1L,
                     "Video Re-encode (H.264)" to 1L,
                     "Video → HEVC" to 1L,
                     "Container MKV → MP4" to 1L,
                     "Container Remux" to 1L,
-                    "Video Transcode" to 2L,
+                    "Video Transcode" to 3L,
                 )
-            // Shares are of the 7 non-Direct-Play sessions; one session can count toward several changes.
-            clients.transcodeReasons.single { it.name == "Video Transcode" }.percent shouldBe 28.57
+            // Shares are of the 9 non-Direct-Play sessions; one session can count toward several changes.
+            clients.transcodeReasons.single { it.name == "Video Transcode" }.percent shouldBe 33.33
         }
     }
 }
@@ -1829,6 +1850,16 @@ private fun sampleSession(
         lastSeenAtMs = startedAtMs + 20_000L,
         pausedDurationSec = 0,
         missedPolls = 0,
+    )
+
+/** A distinct value in every conversion column, so a column swapped by a write or read shows up in an equality check. */
+private fun StreamTechRecord.withDistinctConversionDetails(): StreamTechRecord =
+    copy(
+        transcodeVideoCodec = "h264",
+        transcodeAudioCodec = "aac",
+        container = "mkv",
+        transcodeContainer = "mpegts",
+        subtitleDecision = "burn",
     )
 
 @Suppress("LongParameterList")

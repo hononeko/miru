@@ -19,6 +19,7 @@ import app.hononeko.miru.http.UserStatsResponse
 import app.hononeko.miru.http.WrappedMonthStatDto
 import app.hononeko.miru.http.WrappedStatsResponse
 import app.hononeko.miru.http.buildThumbUrl
+import app.hononeko.miru.http.normalizedDisplayName
 import app.hononeko.miru.http.toHistoryDetailResponse
 import app.hononeko.miru.http.toHistoryItemDto
 import app.hononeko.miru.library.LibraryNormalizer
@@ -43,6 +44,7 @@ private const val MILLIS_PER_DAY = 86_400_000L
 private const val TOP_MEDIA_LIMIT = 10
 private const val PERCENT_MULTIPLIER = 100.0
 private const val ROUNDING_SCALE = 100.0
+private const val MIN_POSITIVE_PERCENT = 0.01
 private const val DAYS_IN_WEEK = 7
 private const val HOURS_IN_DAY = 24
 private const val MIN_WRAPPED_YEAR = 1970
@@ -241,7 +243,7 @@ class HistoryAndStatsService(
             UserStatsResponse(
                 userId = user.id,
                 username = user.username,
-                displayName = user.displayName,
+                displayName = user.displayName.normalizedDisplayName(),
                 range = range.label,
                 fromMs = range.fromMs,
                 totalPlays = common.totalPlays,
@@ -480,7 +482,7 @@ class HistoryAndStatsService(
                 year = year,
                 userId = resolvedUser?.id,
                 username = resolvedUser?.username,
-                displayName = resolvedUser?.displayName,
+                displayName = resolvedUser?.displayName.normalizedDisplayName(),
                 totalPlays = common.totalPlays,
                 totalWatchDurationSec = common.totalWatchDurationSec,
                 completedPlays = rows.count { it.isWatched }.toLong(),
@@ -509,14 +511,7 @@ class HistoryAndStatsService(
     private suspend fun resolveUsers(userIds: List<String>): Either<MiruError, Map<String, UserRecord>> =
         either {
             if (userIds.isEmpty()) return@either emptyMap()
-            val result = mutableMapOf<String, UserRecord>()
-            for (uid in userIds) {
-                val user = userRepository.findById(uid).bind()
-                if (user != null) {
-                    result[uid] = user
-                }
-            }
-            result
+            userRepository.findByIds(userIds).bind().associateBy { it.id }
         }
 
     private fun validateHistoryQuery(params: HistoryQueryParams): Either<MiruError.ValidationError, ValidatedHistoryQuery> =
@@ -1007,23 +1002,33 @@ class HistoryAndStatsService(
         val streamDec = row.streamDecision.trim().lowercase()
         val videoDec = row.videoDecision?.trim()?.lowercase()
         val audioDec = row.audioDecision?.trim()?.lowercase()
+        val subtitleDec = row.subtitleDecision?.trim()?.lowercase()
 
         val isVideoTranscode = videoDec == "transcode"
         val isAudioTranscode = audioDec == "transcode"
         val isVideoCopy = videoDec in COPY_DECISIONS
         val isAudioCopy = audioDec in COPY_DECISIONS
-        val burnsSubtitles =
-            row.subtitleDecision?.trim().equals("burn", ignoreCase = true) &&
-                (isVideoTranscode || streamDec == "transcode")
+        val burnsSubtitles = subtitleDec == "burn" && (isVideoTranscode || streamDec == "transcode")
+        val transcodesSubtitles = subtitleDec == "transcode" && streamDec != "direct_play"
 
         val labels = mutableListOf<String>()
-        if (burnsSubtitles) labels += "Subtitle Burn-in"
-        if (isVideoTranscode) {
-            val videoLabel = describeCodecChange("Video", row.videoCodec, row.transcodeVideoCodec)
-            // Burning subtitles is itself a video transcode; only a codec change is worth naming next to it.
-            if (!burnsSubtitles || videoLabel.contains(" → ")) labels += videoLabel
+        if (burnsSubtitles) {
+            labels += "Subtitle Burn-in"
+        } else if (transcodesSubtitles) {
+            labels += "Subtitle Transcode"
         }
-        if (isAudioTranscode) labels += describeCodecChange("Audio", row.audioCodec, row.transcodeAudioCodec)
+        if (isVideoTranscode) {
+            val from = knownCodec(row.videoCodec)
+            val to = knownCodec(row.transcodeVideoCodec)
+            val codecChanged = from != null && to != null && from != to
+            // Burning subtitles is itself a video transcode; only a known codec change is worth naming next to it.
+            if (!burnsSubtitles || codecChanged) {
+                labels += describeCodecChange("Video", from, to)
+            }
+        }
+        if (isAudioTranscode) {
+            labels += describeCodecChange("Audio", knownCodec(row.audioCodec), knownCodec(row.transcodeAudioCodec))
+        }
         if (labels.isEmpty()) {
             when {
                 streamDec == "direct_stream" || isVideoCopy || isAudioCopy ->
@@ -1036,18 +1041,15 @@ class HistoryAndStatsService(
 
     private fun describeCodecChange(
         kind: String,
-        sourceCodec: String?,
-        targetCodec: String?,
-    ): String {
-        val from = knownCodec(sourceCodec)
-        val to = knownCodec(targetCodec)
-        return when {
+        from: String?,
+        to: String?,
+    ): String =
+        when {
             from != null && to != null && from != to -> "$kind $from → $to"
             from != null && to != null -> "$kind Re-encode ($to)"
             to != null -> "$kind → $to"
             else -> "$kind Transcode"
         }
-    }
 
     private fun knownCodec(raw: String?): String? =
         raw
@@ -1167,7 +1169,8 @@ class HistoryAndStatsService(
         part: Long,
         total: Long,
     ): Double {
-        if (total <= 0L) return 0.0
-        return ((part * PERCENT_MULTIPLIER / total) * ROUNDING_SCALE).roundToLong() / ROUNDING_SCALE
+        if (total <= 0L || part <= 0L) return 0.0
+        val rounded = ((part * PERCENT_MULTIPLIER / total) * ROUNDING_SCALE).roundToLong() / ROUNDING_SCALE
+        return rounded.coerceAtLeast(MIN_POSITIVE_PERCENT)
     }
 }

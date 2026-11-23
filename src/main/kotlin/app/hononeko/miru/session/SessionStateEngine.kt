@@ -73,6 +73,7 @@ class SessionStateEngine(
         val record: ActiveSessionRecord,
         val pausedDurationMs: Long = record.pausedDurationSec * MILLIS_PER_SECOND,
         val fromCrashRecovery: Boolean = false,
+        val peakStreamTech: StreamTechRecord = record.streamTech,
     )
 
     private val logger = LoggerFactory.getLogger(SessionStateEngine::class.java)
@@ -261,6 +262,7 @@ class SessionStateEngine(
                 stoppedAtMs = nowMs,
                 reason = StopReason.EXPLICIT_STOP,
                 eventTimestampMs = nowMs,
+                peakStreamTech = prev.peakStreamTech,
             )
         }
 
@@ -283,6 +285,7 @@ class SessionStateEngine(
                 record = updated,
                 pausedDurationMs = totalPausedMs,
                 fromCrashRecovery = false,
+                peakStreamTech = moreConverted(prev.peakStreamTech, updated.streamTech),
             )
         liveTechByKey[prev.record.key] = snapshot.technical
 
@@ -311,6 +314,7 @@ class SessionStateEngine(
                 stoppedAtMs = prev.record.lastSeenAtMs,
                 reason = StopReason.CRASH_RECOVERY,
                 eventTimestampMs = nowMs,
+                peakStreamTech = prev.peakStreamTech,
             )
         }
 
@@ -327,6 +331,7 @@ class SessionStateEngine(
                 stoppedAtMs = nowMs,
                 reason = StopReason.VANISHED,
                 eventTimestampMs = nowMs,
+                peakStreamTech = prev.peakStreamTech,
             )
         }
 
@@ -339,6 +344,7 @@ class SessionStateEngine(
                 stoppedAtMs = prev.record.lastSeenAtMs,
                 reason = StopReason.VANISHED,
                 eventTimestampMs = nowMs,
+                peakStreamTech = prev.peakStreamTech,
             )
         }
 
@@ -355,6 +361,7 @@ class SessionStateEngine(
         stoppedAtMs: Long,
         reason: StopReason,
         eventTimestampMs: Long,
+        peakStreamTech: StreamTechRecord = record.streamTech,
     ): SessionEvent.SessionStopped {
         activeSessionRepository.deleteByKey(record.key).bind()
         tracked.remove(record.key)
@@ -373,6 +380,7 @@ class SessionStateEngine(
                 watchedSec = watchedSec,
                 pausedSec = pausedSec,
                 stoppedAtMs = stoppedAtMs,
+                peakStreamTech = peakStreamTech,
             )
         if (mergedHistory != null) {
             return SessionEvent.SessionStopped(
@@ -410,7 +418,7 @@ class SessionStateEngine(
                 pausedDurationSec = pausedSec,
                 completionPercent = completionPercent,
                 isWatched = isWatched,
-                streamTech = record.streamTech,
+                streamTech = peakStreamTech,
                 player = record.player,
                 startedAtMs = record.startedAtMs,
                 stoppedAtMs = stoppedAtMs,
@@ -434,6 +442,7 @@ class SessionStateEngine(
         watchedSec: Int,
         pausedSec: Int,
         stoppedAtMs: Long,
+        peakStreamTech: StreamTechRecord = record.streamTech,
     ): PlaybackHistoryRecord? {
         if (config.resumeMergeWindowSeconds <= 0) {
             return null
@@ -479,7 +488,7 @@ class SessionStateEngine(
                 pausedDurationSec = candidate.pausedDurationSec + pausedSec,
                 completionPercent = mergedCompletion,
                 isWatched = candidate.isWatched || mergedCompletion >= config.watchedThresholdPercent.toDouble(),
-                streamTech = moreConverted(candidate.streamTech, record.streamTech),
+                streamTech = moreConverted(candidate.streamTech, peakStreamTech),
                 player = record.player,
                 startedAtMs = minOf(candidate.startedAtMs, record.startedAtMs),
                 stoppedAtMs = maxOf(candidate.stoppedAtMs, stoppedAtMs),

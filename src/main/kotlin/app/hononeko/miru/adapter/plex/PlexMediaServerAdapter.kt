@@ -42,6 +42,7 @@ import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
@@ -52,11 +53,12 @@ import org.slf4j.LoggerFactory
 
 private const val DEFAULT_REQUEST_TIMEOUT_MS = 15_000L
 private const val SOURCE_SPECS_CACHE_SIZE = 512
+private const val SOURCE_SPECS_TTL_MS = 60L * 60L * 1000L
 private const val SOURCE_SPECS_RETRY_MS = 5L * 60L * 1000L
 private const val LRU_LOAD_FACTOR = 0.75f
 
 private data class CachedSourceSpecs(
-    val specs: MediaTechnicalSpecs?,
+    val versions: List<Pair<String?, MediaTechnicalSpecs>>?,
     val fetchedAtMs: Long,
 )
 private const val DEFAULT_CONNECT_TIMEOUT_MS = 5_000L
@@ -133,18 +135,33 @@ class PlexMediaServerAdapter(
             val hasLocalOwner = items.any { it.user?.id == LOCAL_OWNER_USER_ID }
             val ownerUser = if (hasLocalOwner) resolveOwnerBestEffort() else null
 
-            PlexMapper.mapSessions(response.mediaContainer, ownerUser = ownerUser).map { withSourceSpecs(it) }
+            val mapped =
+                items.map { item ->
+                    PlexMapper.mapSession(metadata = item, ownerUser = ownerUser) to PlexMapper.selectedMediaId(item)
+                }
+            coroutineScope {
+                mapped.map { (snapshot, mediaId) -> async { withSourceSpecs(snapshot, mediaId) } }.awaitAll()
+            }
         }
 
     /**
      * Fills in the file's container and codecs for a session Plex is converting, whose session data describes
-     * the output. Each item is looked up once from /library/metadata and cached; a failed lookup is retried
-     * after a few minutes, and the session keeps whatever it already had.
+     * the output. Each item is looked up from /library/metadata and cached (matching the playing Media version
+     * when an item has multiple versions); entries expire after an hour, failed lookups are retried after five
+     * minutes, and sessions that already have all source fields skip the lookup.
      */
-    private suspend fun withSourceSpecs(snapshot: ActiveStreamSnapshot): ActiveStreamSnapshot {
+    private suspend fun withSourceSpecs(
+        snapshot: ActiveStreamSnapshot,
+        mediaId: String?,
+    ): ActiveStreamSnapshot {
         val tech = snapshot.technical
         if (tech.decision == StreamDecision.DIRECT_PLAY) return snapshot
-        val source = sourceSpecs(snapshot.media.ratingKey) ?: return snapshot
+        if (tech.container != null && tech.videoCodec != null && tech.audioCodec != null) return snapshot
+        val versions = sourceSpecs(snapshot.media.ratingKey) ?: return snapshot
+        val source =
+            versions.firstOrNull { mediaId != null && it.first == mediaId }?.second
+                ?: versions.firstOrNull()?.second
+                ?: return snapshot
         return snapshot.copy(
             technical =
                 tech.copy(
@@ -155,20 +172,21 @@ class PlexMediaServerAdapter(
         )
     }
 
-    private suspend fun sourceSpecs(ratingKey: String): MediaTechnicalSpecs? {
+    private suspend fun sourceSpecs(ratingKey: String): List<Pair<String?, MediaTechnicalSpecs>>? {
         val now = clock()
         sourceSpecsMutex.withLock {
             val cached = sourceSpecsCache[ratingKey]
-            if (cached != null && (cached.specs != null || now - cached.fetchedAtMs < SOURCE_SPECS_RETRY_MS)) {
-                return cached.specs
+            val ttl = if (cached?.versions != null) SOURCE_SPECS_TTL_MS else SOURCE_SPECS_RETRY_MS
+            if (cached != null && now - cached.fetchedAtMs < ttl) {
+                return cached.versions
             }
         }
-        val specs = fetchSourceSpecs(ratingKey)
-        sourceSpecsMutex.withLock { sourceSpecsCache[ratingKey] = CachedSourceSpecs(specs, now) }
-        return specs
+        val versions = fetchSourceSpecs(ratingKey)
+        sourceSpecsMutex.withLock { sourceSpecsCache[ratingKey] = CachedSourceSpecs(versions, clock()) }
+        return versions
     }
 
-    private suspend fun fetchSourceSpecs(ratingKey: String): MediaTechnicalSpecs? {
+    private suspend fun fetchSourceSpecs(ratingKey: String): List<Pair<String?, MediaTechnicalSpecs>>? {
         val key = ratingKey.trim().takeIf { SECTION_KEY_REGEX.matches(it) } ?: return null
         return executeJsonGet<PlexLibraryItemsResponse>(
             url = "$baseUrl/library/metadata/$key",
@@ -183,7 +201,8 @@ class PlexMediaServerAdapter(
             ifRight = { response ->
                 response.mediaContainer.metadata
                     ?.firstOrNull()
-                    ?.let { PlexMapper.mapMediaItemDetails(it).technical }
+                    ?.let { PlexMapper.mapTechnicalSpecsByMediaId(it) }
+                    ?.takeIf { it.isNotEmpty() }
             },
         )
     }

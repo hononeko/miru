@@ -198,7 +198,7 @@
 				/>
 				<div class="flex flex-col gap-1">
 					<a href="/users" class="inline-flex items-center gap-1 font-mono text-[11px] text-cyan-hi hover:underline">
-						<ArrowLeft class="h-3 w-3" /> Users / {detail.user.username}
+						<ArrowLeft class="h-3 w-3" /> Users / {detail.user.displayName || detail.user.username}
 					</a>
 					<div class="flex flex-wrap items-center gap-2">
 						<h1 class="font-display text-2xl font-bold text-fg-primary sm:text-3xl">

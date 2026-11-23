@@ -5,9 +5,10 @@ import kotlinx.serialization.Serializable
 /**
  * How an account's linked media users are maintained.
  *
- * [AUTO] is only meaningful for SSO (OIDC) accounts: on every sign-in Miru replaces the account's
- * links with the media users that share the account's verified email. [MANUAL] accounts keep exactly
- * the links an admin set. Editing an account's links makes it [MANUAL]; local accounts are always [MANUAL].
+ * [AUTO] is only meaningful for SSO (OIDC) accounts: Miru keeps the account's links in sync with the media
+ * users that share its verified email when its sign-in email or verification changes and after each media
+ * user sync. [MANUAL] accounts keep exactly the links an admin set. Editing an account's links makes it
+ * [MANUAL]; local accounts are always [MANUAL].
  */
 @Serializable
 enum class MediaUserLinkMode {

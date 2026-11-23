@@ -132,7 +132,7 @@ class OidcAuthService(
 
             val claims = oidcClient.verifyIdToken(rawIdToken, expectedNonce = pending.nonce).bind()
             val enriched = enrichClaimsFromUserInfo(claims, tokenResponse.accessToken).bind()
-            val role = mapGroupsToRole(enriched.groups).bind()
+            val role = mapGroupsToRole(enriched.claims.groups).bind()
 
             val (account, emailChanged) = upsertOidcAccount(enriched, role, now).bind()
             // Links only need recomputing when the email or its verification changed; the media user sync
@@ -178,19 +178,40 @@ class OidcAuthService(
             }.buildString()
     }
 
+    private data class EnrichedClaims(
+        val claims: OidcIdTokenClaims,
+        val verificationChecked: Boolean,
+    )
+
+    private sealed interface UserInfoLookup {
+        data class Found(
+            val claims: JsonObject,
+        ) : UserInfoLookup
+
+        data object NoEndpoint : UserInfoLookup
+
+        data object Unavailable : UserInfoLookup
+    }
+
     private suspend fun enrichClaimsFromUserInfo(
         claims: OidcIdTokenClaims,
         accessToken: String?,
-    ): Either<MiruError, OidcIdTokenClaims> =
+    ): Either<MiruError, EnrichedClaims> =
         either {
             // Email linking needs email_verified; IdPs that omit it from the ID token often return it from userinfo.
             val needsEmailVerified = authConfig.oidc.autoLinkByEmail && claims.emailVerified == null
             val idTokenHasGroupsAndEmail = claims.groups.isNotEmpty() && !claims.email.isNullOrBlank()
             if ((idTokenHasGroupsAndEmail && !needsEmailVerified) || accessToken.isNullOrBlank()) {
-                return@either claims
+                return@either EnrichedClaims(claims, verificationChecked = claims.emailVerified != null)
             }
 
-            val userInfo = fetchUserInfoForSubject(claims, accessToken).bind() ?: return@either claims
+            val userInfo =
+                when (val lookup = fetchUserInfoForSubject(claims, accessToken).bind()) {
+                    is UserInfoLookup.Found -> lookup.claims
+                    UserInfoLookup.NoEndpoint -> return@either EnrichedClaims(claims, verificationChecked = true)
+                    UserInfoLookup.Unavailable ->
+                        return@either EnrichedClaims(claims, verificationChecked = claims.emailVerified != null)
+                }
 
             val userInfoEmail = userInfo.stringClaim("email")?.trim()?.takeIf { it.isNotEmpty() }
             val userInfoEmailVerified = (userInfo["email_verified"] as? JsonPrimitive)?.booleanOrNull
@@ -205,40 +226,43 @@ class OidcAuthService(
             if (idTokenHasGroupsAndEmail) {
                 // Userinfo was fetched only for email_verified. Keep every other ID token claim as it was,
                 // so the username an existing account derives from them does not change.
-                return@either claims.copy(emailVerified = emailVerified)
+                return@either EnrichedClaims(claims.copy(emailVerified = emailVerified), verificationChecked = true)
             }
 
             val extraGroups = OidcJwtVerifier.extractGroupsClaim(userInfo, authConfig.oidc.groupsClaim)
             val resolvedUsername =
                 claims.preferredUsername
                     ?: userInfo.stringClaim("preferred_username")?.trim()?.takeIf { it.isNotEmpty() }
-            claims.copy(
-                preferredUsername = resolvedUsername,
-                name = claims.name ?: userInfo.stringClaim("name")?.trim()?.takeIf { it.isNotEmpty() },
-                email = email,
-                emailVerified = emailVerified,
-                groups = claims.groups.ifEmpty { extraGroups },
+            EnrichedClaims(
+                claims =
+                    claims.copy(
+                        preferredUsername = resolvedUsername,
+                        name = claims.name ?: userInfo.stringClaim("name")?.trim()?.takeIf { it.isNotEmpty() },
+                        email = email,
+                        emailVerified = emailVerified,
+                        groups = claims.groups.ifEmpty { extraGroups },
+                    ),
+                verificationChecked = true,
             )
         }
 
     /**
      * Fetches userinfo and returns it only when its `sub` matches the ID token's, as OIDC Core 5.3.2 requires.
      * A failed fetch or a mismatch is an error when the groups needed for sign-in must come from userinfo;
-     * otherwise it is logged and the result is null.
+     * otherwise it is logged and reported as [UserInfoLookup.Unavailable].
      */
     private suspend fun fetchUserInfoForSubject(
         claims: OidcIdTokenClaims,
         accessToken: String,
-    ): Either<MiruError, JsonObject?> =
+    ): Either<MiruError, UserInfoLookup> =
         either {
             val failure =
                 when (val result = oidcClient.fetchUserInfo(accessToken)) {
                     is Either.Left -> result.value
                     is Either.Right -> {
-                        // null: the IdP publishes no userinfo endpoint.
-                        val userInfo = result.value ?: return@either null
+                        val userInfo = result.value ?: return@either UserInfoLookup.NoEndpoint
                         if (userInfo.stringClaim("sub") == claims.subject) {
-                            return@either userInfo
+                            return@either UserInfoLookup.Found(userInfo)
                         }
                         MiruError.UpstreamAuthError("oidc", "OIDC userinfo subject does not match the ID token subject")
                     }
@@ -247,7 +271,7 @@ class OidcAuthService(
                 raise(failure)
             }
             logger.warn("Ignoring OIDC userinfo: {}", failure.message)
-            null
+            UserInfoLookup.Unavailable
         }
 
     private fun mapGroupsToRole(groups: Set<String>): Either<MiruError.Forbidden, MiruRole> =
@@ -265,20 +289,24 @@ class OidcAuthService(
      * email or recorded verification changed, which is when its email links need recomputing.
      */
     private suspend fun upsertOidcAccount(
-        claims: OidcIdTokenClaims,
+        enriched: EnrichedClaims,
         role: MiruRole,
         nowMs: Long,
     ): Either<MiruError, Pair<AuthAccountRecord, Boolean>> =
         either {
+            val claims = enriched.claims
             val existing = accountRepository.findByProviderAndSubject(PROVIDER_OIDC, claims.subject).bind()
             val candidateBase = deriveBaseUsername(claims)
-            // With email linking on, userinfo was consulted, so a missing claim means unverified. With it off,
-            // a missing claim stays unknown so that turning linking on later does not unlink anyone.
+            val sameExistingEmail = existing != null && claims.email != null && existing.email.equals(claims.email, ignoreCase = true)
+            // With email linking off, leave emailVerified unchecked (preserving any prior match) so turning
+            // linking on later triggers relinking on the next sign-in. With it on, a transient userinfo
+            // failure must not clobber a previously verified email into unverified and wipe existing links.
             val emailVerified =
                 when {
-                    claims.email == null -> if (authConfig.oidc.autoLinkByEmail) false else null
-                    authConfig.oidc.autoLinkByEmail -> claims.emailVerified == true
-                    else -> claims.emailVerified
+                    !authConfig.oidc.autoLinkByEmail -> if (sameExistingEmail) existing.emailVerified else null
+                    !enriched.verificationChecked -> if (sameExistingEmail) existing.emailVerified else claims.emailVerified
+                    claims.email == null -> false
+                    else -> claims.emailVerified == true
                 }
 
             if (existing != null) {

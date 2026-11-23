@@ -4,13 +4,36 @@ import app.hononeko.miru.persistence.model.PlaybackHistoryRecord
 import app.hononeko.miru.persistence.model.UserRecord
 import kotlinx.serialization.Serializable
 
+private val LIBRARY_ARTWORK_PATH =
+    Regex("^/library/metadata/([A-Za-z0-9_-]+)/(thumb|art)(?:/[^/?#]+)?/?(?:\\?.*)?$")
+
+/**
+ * Proxy URL for a media item's artwork (`thumb` or `art`). Plex points child items (episodes, seasons,
+ * music tracks) at their parent's artwork path (`/library/metadata/<parentKey>/<kind>/...`), so the
+ * rating key comes from the path when it names one for the requested kind.
+ */
+internal fun buildMediaArtworkUrl(
+    ratingKey: String,
+    artworkPath: String?,
+    kind: String,
+): String? {
+    val path = artworkPath?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    val match = LIBRARY_ARTWORK_PATH.matchEntire(path)
+    val targetKey =
+        if (match != null && match.groupValues[2] == kind) {
+            match.groupValues[1]
+        } else {
+            ratingKey
+        }
+    return "/api/v1/media/$targetKey/$kind"
+}
+
 internal fun buildThumbUrl(
     ratingKey: String,
     thumbPath: String?,
-): String? =
-    thumbPath
-        ?.takeIf { it.isNotBlank() }
-        ?.let { "/api/v1/media/$ratingKey/thumb" }
+): String? = buildMediaArtworkUrl(ratingKey = ratingKey, artworkPath = thumbPath, kind = "thumb")
+
+internal fun String?.normalizedDisplayName(): String? = this?.trim()?.takeIf { it.isNotEmpty() }
 
 @Serializable
 data class HistoryItemDto(
@@ -80,6 +103,11 @@ data class HistoryStreamTechDto(
     val audioCodec: String? = null,
     val videoResolution: String? = null,
     val bandwidthKbps: Int? = null,
+    val transcodeVideoCodec: String? = null,
+    val transcodeAudioCodec: String? = null,
+    val container: String? = null,
+    val transcodeContainer: String? = null,
+    val subtitleDecision: String? = null,
 )
 
 @Serializable
@@ -286,7 +314,7 @@ internal fun PlaybackHistoryRecord.toHistoryItemDto(user: UserRecord?): HistoryI
         serverId = serverId,
         userId = userId,
         username = user?.username,
-        displayName = user?.displayName?.takeIf { it.isNotBlank() },
+        displayName = user?.displayName.normalizedDisplayName(),
         ratingKey = media.ratingKey,
         mediaType = media.mediaType,
         title = media.title,
@@ -319,7 +347,7 @@ internal fun PlaybackHistoryRecord.toHistoryDetailResponse(user: UserRecord?): H
         serverId = serverId,
         userId = userId,
         username = user?.username,
-        displayName = user?.displayName?.takeIf { it.isNotBlank() },
+        displayName = user?.displayName.normalizedDisplayName(),
         externalImportKey = externalImportKey,
         media =
             HistoryMediaDto(
@@ -350,6 +378,11 @@ internal fun PlaybackHistoryRecord.toHistoryDetailResponse(user: UserRecord?): H
                 audioCodec = streamTech.audioCodec,
                 videoResolution = streamTech.videoResolution,
                 bandwidthKbps = streamTech.bandwidthKbps,
+                transcodeVideoCodec = streamTech.transcodeVideoCodec,
+                transcodeAudioCodec = streamTech.transcodeAudioCodec,
+                container = streamTech.container,
+                transcodeContainer = streamTech.transcodeContainer,
+                subtitleDecision = streamTech.subtitleDecision,
             ),
         player =
             HistoryPlayerDto(

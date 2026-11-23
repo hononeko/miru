@@ -16,6 +16,8 @@ import app.hononeko.miru.http.UserRecentPlayDto
 import app.hononeko.miru.http.UserSummaryDto
 import app.hononeko.miru.http.UserUsageStatDto
 import app.hononeko.miru.http.UsersListResponse
+import app.hononeko.miru.http.buildThumbUrl
+import app.hononeko.miru.http.normalizedDisplayName
 import app.hononeko.miru.persistence.model.ActiveSessionKey
 import app.hononeko.miru.persistence.model.ActiveSessionRecord
 import app.hononeko.miru.persistence.model.PlaybackHistoryRecord
@@ -99,7 +101,7 @@ class StreamsAndUsersService(
                 StreamUserDto(
                     id = session.userId,
                     username = user?.username,
-                    displayName = user?.displayName,
+                    displayName = user?.displayName.normalizedDisplayName(),
                     avatarUrl = user?.avatarProxyUrl(),
                 ),
             media =
@@ -112,7 +114,7 @@ class StreamsAndUsersService(
                     parentIndex = session.media.parentIndex,
                     mediaIndex = session.media.mediaIndex,
                     year = session.media.year,
-                    thumbUrl = session.media.thumbPath?.let { mediaThumbProxyUrl(session.media.ratingKey) },
+                    thumbUrl = buildThumbUrl(session.media.ratingKey, session.media.thumbPath),
                     librarySectionKey = session.media.librarySectionKey,
                     durationMs = durationMs,
                 ),
@@ -135,10 +137,10 @@ class StreamsAndUsersService(
                     audioCodec = session.streamTech.audioCodec,
                     videoResolution = session.streamTech.videoResolution,
                     bandwidthKbps = session.streamTech.bandwidthKbps,
-                    container = liveTech?.container,
-                    transcodeVideoCodec = liveTech?.transcodeVideoCodec,
-                    transcodeAudioCodec = liveTech?.transcodeAudioCodec,
-                    transcodeContainer = liveTech?.transcodeContainer,
+                    container = liveTech?.container ?: session.streamTech.container,
+                    transcodeVideoCodec = liveTech?.transcodeVideoCodec ?: session.streamTech.transcodeVideoCodec,
+                    transcodeAudioCodec = liveTech?.transcodeAudioCodec ?: session.streamTech.transcodeAudioCodec,
+                    transcodeContainer = liveTech?.transcodeContainer ?: session.streamTech.transcodeContainer,
                     transcodeProgress = liveTech?.transcodeProgress,
                     transcodeSpeed = liveTech?.transcodeSpeed,
                     throttled = liveTech?.transcodeSpeed?.let { it < 1.0 } ?: false,
@@ -250,7 +252,7 @@ class StreamsAndUsersService(
             serverId = serverId,
             externalUserId = externalUserId,
             username = username,
-            displayName = displayName,
+            displayName = displayName.normalizedDisplayName(),
             isAdmin = isAdmin,
             avatarUrl = avatarProxyUrl(),
             isStreaming = activeStreamCount > 0,
@@ -272,7 +274,7 @@ class StreamsAndUsersService(
             parentIndex = media.parentIndex,
             mediaIndex = media.mediaIndex,
             year = media.year,
-            thumbUrl = media.thumbPath?.let { mediaThumbProxyUrl(media.ratingKey) },
+            thumbUrl = buildThumbUrl(media.ratingKey, media.thumbPath),
             librarySectionKey = media.librarySectionKey,
             durationMs = media.durationMs,
             viewOffsetMs = viewOffsetMs,
@@ -361,7 +363,4 @@ class StreamsAndUsersService(
 
     private fun UserRecord.avatarProxyUrl(): String? =
         thumbUrl?.let { "/api/v1/users/$id/avatar" }
-
-    private fun mediaThumbProxyUrl(ratingKey: String): String =
-        "/api/v1/media/$ratingKey/thumb"
 }

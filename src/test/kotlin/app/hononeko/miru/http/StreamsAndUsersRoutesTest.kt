@@ -953,4 +953,79 @@ class StreamsAndUsersRoutesTest :
                 }
             }
         }
+
+        test("falls back to persisted active-session conversion details, parent thumb key, and trimmed displayName") {
+            createStreamsUsersHarness().use { harness ->
+                seedTestFixtureData(harness)
+                val adminLogin = harness.authService.setupInitialAdmin("admin", "Admin-password-123").shouldBeRight()
+                harness.userRepo
+                    .upsert(
+                        UserRecord(
+                            id = "mu-blank",
+                            serverId = "srv-1",
+                            externalUserId = "300",
+                            username = "blankname",
+                            displayName = "   ",
+                            thumbUrl = null,
+                            isAdmin = false,
+                            createdAtMs = 1_000L,
+                            updatedAtMs = 1_000L,
+                        ),
+                    ).shouldBeRight()
+
+                val recoveredSession =
+                    ActiveSessionRecord(
+                        serverId = "srv-1",
+                        sessionKey = "99",
+                        sessionId = "plex-sess-99",
+                        userId = "mu-blank",
+                        media =
+                            MediaMetadataRecord(
+                                ratingKey = "77001",
+                                mediaType = "track",
+                                title = "Resonance",
+                                thumbPath = "/library/metadata/77000/thumb/1700000200",
+                                durationMs = 212_000L,
+                            ),
+                        viewOffsetMs = 50_000L,
+                        state = "playing",
+                        streamTech =
+                            StreamTechRecord(
+                                streamDecision = "transcode",
+                                videoDecision = "transcode",
+                                audioDecision = "transcode",
+                                hwTranscode = false,
+                                videoCodec = "hevc",
+                                audioCodec = "flac",
+                                transcodeVideoCodec = "h264",
+                                transcodeAudioCodec = "aac",
+                                container = "mkv",
+                                transcodeContainer = "mp4",
+                                subtitleDecision = "burn",
+                            ),
+                        player = PlayerRecord(playerProduct = "Plexamp"),
+                        startedAtMs = 15_000L,
+                        lastSeenAtMs = 20_000L,
+                    )
+                harness.activeSessionRepo.upsert(recoveredSession).shouldBeRight()
+                // Empty liveTechRef simulates crash recovery after restart.
+                harness.liveTechRef.set(emptyMap())
+
+                testApplication {
+                    setupStreamsApp(harness)
+                    val resp =
+                        client.get("/api/v1/streams") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                        }
+                    resp.status shouldBe HttpStatusCode.OK
+                    val stream = MiruJson.decodeFromString<ActiveStreamsResponse>(resp.bodyAsText()).streams.single()
+                    stream.user.displayName.shouldBeNull()
+                    stream.media.thumbUrl shouldBe "/api/v1/media/77000/thumb"
+                    stream.technical.container shouldBe "mkv"
+                    stream.technical.transcodeVideoCodec shouldBe "h264"
+                    stream.technical.transcodeAudioCodec shouldBe "aac"
+                    stream.technical.transcodeContainer shouldBe "mp4"
+                }
+            }
+        }
     })

@@ -323,7 +323,7 @@ class AuthService(
 
     /** Whether SSO sign-in links AUTO accounts to media users by email (OIDC enabled and OIDC_AUTO_LINK_BY_EMAIL on). */
     val emailLinkingEnabled: Boolean
-        get() = authConfig.oidcEnabled && authConfig.oidc.autoLinkByEmail
+        get() = emailLinker?.enabled ?: (authConfig.oidcEnabled && authConfig.oidc.autoLinkByEmail)
 
     suspend fun listAccounts(): Either<MiruError, List<AccountWithLinks>> =
         either {

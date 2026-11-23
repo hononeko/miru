@@ -22,6 +22,47 @@
 	const titles = $derived(formatMediaTitle(detail.media));
 	const decision = $derived(getDecisionMeta(detail.streamTech.streamDecision, detail.streamTech.hwTranscode));
 	const pct = $derived(Math.min(100, Math.max(0, detail.completionPercent)));
+	const userLabel = $derived(detail.displayName || detail.username || detail.userId);
+
+	function formatCodecFlow(source: string | null | undefined, target: string | null | undefined): string | null {
+		const src = source?.trim().toUpperCase() || null;
+		const dst = target?.trim().toUpperCase() || null;
+		if (src && dst && src !== dst) return `${src} → ${dst}`;
+		if (dst && !src) return `→ ${dst}`;
+		return src;
+	}
+
+	const videoSummary = $derived(
+		[
+			detail.streamTech.videoResolution?.toUpperCase(),
+			formatCodecFlow(detail.streamTech.videoCodec, detail.streamTech.transcodeVideoCodec),
+			detail.streamTech.videoDecision
+		]
+			.filter(Boolean)
+			.join(' · ') || '—'
+	);
+
+	const audioSummary = $derived(
+		[
+			formatCodecFlow(detail.streamTech.audioCodec, detail.streamTech.transcodeAudioCodec),
+			detail.streamTech.audioDecision
+		]
+			.filter(Boolean)
+			.join(' · ') || '—'
+	);
+
+	const containerSummary = $derived(
+		formatCodecFlow(detail.streamTech.container, detail.streamTech.transcodeContainer)
+	);
+
+	const subtitleSummary = $derived.by(() => {
+		const raw = detail.streamTech.subtitleDecision?.trim().toLowerCase();
+		if (!raw) return null;
+		if (raw === 'burn') return 'Burn-in';
+		if (raw === 'transcode') return 'Transcode';
+		if (raw === 'copy') return 'Copy';
+		return raw;
+	});
 </script>
 
 <div class="flex flex-col gap-4">
@@ -56,9 +97,9 @@
 				<Badge tone={detail.isWatched ? 'direct-play' : 'neutral'} dot>
 					{detail.isWatched ? `Watched · ${Math.round(pct)}%` : `${Math.round(pct)}%`}
 				</Badge>
-				{#if detail.displayName || detail.username}
+				{#if userLabel}
 					<a href={`/users/${encodeURIComponent(detail.userId)}`}>
-						<Badge tone="primary">{detail.displayName || detail.username}</Badge>
+						<Badge tone="primary">{userLabel}</Badge>
 					</a>
 				{/if}
 				<button
@@ -101,15 +142,27 @@
 			<div class="flex items-center justify-between gap-2">
 				<dt class="text-fg-muted">Video</dt>
 				<dd class="font-mono text-[11px] text-fg-primary">
-					{[detail.streamTech.videoResolution?.toUpperCase(), detail.streamTech.videoCodec?.toUpperCase(), detail.streamTech.videoDecision].filter(Boolean).join(' · ') || '—'}
+					{videoSummary}
 				</dd>
 			</div>
 			<div class="flex items-center justify-between gap-2">
 				<dt class="text-fg-muted">Audio</dt>
 				<dd class="font-mono text-[11px] text-fg-primary">
-					{[detail.streamTech.audioCodec?.toUpperCase(), detail.streamTech.audioDecision].filter(Boolean).join(' · ') || '—'}
+					{audioSummary}
 				</dd>
 			</div>
+			{#if containerSummary}
+				<div class="flex items-center justify-between gap-2">
+					<dt class="text-fg-muted">Container</dt>
+					<dd class="font-mono text-[11px] text-fg-primary">{containerSummary}</dd>
+				</div>
+			{/if}
+			{#if subtitleSummary}
+				<div class="flex items-center justify-between gap-2">
+					<dt class="text-fg-muted">Subtitles</dt>
+					<dd class="font-mono text-[11px] text-fg-primary">{subtitleSummary}</dd>
+				</div>
+			{/if}
 			<div class="flex items-center justify-between gap-2">
 				<dt class="text-fg-muted">Hardware Accel</dt>
 				<dd class="font-mono text-[11px] text-cyan-hi">

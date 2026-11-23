@@ -24,7 +24,8 @@
 		formatBytes,
 		formatClockMs,
 		formatDurationSec,
-		formatRelativeTime
+		formatRelativeTime,
+		formatStatPercent
 	} from '$lib/utils';
 
 	const titleId = 'media-details-modal-title';
@@ -46,7 +47,7 @@
 	});
 
 	$effect(() => {
-		void data?.ratingKey;
+		void data;
 		failedBackdrops = [];
 	});
 
@@ -89,11 +90,11 @@
 		}
 	}
 
-	// First backdrop that has not failed: the item's art, then its poster, then the series poster.
+	// First backdrop that has not failed: the item's art, then its poster, then the season/series poster.
 	const heroBackdrop = $derived.by(() => {
 		if (!data) return null;
 		return (
-			[data.artUrl, data.thumbUrl, data.series?.thumbUrl].find(
+			[data.artUrl, data.thumbUrl, data.season?.thumbUrl, data.series?.thumbUrl].find(
 				(candidate): candidate is string =>
 					!!candidate && candidate.startsWith('/api/v1/') && !failedBackdrops.includes(candidate)
 			) ?? null
@@ -192,16 +193,14 @@
 	{...({ closedby: 'any' } as Record<string, string>)}
 	class="media-details-dialog fixed inset-x-0 bottom-0 top-auto z-50 m-0 max-h-[90dvh] w-full max-w-none overflow-hidden rounded-t-2xl border-t border-border-strong bg-surface text-fg-primary shadow-2xl focus:outline-none md:inset-0 md:m-auto md:max-h-[88dvh] md:w-[calc(100%-2rem)] md:max-w-3xl md:rounded-2xl md:border"
 >
-	<!-- Mobile drag indicator, laid over the top of the sheet so the hero art reaches the top edge -->
-	<div
-		data-sheet-drag-handle
-		class="absolute inset-x-0 top-0 z-10 flex cursor-grab touch-none justify-center pt-2.5 pb-2 active:cursor-grabbing md:hidden"
-	>
-		<div class="h-1 w-10 rounded-full bg-border-strong"></div>
-	</div>
-
 	{#if mediaDetailsModal.loading}
-		<div class="border-b border-border px-5 pt-7 pb-4 md:pt-4">
+		<div class="relative border-b border-border px-5 pt-7 pb-4 md:pt-4">
+			<div
+				data-sheet-drag-handle
+				class="absolute inset-x-0 top-0 z-10 flex cursor-grab touch-none justify-center pt-2.5 pb-2 active:cursor-grabbing md:hidden"
+			>
+				<div class="h-1 w-10 rounded-full bg-border-strong"></div>
+			</div>
 			<h1 id={titleId} class="font-display text-lg font-bold text-fg-primary">
 				{modalHeading}
 			</h1>
@@ -209,9 +208,16 @@
 		<div class="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-16 text-center">
 			<div class="h-8 w-8 animate-spin rounded-full border-2 border-cyan border-t-transparent"></div>
 			<p class="font-mono text-xs text-fg-muted">Fetching metadata &amp; telemetry…</p>
+			<Button variant="ghost" size="sm" onclick={() => mediaDetailsModal.close()}>Close</Button>
 		</div>
 	{:else if mediaDetailsModal.error}
-		<div class="border-b border-border px-5 pt-7 pb-4 md:pt-4">
+		<div class="relative border-b border-border px-5 pt-7 pb-4 md:pt-4">
+			<div
+				data-sheet-drag-handle
+				class="absolute inset-x-0 top-0 z-10 flex cursor-grab touch-none justify-center pt-2.5 pb-2 active:cursor-grabbing md:hidden"
+			>
+				<div class="h-1 w-10 rounded-full bg-border-strong"></div>
+			</div>
 			<h1 id={titleId} class="font-display text-lg font-bold text-fg-primary">
 				{modalHeading}
 			</h1>
@@ -244,13 +250,23 @@
 		<div class="flex-1 overflow-y-auto">
 			<!-- Hero Banner -->
 			<div class="relative overflow-hidden border-b border-border bg-elevated">
-				{#if heroBackdropSrc}
+				<!-- Mobile drag indicator sits inside the hero so art reaches the top edge without floating over scrolled content -->
+				<div
+					data-sheet-drag-handle
+					class="absolute inset-x-0 top-0 z-10 flex cursor-grab touch-none justify-center pt-2.5 pb-2 active:cursor-grabbing md:hidden"
+				>
+					<div class="h-1 w-10 rounded-full bg-border-strong"></div>
+				</div>
+				{#if heroBackdropSrc && heroBackdrop}
+					{@const currentBackdrop = heroBackdrop}
 					<img
 						src={heroBackdropSrc}
 						alt=""
 						aria-hidden="true"
 						onerror={() => {
-							if (heroBackdrop) failedBackdrops = [...failedBackdrops, heroBackdrop];
+							if (!failedBackdrops.includes(currentBackdrop)) {
+								failedBackdrops = [...failedBackdrops, currentBackdrop];
+							}
 						}}
 						class="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-25 blur-[1px]"
 					/>
@@ -259,7 +275,7 @@
 					class="pointer-events-none absolute inset-0 bg-gradient-to-t from-surface via-surface/80 to-surface/40"
 				></div>
 
-				<div class="relative flex flex-col gap-4 p-5 pt-7 sm:flex-row sm:items-end sm:gap-5 sm:p-6">
+				<div class="relative flex flex-col gap-4 p-5 pt-7 sm:flex-row sm:items-end sm:gap-5 sm:p-6 sm:pt-7 md:pt-6">
 					<ProxiedImage
 						src={heroPosterSrc}
 						alt={data.title}
@@ -541,7 +557,7 @@
 							</div>
 							{#if data.playSummary.avgCompletionPercent != null}
 								<Badge tone="direct-play" mono>
-									{Math.round(data.playSummary.avgCompletionPercent)}% AVG
+									{formatStatPercent(data.playSummary.avgCompletionPercent, 0)} AVG
 								</Badge>
 							{/if}
 						</div>

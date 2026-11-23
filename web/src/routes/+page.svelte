@@ -21,7 +21,13 @@
 	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
 	import { streamsStore } from '$stores/streams.svelte';
-	import { formatBandwidthKbps, formatDurationSec, formatRelativeTime, formatStatPercent } from '$lib/utils';
+	import {
+		formatBandwidthKbps,
+		formatDurationSec,
+		formatRelativeTime,
+		formatStatPercent,
+		statBarWidth
+	} from '$lib/utils';
 	import { Link2, Radio, Server, Tv } from 'lucide-svelte';
 
 	let lastDefaultRange = preferencesStore.prefs.defaultStatsRange;
@@ -282,16 +288,16 @@
 				{#if overview && overview.totalPlays > 0}
 					<div class="flex h-1.5 w-full gap-0.5 overflow-hidden rounded-full bg-subtle">
 						<div
-							class="h-full rounded-full bg-direct-play"
-							style:width={`${overview.decisionBreakdown.directPlayPercent}%`}
+							class={`h-full rounded-full bg-direct-play ${overview.decisionBreakdown.directPlay > 0 ? 'min-w-0.5' : ''}`}
+							style:width={statBarWidth(overview.decisionBreakdown.directPlayPercent)}
 						></div>
 						<div
-							class="h-full rounded-full bg-cyan"
-							style:width={`${overview.decisionBreakdown.directStreamPercent}%`}
+							class={`h-full rounded-full bg-cyan ${overview.decisionBreakdown.directStream > 0 ? 'min-w-0.5' : ''}`}
+							style:width={statBarWidth(overview.decisionBreakdown.directStreamPercent)}
 						></div>
 						<div
-							class="h-full rounded-full bg-hw-transcode"
-							style:width={`${overview.decisionBreakdown.transcodePercent}%`}
+							class={`h-full rounded-full bg-hw-transcode ${overview.decisionBreakdown.transcode > 0 ? 'min-w-0.5' : ''}`}
+							style:width={statBarWidth(overview.decisionBreakdown.transcodePercent)}
 						></div>
 					</div>
 				{/if}
@@ -356,8 +362,8 @@
 									</div>
 									<div class="h-1.5 w-full overflow-hidden rounded-full bg-subtle">
 										<div
-											class={`h-full rounded-full ${row.barClass}`}
-											style:width={`${Math.max(row.count > 0 ? 6 : 0, row.pct)}%`}
+											class={`h-full rounded-full ${row.barClass} ${row.count > 0 ? 'min-w-0.5' : ''}`}
+											style:width={statBarWidth(row.pct)}
 										></div>
 									</div>
 								</div>

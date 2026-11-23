@@ -10,6 +10,7 @@ import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.coalesce
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.longParam
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.selectAll
@@ -21,6 +22,8 @@ interface UserRepository {
     suspend fun upsert(user: UserRecord): Either<MiruError.PersistenceError, UserRecord>
 
     suspend fun findById(id: String): Either<MiruError.PersistenceError, UserRecord?>
+
+    suspend fun findByIds(ids: Collection<String>): Either<MiruError.PersistenceError, List<UserRecord>>
 
     suspend fun findByExternalId(
         serverId: String,
@@ -110,6 +113,17 @@ class ExposedUserRepository(
                 .singleOrNull()
                 ?.toUserRecord()
         }
+
+    override suspend fun findByIds(ids: Collection<String>): Either<MiruError.PersistenceError, List<UserRecord>> {
+        val uniqueIds = ids.distinct()
+        if (uniqueIds.isEmpty()) return Either.Right(emptyList())
+        return database.exposedQuery("user_find_by_ids") {
+            UsersTable
+                .selectAll()
+                .where { UsersTable.id inList uniqueIds }
+                .map { it.toUserRecord() }
+        }
+    }
 
     override suspend fun findByExternalId(
         serverId: String,

@@ -26,6 +26,7 @@ import app.hononeko.miru.persistence.model.HistoryFilter
 import app.hononeko.miru.persistence.model.HistorySortDirection
 import app.hononeko.miru.persistence.model.HistorySortField
 import app.hononeko.miru.persistence.model.PlaybackHistoryStatsRow
+import app.hononeko.miru.persistence.model.UserRecord
 import app.hononeko.miru.persistence.repository.PlaybackHistoryRepository
 import app.hononeko.miru.persistence.repository.UserRepository
 import arrow.core.Either
@@ -146,7 +147,7 @@ class HistoryAndStatsService(
                 )
 
             val resultPage = playbackHistoryRepository.query(filter).bind()
-            val usernamesById = resolveUsernames(resultPage.items.map { it.userId }.distinct()).bind()
+            val usersById = resolveUsers(resultPage.items.map { it.userId }.distinct()).bind()
 
             val totalPages =
                 if (resultPage.totalCount == 0L) {
@@ -156,7 +157,7 @@ class HistoryAndStatsService(
                 }
 
             HistoryListResponse(
-                items = resultPage.items.map { it.toHistoryItemDto(username = usernamesById[it.userId]) },
+                items = resultPage.items.map { it.toHistoryItemDto(user = usersById[it.userId]) },
                 page = validated.page,
                 pageSize = validated.pageSize,
                 totalCount = resultPage.totalCount,
@@ -183,7 +184,7 @@ class HistoryAndStatsService(
 
             principal.requireMediaUserAccess(record.userId).bind()
             val user = userRepository.findById(record.userId).bind()
-            record.toHistoryDetailResponse(username = user?.username)
+            record.toHistoryDetailResponse(user = user)
         }
 
     suspend fun getOverviewStats(
@@ -505,14 +506,14 @@ class HistoryAndStatsService(
             )
         }
 
-    private suspend fun resolveUsernames(userIds: List<String>): Either<MiruError, Map<String, String>> =
+    private suspend fun resolveUsers(userIds: List<String>): Either<MiruError, Map<String, UserRecord>> =
         either {
             if (userIds.isEmpty()) return@either emptyMap()
-            val result = mutableMapOf<String, String>()
+            val result = mutableMapOf<String, UserRecord>()
             for (uid in userIds) {
                 val user = userRepository.findById(uid).bind()
                 if (user != null) {
-                    result[uid] = user.username
+                    result[uid] = user
                 }
             }
             result

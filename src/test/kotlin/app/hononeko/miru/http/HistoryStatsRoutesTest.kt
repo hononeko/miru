@@ -479,6 +479,7 @@ class HistoryStatsRoutesTest :
                     filtered.items.single().let { item ->
                         item.id shouldBe "hist-2"
                         item.username shouldBe "alice"
+                        item.displayName shouldBe "Alice"
                         item.thumbUrl shouldBe "/api/v1/media/ep-1/thumb"
                         item.streamDecision shouldBe "transcode"
                         item.hwTranscode shouldBe true
@@ -532,6 +533,7 @@ class HistoryStatsRoutesTest :
                     val detail = MiruJson.decodeFromString<HistoryDetailResponse>(detailResp.bodyAsText())
                     detail.id shouldBe "hist-1"
                     detail.username shouldBe "alice"
+                    detail.displayName shouldBe "Alice"
                     detail.media.thumbUrl shouldBe "/api/v1/media/mov-1/thumb"
                     detail.streamTech.videoCodec shouldBe "hevc"
                     detail.streamTech.audioCodec shouldBe "flac"

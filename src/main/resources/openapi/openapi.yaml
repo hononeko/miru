@@ -3158,6 +3158,10 @@ components:
         username:
           type: string
           nullable: true
+        displayName:
+          type: string
+          nullable: true
+          description: The user's name from the media server (e.g. a Plex friend's first name), when it has one.
         ratingKey:
           type: string
         mediaType:
@@ -3351,6 +3355,10 @@ components:
         username:
           type: string
           nullable: true
+        displayName:
+          type: string
+          nullable: true
+          description: The user's name from the media server (e.g. a Plex friend's first name), when it has one.
         externalImportKey:
           type: string
           nullable: true

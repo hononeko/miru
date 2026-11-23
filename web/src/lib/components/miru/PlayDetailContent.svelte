@@ -56,9 +56,9 @@
 				<Badge tone={detail.isWatched ? 'direct-play' : 'neutral'} dot>
 					{detail.isWatched ? `Watched · ${Math.round(pct)}%` : `${Math.round(pct)}%`}
 				</Badge>
-				{#if detail.username}
+				{#if detail.displayName || detail.username}
 					<a href={`/users/${encodeURIComponent(detail.userId)}`}>
-						<Badge tone="primary">{detail.username}</Badge>
+						<Badge tone="primary">{detail.displayName || detail.username}</Badge>
 					</a>
 				{/if}
 				<button

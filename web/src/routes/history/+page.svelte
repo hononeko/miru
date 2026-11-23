@@ -335,7 +335,7 @@
 									{formatShortDateTime(item.stoppedAtMs, preferencesStore.prefs)}
 								</td>
 								<td class="whitespace-nowrap px-4 py-3 font-heading text-xs font-semibold text-fg-primary">
-									{item.username || item.userId}
+									{item.displayName || item.username || item.userId}
 								</td>
 								<td class="max-w-[300px] px-4 py-3">
 									<button
@@ -412,7 +412,7 @@
 								</p>
 							</button>
 							<p class="truncate text-[11px] text-fg-secondary">
-								{titles.secondary} · {item.username || item.userId}
+								{titles.secondary} · {item.displayName || item.username || item.userId}
 							</p>
 						</div>
 						<span

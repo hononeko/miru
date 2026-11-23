@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/svelte';
+import { cleanup, render, screen, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ClientStatsResponse } from '$api/types';
 import ClientsCodecsPanel from './ClientsCodecsPanel.svelte';
@@ -35,11 +35,65 @@ describe('ClientsCodecsPanel', () => {
 		expect(screen.getByText('Top Players & Apps')).toBeTruthy();
 		expect(screen.getByText('Plex for Apple TV')).toBeTruthy();
 		expect(screen.getByText('tvOS')).toBeTruthy();
-		expect(screen.getByText('Video · HEVC')).toBeTruthy();
-		expect(screen.getByText('Audio · EAC3')).toBeTruthy();
+		expect(within(screen.getByRole('group', { name: 'Video' })).getByText('HEVC')).toBeTruthy();
+		expect(within(screen.getByRole('group', { name: 'Audio' })).getByText('EAC3')).toBeTruthy();
 		expect(screen.getByText('Video Transcode')).toBeTruthy();
 		expect(screen.getByText('Container Remux')).toBeTruthy();
 		expect(screen.getAllByText('12 · 60.0%').length).toBeGreaterThan(0);
+	});
+
+	it('shows the top three video and audio codecs in separate labeled lists', () => {
+		const codec = (name: string, percent: number) => ({
+			name,
+			playCount: 1,
+			watchDurationSec: 60,
+			percent
+		});
+		const clientStats: ClientStatsResponse = {
+			range: '30d',
+			fromMs: 1_700_000_000_000,
+			totalPlays: 10,
+			totalWatchDurationSec: 600,
+			transcodeOrRemuxPlays: 0,
+			players: [],
+			platforms: [],
+			videoCodecs: [codec('HEVC', 50), codec('H264', 30), codec('AV1', 15), codec('VP9', 5)],
+			audioCodecs: [codec('EAC3', 40), codec('AAC', 30), codec('TRUEHD', 20), codec('DTS', 10)],
+			transcodeReasons: []
+		};
+
+		render(ClientsCodecsPanel, { props: { clientStats, loading: false } });
+
+		const video = within(screen.getByRole('group', { name: 'Video' }));
+		const audio = within(screen.getByRole('group', { name: 'Audio' }));
+		expect(['HEVC', 'H264', 'AV1'].every((name) => video.queryByText(name))).toBe(true);
+		expect(video.queryByText('VP9')).toBeNull();
+		expect(['EAC3', 'AAC', 'TRUEHD'].every((name) => audio.queryByText(name))).toBe(true);
+		expect(audio.queryByText('DTS')).toBeNull();
+		expect(video.queryByText('EAC3')).toBeNull();
+		// The count badge reports every codec seen, not just the ones shown.
+		expect(screen.getByText('8')).toBeTruthy();
+	});
+
+	it('hides an empty codec list and keeps the other', () => {
+		const clientStats: ClientStatsResponse = {
+			range: '30d',
+			fromMs: 1_700_000_000_000,
+			totalPlays: 1,
+			totalWatchDurationSec: 60,
+			transcodeOrRemuxPlays: 0,
+			players: [],
+			platforms: [],
+			videoCodecs: [],
+			audioCodecs: [{ name: 'AAC', playCount: 1, watchDurationSec: 60, percent: 100 }],
+			transcodeReasons: []
+		};
+
+		render(ClientsCodecsPanel, { props: { clientStats, loading: false } });
+
+		expect(screen.queryByRole('group', { name: 'Video' })).toBeNull();
+		expect(within(screen.getByRole('group', { name: 'Audio' })).getByText('AAC')).toBeTruthy();
+		expect(screen.queryByText('No codec telemetry in this range')).toBeNull();
 	});
 
 	it('formats item values as playback duration when metric is duration', () => {

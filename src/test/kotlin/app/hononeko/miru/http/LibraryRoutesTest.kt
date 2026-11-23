@@ -296,6 +296,7 @@ class LibraryRoutesTest :
                     client.get("/api/v1/libraries/1").status shouldBe HttpStatusCode.Unauthorized
                     client.get("/api/v1/libraries/1/stats").status shouldBe HttpStatusCode.Unauthorized
                     client.get("/api/v1/libraries/1/recent").status shouldBe HttpStatusCode.Unauthorized
+                    client.get("/api/v1/libraries/1/stale").status shouldBe HttpStatusCode.Unauthorized
 
                     // Unlinked USER sees empty library list and receives 403 on detail/stats/recent
                     val unlinkedListResp =
@@ -312,6 +313,9 @@ class LibraryRoutesTest :
                         .status shouldBe HttpStatusCode.Forbidden
                     client
                         .get("/api/v1/libraries/1/recent") { cookie(SESSION_COOKIE_NAME, userLogin.signedToken) }
+                        .status shouldBe HttpStatusCode.Forbidden
+                    client
+                        .get("/api/v1/libraries/1/stale") { cookie(SESSION_COOKIE_NAME, userLogin.signedToken) }
                         .status shouldBe HttpStatusCode.Forbidden
 
                     // ADMIN reads full libraries list and single section without exposing secrets
@@ -376,6 +380,39 @@ class LibraryRoutesTest :
                             "rk-1" to "/api/v1/media/rk-1/thumb",
                         )
 
+                    // Stale endpoint returns unwatched items sorted by size_desc or age_desc with proxied thumbUrl
+                    val staleResp =
+                        client.get("/api/v1/libraries/1/stale?unwatchedDays=180&sort=size_desc") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                        }
+                    staleResp.status shouldBe HttpStatusCode.OK
+                    val staleText = staleResp.bodyAsText()
+                    staleText shouldNotContain SECRET_PLEX_TOKEN
+                    staleText shouldNotContain SECRET_PLEX_URL
+                    staleText shouldNotContain "/library/metadata/rk-1/thumb"
+                    val stale = MiruJson.decodeFromString<StaleMediaListResponse>(staleText)
+                    stale.sectionId shouldBe "1"
+                    stale.unwatchedDays shouldBe 180
+                    stale.sort shouldBe "size_desc"
+                    stale.totalStaleCount shouldBe 2
+                    stale.neverPlayedCount shouldBe 2
+                    stale.totalReclaimableBytes shouldBe 26_000_000_000L
+                    stale.items.map { it.ratingKey to it.thumbUrl } shouldContainExactly
+                        listOf(
+                            "rk-2" to null,
+                            "rk-1" to "/api/v1/media/rk-1/thumb",
+                        )
+
+                    val staleAgeResp =
+                        client.get("/api/v1/libraries/1/stale?unwatchedDays=0&sort=age_desc") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                        }
+                    staleAgeResp.status shouldBe HttpStatusCode.OK
+                    val staleAge = MiruJson.decodeFromString<StaleMediaListResponse>(staleAgeResp.bodyAsText())
+                    staleAge.unwatchedDays shouldBe 0
+                    staleAge.sort shouldBe "age_desc"
+                    staleAge.items.map { it.ratingKey } shouldContainExactly listOf("rk-1", "rk-2")
+
                     // 404 on unknown section for ADMIN
                     val missingSection =
                         client.get("/api/v1/libraries/999") {
@@ -418,6 +455,22 @@ class LibraryRoutesTest :
                         .get("/api/v1/libraries/1/recent?limit=101") {
                             cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
                         }.status shouldBe HttpStatusCode.BadRequest
+                    client
+                        .get("/api/v1/libraries/1/stale?unwatchedDays=-1") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                        }.status shouldBe HttpStatusCode.BadRequest
+                    client
+                        .get("/api/v1/libraries/1/stale?sort=invalid") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                        }.status shouldBe HttpStatusCode.BadRequest
+                    client
+                        .get("/api/v1/libraries/1/stale?limit=0") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                        }.status shouldBe HttpStatusCode.BadRequest
+                    client
+                        .get("/api/v1/libraries/999/stale") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                        }.status shouldBe HttpStatusCode.NotFound
                 }
             }
         }

@@ -299,6 +299,15 @@ class ExposedPlaybackHistoryRepository(
                     PlaybackHistoryTable.playerPlatform,
                     PlaybackHistoryTable.playerProduct,
                     PlaybackHistoryTable.stoppedAtMs,
+                    PlaybackHistoryTable.completionPercent,
+                    PlaybackHistoryTable.isWatched,
+                    PlaybackHistoryTable.videoDecision,
+                    PlaybackHistoryTable.audioDecision,
+                    PlaybackHistoryTable.videoCodec,
+                    PlaybackHistoryTable.audioCodec,
+                    PlaybackHistoryTable.videoResolution,
+                    PlaybackHistoryTable.playerName,
+                    PlaybackHistoryTable.startedAtMs,
                 ).where { condition }
                 .orderBy(PlaybackHistoryTable.stoppedAtMs to SortOrder.ASC, PlaybackHistoryTable.id to SortOrder.ASC)
                 .map { it.toPlaybackHistoryStatsRow() }

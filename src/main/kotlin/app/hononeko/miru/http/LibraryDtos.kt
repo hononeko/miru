@@ -5,7 +5,9 @@ import app.hononeko.miru.library.LibrarySyncSummary
 import app.hononeko.miru.persistence.model.LibrarySectionRecord
 import app.hononeko.miru.persistence.model.LibrarySnapshotRecord
 import app.hononeko.miru.persistence.model.MediaItemCacheRecord
+import app.hononeko.miru.persistence.model.StaleMediaItemRecord
 import app.hononeko.miru.service.LibraryRecentResult
+import app.hononeko.miru.service.LibraryStaleResult
 import app.hononeko.miru.service.LibraryStatsResult
 import kotlinx.serialization.Serializable
 
@@ -72,6 +74,37 @@ data class RecentMediaItemResponse(
 data class RecentMediaListResponse(
     val sectionId: String,
     val items: List<RecentMediaItemResponse>,
+)
+
+@Serializable
+data class StaleMediaItemResponse(
+    val ratingKey: String,
+    val sectionKey: String,
+    val mediaType: String,
+    val title: String,
+    val parentTitle: String? = null,
+    val grandparentTitle: String? = null,
+    val year: Int? = null,
+    val thumbUrl: String? = null,
+    val durationMs: Long? = null,
+    val fileSizeBytes: Long? = null,
+    val videoResolution: String? = null,
+    val videoCodec: String? = null,
+    val audioCodec: String? = null,
+    val addedAtMs: Long,
+    val lastPlayedAtMs: Long? = null,
+    val playCount: Long,
+)
+
+@Serializable
+data class StaleMediaListResponse(
+    val sectionId: String,
+    val unwatchedDays: Int,
+    val sort: String,
+    val totalStaleCount: Int,
+    val totalReclaimableBytes: Long,
+    val neverPlayedCount: Int,
+    val items: List<StaleMediaItemResponse>,
 )
 
 @Serializable
@@ -143,6 +176,37 @@ internal fun LibraryRecentResult.toResponse(): RecentMediaListResponse =
     RecentMediaListResponse(
         sectionId = section.sectionKey,
         items = items.map { it.toRecentResponse() },
+    )
+
+internal fun StaleMediaItemRecord.toResponse(): StaleMediaItemResponse =
+    StaleMediaItemResponse(
+        ratingKey = item.ratingKey,
+        sectionKey = item.sectionKey,
+        mediaType = item.mediaType,
+        title = item.title,
+        parentTitle = item.parentTitle,
+        grandparentTitle = item.grandparentTitle,
+        year = item.year,
+        thumbUrl = item.thumbPath?.takeIf { it.isNotBlank() }?.let { "/api/v1/media/${item.ratingKey}/thumb" },
+        durationMs = item.durationMs,
+        fileSizeBytes = item.tech.fileSizeBytes,
+        videoResolution = item.tech.videoResolution,
+        videoCodec = item.tech.videoCodec,
+        audioCodec = item.tech.audioCodec,
+        addedAtMs = item.addedAtMs,
+        lastPlayedAtMs = lastPlayedAtMs,
+        playCount = playCount,
+    )
+
+internal fun LibraryStaleResult.toResponse(): StaleMediaListResponse =
+    StaleMediaListResponse(
+        sectionId = section.sectionKey,
+        unwatchedDays = unwatchedDays,
+        sort = sort,
+        totalStaleCount = report.totalStaleCount,
+        totalReclaimableBytes = report.totalReclaimableBytes,
+        neverPlayedCount = report.neverPlayedCount,
+        items = report.items.map { it.toResponse() },
     )
 
 internal fun LibrarySyncSummary.toResponse(): LibrarySyncResponse =

@@ -38,7 +38,14 @@ export type HistoryDetailResponse = Schemas['HistoryDetailResponse'];
 
 export type DailyPlayStatDto = Schemas['DailyPlayStatDto'];
 export type TopMediaStatDto = Schemas['TopMediaStatDto'];
+export type RewatchedMediaStatDto = Schemas['RewatchedMediaStatDto'];
 export type DecisionBreakdownStatDto = Schemas['DecisionBreakdownStatDto'];
+export type HeatmapCellDto = Schemas['HeatmapCellDto'];
+export type HeatmapStatsResponse = Schemas['HeatmapStatsResponse'];
+export type ClientBreakdownItemDto = Schemas['ClientBreakdownItemDto'];
+export type ClientStatsResponse = Schemas['ClientStatsResponse'];
+export type WrappedMonthStatDto = Schemas['WrappedMonthStatDto'];
+export type WrappedStatsResponse = Schemas['WrappedStatsResponse'];
 export type OverviewStatsResponse = Schemas['OverviewStatsResponse'];
 export type UserStatsResponse = Schemas['UserStatsResponse'];
 
@@ -48,6 +55,10 @@ export type LibrarySnapshotResponse = Schemas['LibrarySnapshotResponse'];
 export type LibraryStatsResponse = Schemas['LibraryStatsResponse'];
 export type RecentMediaItemResponse = Schemas['RecentMediaItemResponse'];
 export type RecentMediaListResponse = Schemas['RecentMediaListResponse'];
+export type StaleMediaItemResponse = Schemas['StaleMediaItemResponse'];
+export type StaleMediaListResponse = Schemas['StaleMediaListResponse'];
+export type StaleMediaSort = StaleMediaListResponse['sort'];
+export type HeatmapRange = '30d' | '90d' | '365d' | 'all';
 export type LibrarySyncMode = Schemas['LibrarySyncMode'];
 export type LibrarySyncResponse = Schemas['LibrarySyncResponse'];
 export type TautulliImportResponse = Schemas['TautulliImportResponse'];

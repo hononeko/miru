@@ -8,10 +8,14 @@ import app.hononeko.miru.persistence.model.LibrarySectionRecord
 import app.hononeko.miru.persistence.model.LibrarySnapshotRecord
 import app.hononeko.miru.persistence.model.MediaItemCacheRecord
 import app.hononeko.miru.persistence.model.ResolvedLibraryAccess
+import app.hononeko.miru.persistence.model.StaleMediaItemRecord
+import app.hononeko.miru.persistence.model.StaleMediaReportRecord
+import app.hononeko.miru.persistence.model.StaleMediaSort
 import app.hononeko.miru.persistence.model.UserLibraryAccessRecord
 import app.hononeko.miru.persistence.table.LibrarySectionsTable
 import app.hononeko.miru.persistence.table.LibrarySnapshotsTable
 import app.hononeko.miru.persistence.table.MediaItemsCacheTable
+import app.hononeko.miru.persistence.table.PlaybackHistoryTable
 import app.hononeko.miru.persistence.table.UserLibraryAccessTable
 import app.hononeko.miru.persistence.table.UsersTable
 import arrow.core.Either
@@ -19,10 +23,12 @@ import kotlinx.serialization.encodeToString
 import org.jetbrains.exposed.v1.core.Op
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.count
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.lessEq
+import org.jetbrains.exposed.v1.core.max
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.batchUpsert
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
@@ -62,6 +68,23 @@ interface LibraryRepository {
         sectionKey: String? = null,
         limit: Int = 25,
     ): Either<MiruError.PersistenceError, List<MediaItemCacheRecord>>
+
+    suspend fun findStaleMedia(
+        serverId: String,
+        sectionKey: String,
+        unwatchedCutoffMs: Long?,
+        neverPlayedOnly: Boolean = false,
+        sort: StaleMediaSort = StaleMediaSort.SIZE_DESC,
+        limit: Int = 100,
+    ): Either<MiruError.PersistenceError, StaleMediaReportRecord> =
+        Either.Right(
+            StaleMediaReportRecord(
+                items = emptyList(),
+                totalStaleCount = 0,
+                totalReclaimableBytes = 0L,
+                neverPlayedCount = 0,
+            ),
+        )
 
     suspend fun deleteItemsNotIn(
         serverId: String,
@@ -246,6 +269,109 @@ class ExposedLibraryRepository(
                 .orderBy(MediaItemsCacheTable.addedAtMs to SortOrder.DESC, MediaItemsCacheTable.ratingKey to SortOrder.ASC)
                 .limit(safeLimit)
                 .map { it.toMediaItemCacheRecord() }
+        }
+
+    override suspend fun findStaleMedia(
+        serverId: String,
+        sectionKey: String,
+        unwatchedCutoffMs: Long?,
+        neverPlayedOnly: Boolean,
+        sort: StaleMediaSort,
+        limit: Int,
+    ): Either<MiruError.PersistenceError, StaleMediaReportRecord> =
+        database.exposedQuery("library_find_stale_media") {
+            val safeLimit = limit.coerceAtLeast(0)
+            val cachedItems =
+                MediaItemsCacheTable
+                    .selectAll()
+                    .where {
+                        (MediaItemsCacheTable.serverId eq serverId) and (MediaItemsCacheTable.sectionKey eq sectionKey)
+                    }.map { it.toMediaItemCacheRecord() }
+
+            if (cachedItems.isEmpty()) {
+                return@exposedQuery StaleMediaReportRecord(
+                    items = emptyList(),
+                    totalStaleCount = 0,
+                    totalReclaimableBytes = 0L,
+                    neverPlayedCount = 0,
+                )
+            }
+
+            val playCountExpr = PlaybackHistoryTable.id.count()
+            val lastPlayedExpr = PlaybackHistoryTable.stoppedAtMs.max()
+            val playStatsByKey = hashMapOf<String, Pair<Long, Long?>>()
+
+            for (chunk in cachedItems.map { it.ratingKey }.chunked(BATCH_SIZE)) {
+                PlaybackHistoryTable
+                    .select(PlaybackHistoryTable.ratingKey, playCountExpr, lastPlayedExpr)
+                    .where {
+                        (PlaybackHistoryTable.serverId eq serverId) and (PlaybackHistoryTable.ratingKey inList chunk)
+                    }.groupBy(PlaybackHistoryTable.ratingKey)
+                    .forEach { row ->
+                        val rk = row[PlaybackHistoryTable.ratingKey]
+                        playStatsByKey[rk] = row[playCountExpr] to row[lastPlayedExpr]
+                    }
+            }
+
+            val staleCandidates =
+                cachedItems.mapNotNull { item ->
+                    val stats = playStatsByKey[item.ratingKey]
+                    val playCount = stats?.first ?: 0L
+                    val lastPlayedAtMs = stats?.second
+                    val isStale =
+                        if (neverPlayedOnly) {
+                            playCount == 0L || lastPlayedAtMs == null
+                        } else if (unwatchedCutoffMs != null) {
+                            lastPlayedAtMs == null || lastPlayedAtMs <= unwatchedCutoffMs
+                        } else {
+                            lastPlayedAtMs == null
+                        }
+                    if (isStale) {
+                        StaleMediaItemRecord(
+                            item = item,
+                            playCount = playCount,
+                            lastPlayedAtMs = lastPlayedAtMs,
+                        )
+                    } else {
+                        null
+                    }
+                }
+
+            val comparator =
+                when (sort) {
+                    StaleMediaSort.SIZE_DESC ->
+                        compareByDescending<StaleMediaItemRecord> { it.item.tech.fileSizeBytes ?: 0L }
+                            .thenBy { it.item.addedAtMs }
+                            .thenBy { it.item.ratingKey }
+
+                    StaleMediaSort.SIZE_ASC ->
+                        compareBy<StaleMediaItemRecord> { it.item.tech.fileSizeBytes ?: 0L }
+                            .thenBy { it.item.addedAtMs }
+                            .thenBy { it.item.ratingKey }
+
+                    StaleMediaSort.AGE_DESC ->
+                        compareBy<StaleMediaItemRecord> { it.lastPlayedAtMs ?: it.item.addedAtMs }
+                            .thenBy { it.item.addedAtMs }
+                            .thenByDescending { it.item.tech.fileSizeBytes ?: 0L }
+                            .thenBy { it.item.ratingKey }
+
+                    StaleMediaSort.AGE_ASC ->
+                        compareByDescending<StaleMediaItemRecord> { it.lastPlayedAtMs ?: it.item.addedAtMs }
+                            .thenByDescending { it.item.addedAtMs }
+                            .thenByDescending { it.item.tech.fileSizeBytes ?: 0L }
+                            .thenBy { it.item.ratingKey }
+                }
+
+            val sorted = staleCandidates.sortedWith(comparator)
+            val totalReclaimableBytes = sorted.sumOf { (it.item.tech.fileSizeBytes ?: 0L).coerceAtLeast(0L) }
+            val neverPlayedCount = sorted.count { it.playCount == 0L || it.lastPlayedAtMs == null }
+
+            StaleMediaReportRecord(
+                items = if (safeLimit == 0) emptyList() else sorted.take(safeLimit),
+                totalStaleCount = sorted.size,
+                totalReclaimableBytes = totalReclaimableBytes,
+                neverPlayedCount = neverPlayedCount,
+            )
         }
 
     override suspend fun deleteItemsNotIn(

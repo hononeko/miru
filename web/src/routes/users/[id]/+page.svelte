@@ -1,11 +1,18 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { ArrowLeft } from 'lucide-svelte';
+	import { ArrowLeft, Calendar, Flame, Repeat, Sparkles } from 'lucide-svelte';
 	import { api, MiruApiError, unwrap } from '$api/client';
-	import type { StatsRange, UserDetailResponse, UserStatsResponse } from '$api/types';
+	import type {
+		StatsRange,
+		UserDetailResponse,
+		UserStatsResponse,
+		WrappedStatsResponse
+	} from '$api/types';
 	import Badge from '$components/ui/Badge.svelte';
+	import Button from '$components/ui/Button.svelte';
 	import RangeTabs from '$components/ui/RangeTabs.svelte';
+	import Sheet from '$components/ui/Sheet.svelte';
 	import KpiCard from '$components/miru/KpiCard.svelte';
 	import BarChart, { type BarPoint } from '$components/miru/BarChart.svelte';
 	import ProxiedImage from '$components/miru/ProxiedImage.svelte';
@@ -13,6 +20,7 @@
 	import { preferencesStore } from '$stores/preferences.svelte';
 	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
 	import {
+		cn,
 		formatDurationSec,
 		formatMediaTitle,
 		formatRelativeTime,
@@ -27,6 +35,12 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
+	const currentUtcYear = new Date().getUTCFullYear();
+	let wrappedYear = $state<number>(currentUtcYear);
+	let wrapped = $state<WrappedStatsResponse | null>(null);
+	let loadingWrapped = $state(false);
+	let wrappedSheetOpen = $state(false);
+
 	$effect(() => {
 		const nextDefault = preferencesStore.prefs.defaultStatsRange;
 		if (nextDefault !== lastDefaultRange) {
@@ -36,6 +50,15 @@
 	});
 
 	const userId = $derived(page.params.id ?? '');
+
+	const availableYears = $derived.by(() => {
+		const years = new Set<number>([currentUtcYear, currentUtcYear - 1, currentUtcYear - 2]);
+		for (const play of detail?.recentPlays ?? []) {
+			const y = new Date(play.stoppedAtMs).getUTCFullYear();
+			if (y >= 1970 && y <= 2100) years.add(y);
+		}
+		return Array.from(years).sort((a, b) => b - a);
+	});
 
 	async function loadProfile(id: string, selectedRange: StatsRange) {
 		if (!id) return;
@@ -59,6 +82,25 @@
 		}
 	}
 
+	async function loadWrapped(id: string, year: number) {
+		if (!id || !authStore.isAdmin) return;
+		loadingWrapped = true;
+		try {
+			wrapped = unwrap(
+				await api.GET('/api/v1/stats/wrapped/{year}', {
+					params: {
+						path: { year },
+						query: { userId: id }
+					}
+				})
+			);
+		} catch {
+			wrapped = null;
+		} finally {
+			loadingWrapped = false;
+		}
+	}
+
 	$effect(() => {
 		if (!authStore.loading && !authStore.isAdmin) {
 			void goto('/');
@@ -67,12 +109,26 @@
 		void loadProfile(userId, range);
 	});
 
+	$effect(() => {
+		if (!authStore.loading && authStore.isAdmin && userId) {
+			void loadWrapped(userId, wrappedYear);
+		}
+	});
+
 	const dailyBars = $derived.by<BarPoint[]>(() => {
 		const days = stats?.playsPerDay ?? [];
 		return days.slice(-14).map((d) => ({
 			label: d.date.slice(8, 10),
 			value: d.playCount,
 			tooltip: `${d.date}: ${d.playCount} plays (${formatDurationSec(d.watchDurationSec)})`
+		}));
+	});
+
+	const wrappedMonthBars = $derived.by<BarPoint[]>(() => {
+		return (wrapped?.playsByMonth ?? []).map((m) => ({
+			label: m.monthName,
+			value: m.playCount,
+			tooltip: `${m.monthName} ${wrapped?.year ?? wrappedYear}: ${m.playCount} plays (${formatDurationSec(m.watchDurationSec)})`
 		}));
 	});
 
@@ -142,8 +198,8 @@
 			<RangeTabs value={range} onchange={(r) => (range = r)} />
 		</div>
 
-		<!-- KPIs -->
-		<section class="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
+		<!-- KPIs (Plays, Watch Time, Avg Completion, Longest Binge Streak, Direct Play, HW Transcode) -->
+		<section class="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6 lg:gap-4">
 			<KpiCard
 				label={`Plays (${range})`}
 				value={stats.totalPlays.toLocaleString()}
@@ -155,6 +211,18 @@
 				value={formatDurationSec(stats.totalWatchDurationSec)}
 				subtitle={`${formatDurationSec(detail.totalWatchDurationSec)} lifetime`}
 				dotClass="bg-cyan"
+			/>
+			<KpiCard
+				label="Avg Completion"
+				value={`${stats.averageCompletionPercent.toFixed(1)}%`}
+				subtitle={`${stats.completedPlays.toLocaleString()} completed plays`}
+				dotClass="bg-direct-play"
+			/>
+			<KpiCard
+				label="Longest Binge Streak"
+				value={`${stats.longestBingeStreakDays} ${stats.longestBingeStreakDays === 1 ? 'day' : 'days'}`}
+				subtitle={`Peak ${stats.maxDailyPlays} ${stats.maxDailyPlays === 1 ? 'play' : 'plays'} in a day`}
+				dotClass="bg-primary"
 			/>
 			<KpiCard
 				label="Direct Play"
@@ -170,9 +238,9 @@
 			/>
 		</section>
 
-		<!-- Charts Row -->
+		<!-- Charts Row + Most Rewatched -->
 		<section class="grid grid-cols-1 gap-4 lg:grid-cols-3">
-			<div class="flex flex-col justify-between gap-4 rounded-xl border border-border bg-surface p-4 lg:col-span-2">
+			<div class="flex flex-col justify-between gap-4 rounded-xl border border-border bg-surface p-4">
 				<div class="flex items-center justify-between gap-2">
 					<h2 class="font-heading text-sm font-semibold text-fg-primary">
 						Daily Activity ({range})
@@ -184,6 +252,49 @@
 					{/if}
 				</div>
 				<BarChart points={dailyBars} heightClass="h-36" />
+			</div>
+
+			<div class="flex flex-col justify-between gap-4 rounded-xl border border-border bg-surface p-4">
+				<div class="flex flex-col gap-3">
+					<div class="flex items-center justify-between gap-2">
+						<h2 class="font-heading text-sm font-semibold text-fg-primary">Most Rewatched</h2>
+						<Repeat class="h-4 w-4 text-cyan-hi" />
+					</div>
+					{#if stats.mostRewatched.length === 0}
+						<p class="rounded-lg bg-elevated/50 px-3 py-6 text-center text-xs text-fg-muted">
+							No rewatched items (2+ plays) in this range.
+						</p>
+					{:else}
+						<div class="flex flex-col gap-2">
+							{#each stats.mostRewatched.slice(0, 4) as item, idx (item.ratingKey)}
+								<button
+									type="button"
+									onclick={() => void mediaDetailsModal.open(item.ratingKey)}
+									class="group flex w-full cursor-pointer items-center justify-between gap-2.5 rounded-lg bg-elevated px-3 py-2 text-left transition-colors hover:bg-subtle/60"
+								>
+									<div class="flex min-w-0 items-center gap-2.5">
+										<span
+											class={idx === 0
+												? 'font-mono text-xs font-bold text-primary'
+												: 'font-mono text-xs font-bold text-cyan-hi'}
+										>
+											{String(idx + 1).padStart(2, '0')}
+										</span>
+										<div class="min-w-0">
+											<p class="truncate font-heading text-xs font-semibold text-fg-primary group-hover:text-cyan-hi">
+												{item.grandparentTitle ? `${item.grandparentTitle} · ${item.title}` : item.title}
+											</p>
+											<p class="text-[10px] text-fg-muted">
+												{item.playCount} plays · {formatDurationSec(item.watchDurationSec)}
+											</p>
+										</div>
+									</div>
+									<Badge tone={idx === 0 ? 'primary' : 'cyan'} mono>{item.playCount}x</Badge>
+								</button>
+							{/each}
+						</div>
+					{/if}
+				</div>
 			</div>
 
 			<div class="flex flex-col justify-between gap-4 rounded-xl border border-border bg-surface p-4">
@@ -221,6 +332,110 @@
 					</div>
 				{/if}
 			</div>
+		</section>
+
+		<!-- Year in Review (Wrapped) Section -->
+		<section class="flex flex-col gap-4 rounded-xl border border-cyan/40 bg-surface p-4">
+			<div class="flex flex-wrap items-center justify-between gap-3">
+				<div class="flex items-center gap-2.5">
+					<div class="flex h-9 w-9 items-center justify-center rounded-lg bg-cyan-soft text-cyan-hi">
+						<Sparkles class="h-4 w-4" />
+					</div>
+					<div>
+						<h2 class="font-heading text-sm font-semibold text-fg-primary">
+							Year in Review (Wrapped)
+						</h2>
+						<p class="text-[11px] text-fg-secondary">
+							Annual playback highlights, binge streaks, and favorite titles for {wrappedYear}
+						</p>
+					</div>
+				</div>
+
+				<div class="flex flex-wrap items-center gap-2">
+					<div
+						role="group"
+						aria-label="Wrapped year picker"
+						class="inline-flex items-center gap-0.5 rounded-lg border border-border bg-elevated p-0.5"
+					>
+						{#each availableYears as yr (yr)}
+							<button
+								type="button"
+								aria-pressed={wrappedYear === yr}
+								onclick={() => (wrappedYear = yr)}
+								class={cn(
+									'rounded-md px-2.5 py-1 font-mono text-[11px] font-medium transition-colors cursor-pointer',
+									wrappedYear === yr
+										? 'bg-primary text-white font-semibold'
+										: 'text-fg-secondary hover:text-fg-primary'
+								)}
+							>
+								{yr}
+							</button>
+						{/each}
+					</div>
+
+					<Button variant="cyan" size="sm" onclick={() => (wrappedSheetOpen = true)}>
+						<Calendar class="h-3.5 w-3.5" />
+						Open Wrapped Summary
+					</Button>
+				</div>
+			</div>
+
+			{#if loadingWrapped && !wrapped}
+				<p class="py-6 text-center font-mono text-xs text-fg-muted">
+					Loading {wrappedYear} Wrapped…
+				</p>
+			{:else if wrapped}
+				<div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+					<div class="rounded-lg bg-elevated px-3 py-2.5">
+						<span class="text-[10px] font-semibold uppercase tracking-wider text-fg-muted">
+							{wrapped.year} Watch Time
+						</span>
+						<p class="mt-1 font-mono text-base font-bold text-fg-primary tabular-nums">
+							{formatDurationSec(wrapped.totalWatchDurationSec)}
+						</p>
+						<p class="text-[10px] text-fg-secondary">
+							{wrapped.totalPlays.toLocaleString()} plays across {wrapped.activeDaysCount} active days
+						</p>
+					</div>
+
+					<div class="rounded-lg bg-elevated px-3 py-2.5">
+						<span class="text-[10px] font-semibold uppercase tracking-wider text-fg-muted">
+							Binge & Completion
+						</span>
+						<p class="mt-1 font-mono text-base font-bold text-cyan-hi tabular-nums">
+							{wrapped.longestBingeStreakDays}d streak · {wrapped.averageCompletionPercent.toFixed(0)}%
+						</p>
+						<p class="text-[10px] text-fg-secondary">
+							{wrapped.completedPlays.toLocaleString()} completed sessions
+						</p>
+					</div>
+
+					<div class="rounded-lg bg-elevated px-3 py-2.5">
+						<span class="text-[10px] font-semibold uppercase tracking-wider text-fg-muted">
+							Top Movie & Show
+						</span>
+						<p class="mt-1 truncate font-heading text-xs font-semibold text-fg-primary">
+							{wrapped.topMovies[0]?.title ?? 'No movies'}
+						</p>
+						<p class="truncate text-[10px] text-fg-secondary">
+							Show: {wrapped.topShows[0]?.title ?? 'No shows'}
+						</p>
+					</div>
+
+					<div class="rounded-lg bg-elevated px-3 py-2.5">
+						<span class="text-[10px] font-semibold uppercase tracking-wider text-fg-muted">
+							Peak Activity
+						</span>
+						<p class="mt-1 font-mono text-sm font-bold text-primary-hover">
+							{wrapped.peakMonth ? `${wrapped.peakMonth} · ${wrapped.peakDayOfWeek ?? ''}` : 'No plays'}
+						</p>
+						<p class="text-[10px] text-fg-secondary">
+							{wrapped.uniqueMoviesCount} movies · {wrapped.uniqueShowsCount} shows
+						</p>
+					</div>
+				</div>
+			{/if}
 		</section>
 
 		<!-- Recent Plays -->
@@ -270,3 +485,98 @@
 		</section>
 	{/if}
 </div>
+
+<Sheet
+	bind:open={wrappedSheetOpen}
+	onOpenChange={(v) => (wrappedSheetOpen = v)}
+	title={`${detail?.user.displayName || detail?.user.username || 'User'} · ${wrappedYear} Wrapped`}
+	description="Annual playback summary, monthly cadence, top media, and most-rewatched favorites"
+>
+	{#if !wrapped}
+		<p class="py-8 text-center font-mono text-xs text-fg-muted">
+			{loadingWrapped ? 'Loading Wrapped summary…' : 'No Wrapped data available'}
+		</p>
+	{:else}
+		<div class="flex flex-col gap-4">
+			<div class="grid grid-cols-2 gap-2.5">
+				<div class="rounded-lg border border-border bg-elevated p-3">
+					<span class="text-[10px] font-semibold uppercase text-fg-muted">Total Watch Time</span>
+					<p class="mt-1 font-mono text-lg font-bold text-cyan-hi tabular-nums">
+						{formatDurationSec(wrapped.totalWatchDurationSec)}
+					</p>
+					<p class="text-[10px] text-fg-secondary">{wrapped.totalPlays.toLocaleString()} plays</p>
+				</div>
+				<div class="rounded-lg border border-border bg-elevated p-3">
+					<span class="text-[10px] font-semibold uppercase text-fg-muted">Longest Streak</span>
+					<p class="mt-1 flex items-center gap-1 font-mono text-lg font-bold text-primary-hover tabular-nums">
+						<Flame class="h-4 w-4" />
+						{wrapped.longestBingeStreakDays} days
+					</p>
+					<p class="text-[10px] text-fg-secondary">
+						{wrapped.averageCompletionPercent.toFixed(1)}% avg completion
+					</p>
+				</div>
+			</div>
+
+			<div class="flex flex-col gap-2 rounded-lg border border-border bg-elevated p-3">
+				<div class="flex items-center justify-between">
+					<span class="font-heading text-xs font-semibold text-fg-primary">
+						Monthly Activity ({wrapped.year})
+					</span>
+					{#if wrapped.peakMonth}
+						<Badge tone="cyan" mono>Peak: {wrapped.peakMonth}</Badge>
+					{/if}
+				</div>
+				<BarChart points={wrappedMonthBars} heightClass="h-28" />
+			</div>
+
+			{#if wrapped.topMovies.length > 0}
+				<div class="flex flex-col gap-1.5">
+					<h3 class="font-heading text-xs font-semibold text-fg-primary">Top Movies ({wrapped.year})</h3>
+					{#each wrapped.topMovies.slice(0, 3) as movie, idx (movie.ratingKey)}
+						<div class="flex items-center justify-between rounded-lg bg-elevated px-3 py-2 text-xs">
+							<span class="truncate font-medium text-fg-primary">
+								{idx + 1}. {movie.title}
+							</span>
+							<span class="shrink-0 font-mono text-[11px] text-fg-secondary tabular-nums">
+								{movie.playCount} plays · {formatDurationSec(movie.watchDurationSec)}
+							</span>
+						</div>
+					{/each}
+				</div>
+			{/if}
+
+			{#if wrapped.topShows.length > 0}
+				<div class="flex flex-col gap-1.5">
+					<h3 class="font-heading text-xs font-semibold text-fg-primary">Top Shows ({wrapped.year})</h3>
+					{#each wrapped.topShows.slice(0, 3) as show, idx (show.title)}
+						<div class="flex items-center justify-between rounded-lg bg-elevated px-3 py-2 text-xs">
+							<span class="truncate font-medium text-fg-primary">
+								{idx + 1}. {show.title}
+							</span>
+							<span class="shrink-0 font-mono text-[11px] text-fg-secondary tabular-nums">
+								{show.playCount} plays · {formatDurationSec(show.watchDurationSec)}
+							</span>
+						</div>
+					{/each}
+				</div>
+			{/if}
+
+			{#if wrapped.mostRewatched.length > 0}
+				<div class="flex flex-col gap-1.5">
+					<h3 class="font-heading text-xs font-semibold text-fg-primary">
+						Most Rewatched ({wrapped.year})
+					</h3>
+					{#each wrapped.mostRewatched.slice(0, 3) as item (item.ratingKey)}
+						<div class="flex items-center justify-between rounded-lg bg-elevated px-3 py-2 text-xs">
+							<span class="truncate font-medium text-fg-primary">
+								{item.grandparentTitle ? `${item.grandparentTitle} · ${item.title}` : item.title}
+							</span>
+							<Badge tone="primary" mono>{item.playCount}x</Badge>
+						</div>
+					{/each}
+				</div>
+			{/if}
+		</div>
+	{/if}
+</Sheet>

@@ -193,6 +193,35 @@ data class PlaybackHistoryStatsRow(
     val playerPlatform: String?,
     val playerProduct: String?,
     val stoppedAtMs: Long,
+    val completionPercent: Double = 0.0,
+    val isWatched: Boolean = false,
+    val videoDecision: String? = null,
+    val audioDecision: String? = null,
+    val videoCodec: String? = null,
+    val audioCodec: String? = null,
+    val videoResolution: String? = null,
+    val playerName: String? = null,
+    val startedAtMs: Long = 0L,
+)
+
+enum class StaleMediaSort {
+    SIZE_DESC,
+    SIZE_ASC,
+    AGE_DESC,
+    AGE_ASC,
+}
+
+data class StaleMediaItemRecord(
+    val item: MediaItemCacheRecord,
+    val playCount: Long,
+    val lastPlayedAtMs: Long?,
+)
+
+data class StaleMediaReportRecord(
+    val items: List<StaleMediaItemRecord>,
+    val totalStaleCount: Int,
+    val totalReclaimableBytes: Long,
+    val neverPlayedCount: Int,
 )
 
 data class LibrarySectionRecord(

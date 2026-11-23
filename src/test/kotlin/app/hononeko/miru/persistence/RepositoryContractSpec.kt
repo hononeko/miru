@@ -22,6 +22,7 @@ import app.hononeko.miru.persistence.model.MediaServerRecord
 import app.hononeko.miru.persistence.model.PlaybackHistoryRecord
 import app.hononeko.miru.persistence.model.PlayerRecord
 import app.hononeko.miru.persistence.model.ResolvedLibraryAccess
+import app.hononeko.miru.persistence.model.StaleMediaSort
 import app.hononeko.miru.persistence.model.StreamTechRecord
 import app.hononeko.miru.persistence.model.UserLibraryAccessRecord
 import app.hononeko.miru.persistence.model.UserPlaybackSummary
@@ -47,6 +48,7 @@ import app.hononeko.miru.persistence.repository.UserPreferencesRepository
 import app.hononeko.miru.persistence.repository.UserRepository
 import app.hononeko.miru.service.HistoryAndStatsService
 import app.hononeko.miru.service.HistoryQueryParams
+import app.hononeko.miru.service.LibraryQueryService
 import io.kotest.assertions.arrow.core.shouldBeLeft
 import io.kotest.assertions.arrow.core.shouldBeRight
 import io.kotest.core.factory.TestFactory
@@ -103,12 +105,14 @@ fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
         mediaPlaySummaryTests { ctx }
         playbackHistorySortAndStatsTests { ctx }
         libraryTests { ctx }
+        staleMediaTests { ctx }
         cascadeTests { ctx }
         authAccountTests { ctx }
         authSessionTests { ctx }
         apiKeyTests { ctx }
         userPreferencesTests { ctx }
         historyAndStatsServiceTests { ctx }
+        advancedAnalyticsServiceTests { ctx }
         tautulliBatchAndImporterTests { ctx }
         userLibraryAccessTests { ctx }
     }
@@ -815,6 +819,180 @@ private fun FunSpecRootScope.libraryTests(ctxProvider: () -> ContractContext) {
     }
 }
 
+private fun FunSpecRootScope.staleMediaTests(ctxProvider: () -> ContractContext) {
+    context("LibraryRepository stale media hygiene") {
+        test("cross-references media_items_cache against playback_history for stale and unwatched media") {
+            val ctx = ctxProvider()
+            ctx.servers.upsert(sampleServer(id = "srv-1")).shouldBeRight()
+            ctx.users.upsert(sampleUser(id = "u-1", serverId = "srv-1", externalUserId = "1")).shouldBeRight()
+            val section =
+                LibrarySectionRecord(
+                    serverId = "srv-1",
+                    sectionKey = "sec-movies",
+                    title = "Movies",
+                    sectionType = "movie",
+                    itemCount = 4,
+                    leafCount = 4,
+                    updatedAtMs = 10_000L,
+                )
+            ctx.library.upsertSection(section).shouldBeRight()
+
+            val dayMs = 86_400_000L
+            val nowMs = 1_000L * dayMs
+            ctx.library.upsertMediaItems(buildStaleTestCacheItems(nowMs, dayMs)).shouldBeRight() shouldBe 4
+            seedStaleTestHistory(ctx, nowMs, dayMs)
+
+            val queryService = LibraryQueryService(ctx.library, clock = { nowMs })
+            val admin = MiruPrincipal(accountId = "acc-admin", username = "admin", role = MiruRole.ADMIN)
+
+            // 180d threshold sorted by size_desc -> mov-stale-large (35 GB), mov-never-medium (15 GB), mov-never-oldest (8 GB)
+            val stale180 =
+                queryService
+                    .getStaleMedia(
+                        principal = admin,
+                        sectionId = "sec-movies",
+                        unwatchedDays = 180,
+                        sortRaw = "size_desc",
+                    ).shouldBeRight()
+            stale180.report.totalStaleCount shouldBe 3
+            stale180.report.neverPlayedCount shouldBe 2
+            stale180.report.totalReclaimableBytes shouldBe 58_000_000_000L
+            stale180.report.items.map { it.item.ratingKey } shouldContainExactly
+                listOf("mov-stale-large", "mov-never-medium", "mov-never-oldest")
+            stale180.report.items.first().playCount shouldBe 2L
+            stale180.report.items.first().lastPlayedAtMs shouldBe (nowMs - 200L * dayMs)
+
+            // Sorted by age_desc (Oldest first) -> mov-never-oldest, mov-never-medium, mov-stale-large
+            val staleOldest =
+                queryService
+                    .getStaleMedia(
+                        principal = admin,
+                        sectionId = "sec-movies",
+                        unwatchedDays = 180,
+                        sortRaw = "age_desc",
+                    ).shouldBeRight()
+            staleOldest.report.items.map { it.item.ratingKey } shouldContainExactly
+                listOf("mov-never-oldest", "mov-never-medium", "mov-stale-large")
+
+            // Never played only (unwatchedDays = 0)
+            val neverPlayed =
+                queryService
+                    .getStaleMedia(
+                        principal = admin,
+                        sectionId = "sec-movies",
+                        unwatchedDays = 0,
+                        sortRaw = "size_desc",
+                    ).shouldBeRight()
+            neverPlayed.report.totalStaleCount shouldBe 2
+            neverPlayed.report.neverPlayedCount shouldBe 2
+            neverPlayed.report.totalReclaimableBytes shouldBe 23_000_000_000L
+            neverPlayed.report.items.map { it.item.ratingKey } shouldContainExactly
+                listOf("mov-never-medium", "mov-never-oldest")
+
+            // Direct repository sort modes
+            ctx.library
+                .findStaleMedia(
+                    serverId = "srv-1",
+                    sectionKey = "sec-movies",
+                    unwatchedCutoffMs = nowMs - 180L * dayMs,
+                    sort = StaleMediaSort.SIZE_ASC,
+                ).shouldBeRight()
+                .items
+                .map { it.item.ratingKey } shouldContainExactly
+                listOf("mov-never-oldest", "mov-never-medium", "mov-stale-large")
+        }
+    }
+}
+
+private fun buildStaleTestCacheItems(
+    nowMs: Long,
+    dayMs: Long,
+): List<MediaItemCacheRecord> =
+    listOf(
+        MediaItemCacheRecord(
+            serverId = "srv-1",
+            ratingKey = "mov-recent",
+            sectionKey = "sec-movies",
+            mediaType = "movie",
+            title = "Watched Recently",
+            year = 2024,
+            tech = MediaItemTechRecord(fileSizeBytes = 20_000_000_000L, videoResolution = "4k"),
+            addedAtMs = nowMs - 400L * dayMs,
+            updatedAtMs = nowMs,
+        ),
+        MediaItemCacheRecord(
+            serverId = "srv-1",
+            ratingKey = "mov-stale-large",
+            sectionKey = "sec-movies",
+            mediaType = "movie",
+            title = "Stale Large",
+            year = 2019,
+            thumbPath = "/library/metadata/mov-stale-large/thumb",
+            tech = MediaItemTechRecord(fileSizeBytes = 35_000_000_000L, videoResolution = "4k", videoCodec = "hevc"),
+            addedAtMs = nowMs - 500L * dayMs,
+            updatedAtMs = nowMs,
+        ),
+        MediaItemCacheRecord(
+            serverId = "srv-1",
+            ratingKey = "mov-never-medium",
+            sectionKey = "sec-movies",
+            mediaType = "movie",
+            title = "Never Watched Medium",
+            year = 2021,
+            tech = MediaItemTechRecord(fileSizeBytes = 15_000_000_000L, videoResolution = "1080p", videoCodec = "h264"),
+            addedAtMs = nowMs - 300L * dayMs,
+            updatedAtMs = nowMs,
+        ),
+        MediaItemCacheRecord(
+            serverId = "srv-1",
+            ratingKey = "mov-never-oldest",
+            sectionKey = "sec-movies",
+            mediaType = "movie",
+            title = "Never Watched Oldest",
+            year = 1995,
+            tech = MediaItemTechRecord(fileSizeBytes = 8_000_000_000L, videoResolution = "1080p"),
+            addedAtMs = nowMs - 800L * dayMs,
+            updatedAtMs = nowMs,
+        ),
+    )
+
+private suspend fun seedStaleTestHistory(
+    ctx: ContractContext,
+    nowMs: Long,
+    dayMs: Long,
+) {
+    ctx.history
+        .insert(
+            sampleHistory(
+                id = "h-recent",
+                userId = "u-1",
+                ratingKey = "mov-recent",
+                startedAtMs = nowMs - 10L * dayMs - 3_600_000L,
+                stoppedAtMs = nowMs - 10L * dayMs,
+            ),
+        ).shouldBeRight()
+    ctx.history
+        .insert(
+            sampleHistory(
+                id = "h-stale-1",
+                userId = "u-1",
+                ratingKey = "mov-stale-large",
+                startedAtMs = nowMs - 250L * dayMs - 3_600_000L,
+                stoppedAtMs = nowMs - 250L * dayMs,
+            ),
+        ).shouldBeRight()
+    ctx.history
+        .insert(
+            sampleHistory(
+                id = "h-stale-2",
+                userId = "u-1",
+                ratingKey = "mov-stale-large",
+                startedAtMs = nowMs - 200L * dayMs - 3_600_000L,
+                stoppedAtMs = nowMs - 200L * dayMs,
+            ),
+        ).shouldBeRight()
+}
+
 private fun FunSpecRootScope.cascadeTests(ctxProvider: () -> ContractContext) {
     context("Foreign key cascades") {
         test("deleting a media server cascades across all child tables") {
@@ -1258,8 +1436,115 @@ private fun FunSpecRootScope.historyAndStatsServiceTests(ctxProvider: () -> Cont
             val aliceStats = service.getUserStats(userAlice, "u-alice", "30d").shouldBeRight()
             aliceStats.totalPlays shouldBe 2L
             aliceStats.totalWatchDurationSec shouldBe 3_000L
+            aliceStats.averageCompletionPercent shouldBe 91.5
+            aliceStats.completedPlays shouldBe 2L
+            aliceStats.longestBingeStreakDays shouldBe 2
+            aliceStats.maxDailyPlays shouldBe 1
+            aliceStats.mostRewatched.shouldBeEmpty()
             aliceStats.topPlatforms.map { it.platform } shouldContainExactly listOf("Apple TV", "Web")
             aliceStats.libraryBreakdown.map { it.librarySectionKey } shouldContainExactly listOf("sec-movies", "sec-tv")
+        }
+    }
+}
+
+private fun FunSpecRootScope.advancedAnalyticsServiceTests(ctxProvider: () -> ContractContext) {
+    context("HistoryAndStatsService advanced analytics") {
+        test("computes heatmap, client/codec/transcode breakdowns, mostRewatched, and annual wrapped stats") {
+            val ctx = ctxProvider()
+            val nowMs = Instant.parse("2026-04-10T12:00:00Z").toEpochMilli()
+            val service =
+                HistoryAndStatsService(
+                    playbackHistoryRepository = ctx.history,
+                    userRepository = ctx.users,
+                    clock = { nowMs },
+                )
+            val admin = MiruPrincipal(accountId = "acc-admin", username = "admin", role = MiruRole.ADMIN)
+            val userAlice =
+                MiruPrincipal(
+                    accountId = "acc-alice",
+                    username = "alice-acct",
+                    role = MiruRole.USER,
+                    linkedMediaUserIds = setOf("u-alice"),
+                )
+
+            ctx.servers.upsert(sampleServer(id = "srv-1")).shouldBeRight()
+            ctx.users.upsert(sampleUser(id = "u-alice", serverId = "srv-1", externalUserId = "1", username = "alice")).shouldBeRight()
+            ctx.users.upsert(sampleUser(id = "u-bob", serverId = "srv-1", externalUserId = "2", username = "bob")).shouldBeRight()
+            seedHistoryForServiceTests(ctx)
+
+            // Add a rewatch for Alice on mov-10 to verify mostRewatched, heatmap, clients, and wrapped on both DBs
+            ctx.history
+                .insert(
+                    sampleHistory(
+                        id = "p-5",
+                        userId = "u-alice",
+                        ratingKey = "mov-10",
+                        title = "Dune",
+                        mediaType = "movie",
+                        sectionKey = "sec-movies",
+                        streamDecision = "direct_stream",
+                        startedAtMs = Instant.parse("2026-04-09T20:00:00Z").toEpochMilli(),
+                        stoppedAtMs = Instant.parse("2026-04-09T22:00:00Z").toEpochMilli(),
+                    ).copy(
+                        watchedDurationSec = 7_200,
+                        completionPercent = 100.0,
+                        isWatched = true,
+                        streamTech =
+                            StreamTechRecord(
+                                streamDecision = "direct_stream",
+                                videoDecision = "copy",
+                                audioDecision = "transcode",
+                                hwTranscode = false,
+                                videoCodec = "hevc",
+                                audioCodec = "truehd",
+                                videoResolution = "4k",
+                            ),
+                        player = PlayerRecord(playerPlatform = "Apple TV", playerProduct = "Plex for Apple TV"),
+                    ),
+                ).shouldBeRight()
+
+            val aliceStatsWithRewatch = service.getUserStats(userAlice, "u-alice", "30d").shouldBeRight()
+            aliceStatsWithRewatch.totalPlays shouldBe 3L
+            aliceStatsWithRewatch.longestBingeStreakDays shouldBe 2
+            aliceStatsWithRewatch.maxDailyPlays shouldBe 2
+            aliceStatsWithRewatch.mostRewatched.single().let { item ->
+                item.ratingKey shouldBe "mov-10"
+                item.title shouldBe "Dune"
+                item.playCount shouldBe 2L
+                item.watchDurationSec shouldBe 9_000L
+            }
+
+            // Heatmap stats
+            val heatmap = service.getHeatmapStats(admin, "90d").shouldBeRight()
+            heatmap.range shouldBe "90d"
+            heatmap.totalPlays shouldBe 4L
+            heatmap.cells shouldHaveSize 168
+            heatmap.maxCellPlays shouldBe 1L
+            heatmap.peakHour shouldBe 22
+
+            // Client & codec breakdown stats
+            val clients = service.getClientStats(admin, "90d").shouldBeRight()
+            clients.totalPlays shouldBe 4L
+            clients.transcodeOrRemuxPlays shouldBe 3L
+            clients.players.first().name shouldBe "Plex for Apple TV"
+            clients.players.first().playCount shouldBe 2L
+            clients.platforms.first().name shouldBe "Apple TV"
+            clients.videoCodecs.any { it.name == "HEVC" } shouldBe true
+            clients.transcodeReasons.map { it.name }.toSet() shouldBe
+                setOf("Video Transcode", "Audio Transcode", "Container Remux")
+
+            // Wrapped annual summary
+            val wrapped2026 = service.getWrappedStats(userAlice, "2026", userId = "u-alice").shouldBeRight()
+            wrapped2026.year shouldBe 2026
+            wrapped2026.userId shouldBe "u-alice"
+            wrapped2026.totalPlays shouldBe 3L
+            wrapped2026.uniqueMoviesCount shouldBe 1
+            wrapped2026.uniqueShowsCount shouldBe 1
+            wrapped2026.longestBingeStreakDays shouldBe 2
+            wrapped2026.peakMonth shouldBe "Apr"
+            wrapped2026.mostRewatched.single().ratingKey shouldBe "mov-10"
+            wrapped2026.playsByMonth shouldHaveSize 12
+            wrapped2026.playsByMonth.first { it.month == 4 }.playCount shouldBe 3L
         }
     }
 }
@@ -1285,6 +1570,7 @@ private suspend fun seedHistoryForServiceTests(ctx: ContractContext) {
             ).copy(
                 watchedDurationSec = 1_800,
                 completionPercent = 95.0,
+                isWatched = true,
                 media =
                     MediaMetadataRecord(
                         ratingKey = "mov-10",
@@ -1311,6 +1597,7 @@ private suspend fun seedHistoryForServiceTests(ctx: ContractContext) {
             ).copy(
                 watchedDurationSec = 1_200,
                 completionPercent = 88.0,
+                isWatched = true,
                 media =
                     MediaMetadataRecord(
                         ratingKey = "ep-10",

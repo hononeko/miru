@@ -108,6 +108,7 @@ fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
         staleMediaTests { ctx }
         cascadeTests { ctx }
         authAccountTests { ctx }
+        authAccountLinkModeTests { ctx }
         authSessionTests { ctx }
         apiKeyTests { ctx }
         userPreferencesTests { ctx }
@@ -1040,6 +1041,67 @@ private fun FunSpecRootScope.cascadeTests(ctxProvider: () -> ContractContext) {
     }
 }
 
+private fun FunSpecRootScope.authAccountLinkModeTests(ctxProvider: () -> ContractContext) {
+    context("AuthAccountRepository media user link mode") {
+        test("persists media user link mode, defaults it to MANUAL, and updates it with or without the links") {
+            val ctx = ctxProvider()
+            ctx.servers.upsert(sampleServer(id = "srv-link-mode")).shouldBeRight()
+            ctx.users.upsert(sampleUser(id = "mu-1", serverId = "srv-link-mode", externalUserId = "10", username = "alice")).shouldBeRight()
+
+            val local =
+                AuthAccountRecord(
+                    id = "acc-local",
+                    username = "local",
+                    usernameNormalized = "local",
+                    passwordHash = "hash",
+                    role = "USER",
+                    createdAtMs = 1_000L,
+                    updatedAtMs = 1_000L,
+                )
+            val sso =
+                local.copy(
+                    id = "acc-sso",
+                    username = "sso",
+                    usernameNormalized = "sso",
+                    passwordHash = "",
+                    authProvider = "OIDC",
+                    externalSubject = "sub-link-mode",
+                    mediaUserLinkMode = "AUTO",
+                )
+            ctx.authAccounts.insert(local).shouldBeRight()
+            ctx.authAccounts.insert(sso).shouldBeRight()
+
+            ctx.authAccounts.findById("acc-local").shouldBeRight().shouldNotBeNull().mediaUserLinkMode shouldBe "MANUAL"
+            ctx.authAccounts.findById("acc-sso").shouldBeRight().shouldNotBeNull().mediaUserLinkMode shouldBe "AUTO"
+
+            // Replacing links without a mode (email sync) leaves the mode alone.
+            ctx.authAccounts.replaceLinkedMediaUserIds("acc-sso", setOf("mu-1"), createdAtMs = 2_000L).shouldBeRight()
+            ctx.authAccounts.findById("acc-sso").shouldBeRight() shouldBe sso
+            ctx.authAccounts.findLinkedMediaUserIds("acc-sso").shouldBeRight() shouldBe setOf("mu-1")
+
+            // An admin edit sets links and mode together.
+            ctx.authAccounts.replaceLinkedMediaUserIds("acc-sso", emptySet(), createdAtMs = 3_000L, linkMode = "MANUAL").shouldBeRight()
+            ctx.authAccounts.findById("acc-sso").shouldBeRight() shouldBe sso.copy(mediaUserLinkMode = "MANUAL", updatedAtMs = 3_000L)
+            ctx.authAccounts.findLinkedMediaUserIds("acc-sso").shouldBeRight() shouldBe emptySet()
+
+            ctx.authAccounts.updateMediaUserLinkMode("acc-sso", "AUTO", updatedAtMs = 4_000L).shouldBeRight() shouldBe
+                sso.copy(updatedAtMs = 4_000L)
+            ctx.authAccounts.updateMediaUserLinkMode("missing", "AUTO", updatedAtMs = 4_000L).shouldBeRight().shouldBeNull()
+
+            // Email sync writes only while the account is still AUTO, so a concurrent admin edit wins.
+            ctx.authAccounts
+                .replaceLinkedMediaUserIdsIfAuto("acc-sso", setOf("mu-1"), createdAtMs = 5_000L)
+                .shouldBeRight() shouldBe true
+            ctx.authAccounts.findLinkedMediaUserIds("acc-sso").shouldBeRight() shouldBe setOf("mu-1")
+            ctx.authAccounts.findById("acc-sso").shouldBeRight() shouldBe sso.copy(updatedAtMs = 4_000L)
+            ctx.authAccounts
+                .replaceLinkedMediaUserIdsIfAuto("acc-local", setOf("mu-1"), createdAtMs = 5_000L)
+                .shouldBeRight() shouldBe false
+            ctx.authAccounts.findLinkedMediaUserIds("acc-local").shouldBeRight() shouldBe emptySet()
+        }
+    }
+}
+
 private fun FunSpecRootScope.authAccountTests(ctxProvider: () -> ContractContext) {
     context("AuthAccountRepository") {
         test("persists accounts, linked media users, and cascades on media user or account deletion") {
@@ -1147,6 +1209,7 @@ private fun FunSpecRootScope.authAccountTests(ctxProvider: () -> ContractContext
                         username = "oidc.renamed",
                         usernameNormalized = "oidc.renamed",
                         email = "renamed@miru.local",
+                        emailVerified = true,
                         role = "ADMIN",
                         updatedAtMs = 5_000L,
                     ).shouldBeRight()
@@ -1155,9 +1218,15 @@ private fun FunSpecRootScope.authAccountTests(ctxProvider: () -> ContractContext
                     username = "oidc.renamed",
                     usernameNormalized = "oidc.renamed",
                     email = "renamed@miru.local",
+                    emailVerified = true,
                     role = "ADMIN",
                     updatedAtMs = 5_000L,
                 )
+            val unverified =
+                localWithNullSubject.copy(id = "acc-local-3", usernameNormalized = "local3", role = "USER", emailVerified = false)
+            ctx.authAccounts.insert(unverified).shouldBeRight()
+            ctx.authAccounts.findById("acc-local-3").shouldBeRight().shouldNotBeNull().emailVerified shouldBe false
+            ctx.authAccounts.findById("acc-local-1").shouldBeRight().shouldNotBeNull().emailVerified shouldBe null
             ctx.authAccounts.countAdmins().shouldBeRight() shouldBe 2L
         }
     }

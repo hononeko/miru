@@ -476,6 +476,9 @@ paths:
       tags: [Admin]
       operationId: setLinkedMediaUsers
       summary: Replace linked media server user IDs for an account
+      description: >-
+        Replaces the account's links and sets its `mediaUserLinkMode` to `MANUAL`, so SSO sign-in
+        no longer relinks it by email.
       security:
         - CookieAuth: []
         - ApiKeyAuth: []
@@ -513,6 +516,63 @@ paths:
                 $ref: '#/components/schemas/ProblemDetails'
         '404':
           description: Account or media user not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/admin/accounts/{id}/media-user-link-mode:
+    put:
+      tags: [Admin]
+      operationId: setMediaUserLinkMode
+      summary: Set how an account's linked media users are maintained
+      description: >-
+        `AUTO` (SSO accounts only) links the account to the media users that share its verified email,
+        right away if its last SSO sign-in recorded whether the email is verified, otherwise at its next
+        sign-in. `MANUAL` keeps the current links as they are.
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetMediaUserLinkModeRequest'
+      responses:
+        '200':
+          description: Updated account
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Account not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: '`AUTO` was requested for an account that does not sign in with SSO'
           content:
             application/problem+json:
               schema:
@@ -2256,6 +2316,15 @@ components:
       type: string
       enum: [ADMIN, USER]
 
+    MediaUserLinkMode:
+      type: string
+      enum: [AUTO, MANUAL]
+      description: >-
+        `AUTO`: the account is linked to the media users that share its verified email (when
+        `OIDC_AUTO_LINK_BY_EMAIL` is on), recomputed when a sign-in changes its email or verification and
+        after every media user sync; an account whose email is not verified has no links. `MANUAL`: the
+        links are exactly what an admin set. Local accounts are always `MANUAL`.
+
     AuthSource:
       type: string
       enum: [SESSION_COOKIE, API_KEY, DEV_BYPASS]
@@ -2403,7 +2472,7 @@ components:
 
     AccountResponse:
       type: object
-      required: [id, username, role, disabled, authProvider, linkedMediaUserIds, createdAtMs, updatedAtMs]
+      required: [id, username, role, disabled, authProvider, linkedMediaUserIds, mediaUserLinkMode, createdAtMs, updatedAtMs]
       properties:
         id:
           type: string
@@ -2422,6 +2491,14 @@ components:
           type: array
           items:
             type: string
+        mediaUserLinkMode:
+          $ref: '#/components/schemas/MediaUserLinkMode'
+        emailVerified:
+          type: boolean
+          nullable: true
+          description: >-
+            Whether the identity provider marked `email` as verified at the account's last SSO sign-in;
+            null when not recorded (local accounts, and SSO accounts that have not signed in since).
         createdAtMs:
           type: integer
           format: int64
@@ -2431,12 +2508,17 @@ components:
 
     AccountListResponse:
       type: object
-      required: [accounts]
+      required: [accounts, emailLinkingEnabled]
       properties:
         accounts:
           type: array
           items:
             $ref: '#/components/schemas/AccountResponse'
+        emailLinkingEnabled:
+          type: boolean
+          description: >-
+            Whether SSO sign-in links `AUTO` accounts to media users by email (SSO enabled and
+            `OIDC_AUTO_LINK_BY_EMAIL` on). When false, sign-in never changes any account's links.
 
     CreateAccountRequest:
       type: object
@@ -2469,6 +2551,13 @@ components:
           type: array
           items:
             type: string
+
+    SetMediaUserLinkModeRequest:
+      type: object
+      required: [mode]
+      properties:
+        mode:
+          $ref: '#/components/schemas/MediaUserLinkMode'
 
     CreateApiKeyRequest:
       type: object

@@ -52,6 +52,7 @@
 	type WizardStep = 'starting' | 'waiting' | 'expired' | 'discovering' | 'select' | 'saving' | 'done';
 
 	let accounts = $state<AccountResponse[]>([]);
+	let emailLinkingEnabled = $state(false);
 	let apiKeys = $state<ApiKeyResponse[]>([]);
 	let mediaUsers = $state<UserSummaryDto[]>([]);
 	let readiness = $state<ReadinessResponse | null>(null);
@@ -172,7 +173,9 @@
 				api.GET('/readyz'),
 				api.GET('/api/v1/admin/plex/status')
 			]);
-			accounts = unwrap(accRes).accounts;
+			const accountList = unwrap(accRes);
+			accounts = accountList.accounts;
+			emailLinkingEnabled = accountList.emailLinkingEnabled;
 			apiKeys = unwrap(keyRes).apiKeys;
 			mediaUsers = usrRes.data?.users ?? [];
 			readiness = readyRes.data ?? null;
@@ -424,6 +427,26 @@
 		}
 	}
 
+	async function handleUseEmailLinking() {
+		if (!linkTarget) return;
+		linkSubmitting = true;
+		error = null;
+		try {
+			unwrap(
+				await api.PUT('/api/v1/admin/accounts/{id}/media-user-link-mode', {
+					params: { path: { id: linkTarget.id } },
+					body: { mode: 'AUTO' }
+				})
+			);
+			linkOpen = false;
+			await loadAll();
+		} catch (err) {
+			error = err instanceof MiruApiError ? err.detail : 'Failed to switch to email linking';
+		} finally {
+			linkSubmitting = false;
+		}
+	}
+
 	async function handleCreateKey(e: SubmitEvent) {
 		e.preventDefault();
 		createKeyError = null;
@@ -651,6 +674,15 @@
 							<Badge tone={acc.authProvider === 'OIDC' ? 'cyan' : 'neutral'} mono>
 								{acc.authProvider}
 							</Badge>
+							{#if acc.authProvider === 'OIDC' && acc.role !== 'ADMIN'}
+								<Badge tone="neutral" mono>
+									{acc.mediaUserLinkMode === 'MANUAL'
+										? 'Linked manually'
+										: emailLinkingEnabled
+											? 'Linked by email'
+											: 'Email linking off'}
+								</Badge>
+							{/if}
 							<Badge tone={acc.role === 'ADMIN' ? 'primary' : 'neutral'}>{acc.role}</Badge>
 							{#if acc.role === 'ADMIN'}
 								<Badge tone="cyan" mono>All Media Users</Badge>
@@ -1171,6 +1203,42 @@
 	description="Select which Plex users this account may view"
 >
 	<div class="flex flex-col gap-3">
+		{#if linkTarget?.authProvider === 'OIDC'}
+			{#if !emailLinkingEnabled}
+				<p class="rounded-lg border border-border bg-elevated px-3 py-2.5 text-[11px] text-fg-secondary">
+					Email linking is off (OIDC_AUTO_LINK_BY_EMAIL=false), so SSO sign-in never changes these
+					links.
+				</p>
+			{:else if linkTarget.mediaUserLinkMode === 'AUTO'}
+				<p class="rounded-lg border border-border bg-elevated px-3 py-2.5 text-[11px] text-fg-secondary">
+					Linked by email: this account is linked to the Plex users with the same verified email,
+					updated when its sign-in email changes and after each hourly Plex user sync.
+					{#if linkTarget.emailVerified === false}
+						Its identity provider has not marked the email as verified, so it has no email links.
+					{:else if linkTarget.emailVerified == null}
+						Its email is checked at its next SSO sign-in.
+					{/if}
+					Saving a selection here switches it to manual linking.
+				</p>
+			{:else}
+				<div class="flex flex-col gap-2 rounded-lg border border-border bg-elevated px-3 py-2.5">
+					<p class="text-[11px] text-fg-secondary">
+						Linked manually: Miru leaves these links as they are. Switching to email linking relinks
+						the account right away if its email was checked at its last SSO sign-in, otherwise at its
+						next one.
+					</p>
+					<Button
+						variant="outline"
+						size="sm"
+						disabled={linkSubmitting}
+						onclick={handleUseEmailLinking}
+						class="self-start"
+					>
+						Link by email instead
+					</Button>
+				</div>
+			{/if}
+		{/if}
 		{#if mediaUsers.length === 0}
 			<p class="text-xs text-fg-muted">No Plex media users synced yet.</p>
 		{:else}

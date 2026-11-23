@@ -10,6 +10,9 @@ data class AuthAccountRecord(
     val disabled: Boolean = false,
     val authProvider: String = "LOCAL",
     val externalSubject: String? = null,
+    val mediaUserLinkMode: String = "MANUAL",
+    /** Whether the IdP marked [email] verified at the last SSO sign-in; null until recorded. */
+    val emailVerified: Boolean? = null,
     val createdAtMs: Long,
     val updatedAtMs: Long,
 ) {
@@ -17,6 +20,7 @@ data class AuthAccountRecord(
         "AuthAccountRecord(id=$id, username=$username, usernameNormalized=$usernameNormalized, " +
             "email=$email, passwordHash=***, role=$role, disabled=$disabled, " +
             "authProvider=$authProvider, externalSubject=$externalSubject, " +
+            "mediaUserLinkMode=$mediaUserLinkMode, emailVerified=$emailVerified, " +
             "createdAtMs=$createdAtMs, updatedAtMs=$updatedAtMs)"
 }
 

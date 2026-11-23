@@ -88,7 +88,7 @@ Single sign-on is on with `AUTH_MODE=oidc`, or with `AUTH_MODE=local` and `OIDC_
 | `OIDC_GROUPS_CLAIM` | `groups` | Claim that lists the user's groups. |
 | `OIDC_ADMIN_GROUPS` | *(none)* | Comma-separated groups whose members sign in as `ADMIN`. |
 | `OIDC_USER_GROUPS` | *(none)* | Comma-separated groups whose members sign in as `USER`. Users in neither these nor the admin groups are refused. At least one group must be set across `OIDC_ADMIN_GROUPS` and `OIDC_USER_GROUPS`. |
-| `OIDC_AUTO_LINK_BY_EMAIL` | `true` | On every sign-in, links the account to the Plex users with the same email address, which scopes what a `USER` account sees. Only an email the identity provider marks as verified (`email_verified`) is used. Once an admin edits an account's links, sign-in stops changing them until the admin switches the account back to email linking. |
+| `OIDC_AUTO_LINK_BY_EMAIL` | `true` | On every sign-in, links the account to the Plex users with the same email address, which scopes what a `USER` account sees. Only an email the identity provider marks as verified (`email_verified`, from the ID token or userinfo) is used, and an account without one is unlinked at sign-in. Once an admin edits an account's links, sign-in stops changing them until the admin switches the account back to email linking. Set to `false` to stop sign-in from changing any links. |
 | `OIDC_POST_LOGOUT_REDIRECT_URI` | *(none)* | Where your provider sends the browser after logout, for example `https://<your-host>/login`. Must be an `http://` or `https://` URL. |
 
 ## Logging

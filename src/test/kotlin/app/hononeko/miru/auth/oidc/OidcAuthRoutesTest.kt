@@ -53,6 +53,7 @@ import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
@@ -138,6 +139,9 @@ private data class MockIdpScenario(
     val email: String? = "oidc@miru.local",
     val emailVerifiedInIdToken: Boolean? = true,
     val emailVerifiedInUserInfo: Boolean? = null,
+    val emailInUserInfo: String? = email,
+    val subjectInUserInfo: String = subject,
+    val preferredUsernameInUserInfo: String? = null,
     val groupsInIdToken: List<String>? = listOf("miru-users"),
     val groupsInUserInfo: List<String>? = null,
     val includeEndSessionEndpoint: Boolean = true,
@@ -254,8 +258,9 @@ private fun createMockIdpEngine(
                 val scenario = scenarioProvider()
                 val body =
                     buildJsonObject {
-                        put("sub", scenario.subject)
-                        scenario.email?.let { put("email", it) }
+                        put("sub", scenario.subjectInUserInfo)
+                        scenario.emailInUserInfo?.let { put("email", it) }
+                        scenario.preferredUsernameInUserInfo?.let { put("preferred_username", it) }
                         scenario.emailVerifiedInUserInfo?.let { put("email_verified", it) }
                         scenario.groupsInUserInfo?.let { groups ->
                             put("groups", buildJsonArray { groups.forEach { add(JsonPrimitive(it)) } })
@@ -387,6 +392,15 @@ private suspend fun HttpClient.signInWithOidc(
     code: String,
     expectedChallengeHolder: MutableMap<String, String>,
 ): String {
+    val callback = completeOidcCallback(code, expectedChallengeHolder)
+    callback.status shouldBe HttpStatusCode.Found
+    return extractCookieValue(callback.headers.getAll(HttpHeaders.SetCookie).orEmpty(), SESSION_COOKIE_NAME).shouldNotBeNull()
+}
+
+private suspend fun HttpClient.completeOidcCallback(
+    code: String,
+    expectedChallengeHolder: MutableMap<String, String>,
+): HttpResponse {
     val start = get("/api/v1/auth/oidc/login")
     val location = Url(start.headers[HttpHeaders.Location].shouldNotBeNull())
     val state = location.parameters["state"].shouldNotBeNull()
@@ -394,19 +408,19 @@ private suspend fun HttpClient.signInWithOidc(
     expectedChallengeHolder["nonce:$code"] = location.parameters["nonce"].shouldNotBeNull()
     val txCookie =
         extractCookieValue(start.headers.getAll(HttpHeaders.SetCookie).orEmpty(), "miru_oidc_tx").shouldNotBeNull()
-    val callback =
-        get("/api/v1/auth/oidc/callback?code=$code&state=$state") {
-            cookie("miru_oidc_tx", txCookie)
-        }
-    callback.status shouldBe HttpStatusCode.Found
-    return extractCookieValue(callback.headers.getAll(HttpHeaders.SetCookie).orEmpty(), SESSION_COOKIE_NAME).shouldNotBeNull()
+    return get("/api/v1/auth/oidc/callback?code=$code&state=$state") {
+        cookie("miru_oidc_tx", txCookie)
+        header(HttpHeaders.Accept, "application/json")
+    }
 }
 
-private suspend fun HttpClient.linkedMediaUserIds(session: String): List<String> {
+private suspend fun HttpClient.me(session: String): PrincipalResponse {
     val me = get("/api/v1/auth/me") { cookie(SESSION_COOKIE_NAME, session) }
     me.status shouldBe HttpStatusCode.OK
-    return MiruJson.decodeFromString<PrincipalResponse>(me.bodyAsText()).linkedMediaUserIds
+    return MiruJson.decodeFromString<PrincipalResponse>(me.bodyAsText())
 }
+
+private suspend fun HttpClient.linkedMediaUserIds(session: String): List<String> = me(session).linkedMediaUserIds
 
 private suspend fun OidcTestHarness.upsertMediaUser(
     id: String,
@@ -853,10 +867,72 @@ class OidcAuthRoutesTest :
                     client.linkedMediaUserIds(client.signInWithOidc("code-3", expectedChallengeHolder)) shouldContainExactly
                         listOf("mu-alice")
 
-                    // An unverified email later on leaves the existing links alone.
+                    // Without a verified email the account loses its email links, so an address that was linked
+                    // before verification was required cannot keep someone else's history.
                     scenario = alice.copy(emailVerifiedInIdToken = false)
-                    client.linkedMediaUserIds(client.signInWithOidc("code-4", expectedChallengeHolder)) shouldContainExactly
+                    client.linkedMediaUserIds(client.signInWithOidc("code-4", expectedChallengeHolder)).shouldBeEmpty()
+
+                    // userinfo verifies a different address than the ID token's: not trusted.
+                    scenario =
+                        alice.copy(
+                            emailVerifiedInIdToken = null,
+                            emailInUserInfo = "someone-else@miru.local",
+                            emailVerifiedInUserInfo = true,
+                        )
+                    client.linkedMediaUserIds(client.signInWithOidc("code-5", expectedChallengeHolder)).shouldBeEmpty()
+
+                    // userinfo for another subject is ignored (OIDC Core 5.3.2).
+                    scenario =
+                        alice.copy(
+                            emailVerifiedInIdToken = null,
+                            emailVerifiedInUserInfo = true,
+                            subjectInUserInfo = "sub-someone-else",
+                        )
+                    client.linkedMediaUserIds(client.signInWithOidc("code-6", expectedChallengeHolder)).shouldBeEmpty()
+
+                    // No email in the ID token: userinfo's verified email is used.
+                    scenario =
+                        alice.copy(
+                            email = null,
+                            emailInUserInfo = "alice@miru.local",
+                            emailVerifiedInIdToken = null,
+                            emailVerifiedInUserInfo = true,
+                        )
+                    client.linkedMediaUserIds(client.signInWithOidc("code-7", expectedChallengeHolder)) shouldContainExactly
                         listOf("mu-alice")
+
+                    // When sign-in needs userinfo for the groups, a userinfo subject mismatch fails it.
+                    scenario =
+                        alice.copy(
+                            groupsInIdToken = null,
+                            groupsInUserInfo = listOf("miru-users"),
+                            subjectInUserInfo = "sub-someone-else",
+                        )
+                    val mismatch = client.completeOidcCallback("code-8", expectedChallengeHolder)
+                    mismatch.status shouldBe HttpStatusCode.BadGateway
+                    extractCookieValue(mismatch.headers.getAll(HttpHeaders.SetCookie).orEmpty(), SESSION_COOKIE_NAME).shouldBeNull()
+                }
+            }
+        }
+
+        test("fetches userinfo only for email_verified without changing the username an account derives from its ID token") {
+            var scenario = MockIdpScenario()
+            val expectedChallengeHolder = mutableMapOf<String, String>()
+
+            createOidcHarness(scenarioProvider = { scenario }, expectedChallengeHolder = expectedChallengeHolder).use { harness ->
+                testApplication {
+                    setupApp(harness)
+                    val client = createClient { followRedirects = false }
+                    scenario =
+                        MockIdpScenario(
+                            subject = "sub-erin",
+                            preferredUsername = null,
+                            email = "erin@miru.local",
+                            emailVerifiedInIdToken = null,
+                            emailVerifiedInUserInfo = true,
+                            preferredUsernameInUserInfo = "erin-from-userinfo",
+                        )
+                    client.me(client.signInWithOidc("code-1", expectedChallengeHolder)).username shouldBe "erin"
                 }
             }
         }
@@ -958,9 +1034,11 @@ class OidcAuthRoutesTest :
                     ).status shouldBe HttpStatusCode.NotFound
 
                     val accounts =
-                        client.get("/api/v1/admin/accounts") { cookie(SESSION_COOKIE_NAME, adminSession) }
-                    MiruJson
-                        .decodeFromString<AccountListResponse>(accounts.bodyAsText())
+                        MiruJson.decodeFromString<AccountListResponse>(
+                            client.get("/api/v1/admin/accounts") { cookie(SESSION_COOKIE_NAME, adminSession) }.bodyAsText(),
+                        )
+                    accounts.emailLinkingEnabled shouldBe true
+                    accounts
                         .accounts
                         .associate { it.username to it.mediaUserLinkMode } shouldBe
                         mapOf(
@@ -983,6 +1061,8 @@ class OidcAuthRoutesTest :
             ).use { harness ->
                 harness.upsertPlexServer()
                 harness.upsertMediaUser(id = "mu-alice", externalUserId = "100", email = "alice@miru.local")
+
+                harness.authService.emailLinkingEnabled shouldBe false
 
                 testApplication {
                     setupApp(harness)

@@ -950,6 +950,8 @@ export interface components {
         };
         AccountListResponse: {
             accounts: components["schemas"]["AccountResponse"][];
+            /** @description Whether SSO sign-in links `AUTO` accounts to media users by email (SSO enabled and `OIDC_AUTO_LINK_BY_EMAIL` on). When false, sign-in never changes any account's links. */
+            emailLinkingEnabled: boolean;
         };
         CreateAccountRequest: {
             username: string;

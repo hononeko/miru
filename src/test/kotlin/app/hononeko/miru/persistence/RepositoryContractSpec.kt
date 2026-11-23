@@ -1087,6 +1087,17 @@ private fun FunSpecRootScope.authAccountLinkModeTests(ctxProvider: () -> Contrac
             ctx.authAccounts.updateMediaUserLinkMode("acc-sso", "AUTO", updatedAtMs = 4_000L).shouldBeRight() shouldBe
                 sso.copy(updatedAtMs = 4_000L)
             ctx.authAccounts.updateMediaUserLinkMode("missing", "AUTO", updatedAtMs = 4_000L).shouldBeRight().shouldBeNull()
+
+            // Email sync writes only while the account is still AUTO, so a concurrent admin edit wins.
+            ctx.authAccounts
+                .replaceLinkedMediaUserIdsIfAuto("acc-sso", setOf("mu-1"), createdAtMs = 5_000L)
+                .shouldBeRight() shouldBe true
+            ctx.authAccounts.findLinkedMediaUserIds("acc-sso").shouldBeRight() shouldBe setOf("mu-1")
+            ctx.authAccounts.findById("acc-sso").shouldBeRight() shouldBe sso.copy(updatedAtMs = 4_000L)
+            ctx.authAccounts
+                .replaceLinkedMediaUserIdsIfAuto("acc-local", setOf("mu-1"), createdAtMs = 5_000L)
+                .shouldBeRight() shouldBe false
+            ctx.authAccounts.findLinkedMediaUserIds("acc-local").shouldBeRight() shouldBe emptySet()
         }
     }
 }

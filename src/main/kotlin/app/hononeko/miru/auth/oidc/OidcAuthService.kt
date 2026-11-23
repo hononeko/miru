@@ -177,30 +177,13 @@ class OidcAuthService(
         either {
             // Email linking needs email_verified; IdPs that omit it from the ID token often return it from userinfo.
             val needsEmailVerified = authConfig.oidc.autoLinkByEmail && claims.emailVerified == null
-            val hasAllClaims = claims.groups.isNotEmpty() && !claims.email.isNullOrBlank() && !needsEmailVerified
-            if (hasAllClaims || accessToken.isNullOrBlank()) {
+            val idTokenHasGroupsAndEmail = claims.groups.isNotEmpty() && !claims.email.isNullOrBlank()
+            if ((idTokenHasGroupsAndEmail && !needsEmailVerified) || accessToken.isNullOrBlank()) {
                 return@either claims
             }
 
-            val userInfoResult = oidcClient.fetchUserInfo(accessToken)
-            val userInfo: JsonObject? =
-                when (userInfoResult) {
-                    is Either.Right -> userInfoResult.value
-                    is Either.Left -> {
-                        if (claims.groups.isEmpty()) {
-                            raise(userInfoResult.value)
-                        }
-                        logger.warn("Optional OIDC userinfo fetch failed: {}", userInfoResult.value.message)
-                        null
-                    }
-                }
+            val userInfo = fetchUserInfoForSubject(claims, accessToken).bind() ?: return@either claims
 
-            if (userInfo == null) return@either claims
-
-            val extraGroups = OidcJwtVerifier.extractGroupsClaim(userInfo, authConfig.oidc.groupsClaim)
-            val resolvedUsername =
-                claims.preferredUsername
-                    ?: userInfo.stringClaim("preferred_username")?.trim()?.takeIf { it.isNotEmpty() }
             val userInfoEmail = userInfo.stringClaim("email")?.trim()?.takeIf { it.isNotEmpty() }
             val userInfoEmailVerified = (userInfo["email_verified"] as? JsonPrimitive)?.booleanOrNull
             // email_verified only counts for the address it was issued with.
@@ -211,6 +194,16 @@ class OidcAuthService(
                 } else {
                     userInfoEmail to userInfoEmailVerified
                 }
+            if (idTokenHasGroupsAndEmail) {
+                // Userinfo was fetched only for email_verified. Keep every other ID token claim as it was,
+                // so the username an existing account derives from them does not change.
+                return@either claims.copy(emailVerified = emailVerified)
+            }
+
+            val extraGroups = OidcJwtVerifier.extractGroupsClaim(userInfo, authConfig.oidc.groupsClaim)
+            val resolvedUsername =
+                claims.preferredUsername
+                    ?: userInfo.stringClaim("preferred_username")?.trim()?.takeIf { it.isNotEmpty() }
             claims.copy(
                 preferredUsername = resolvedUsername,
                 name = claims.name ?: userInfo.stringClaim("name")?.trim()?.takeIf { it.isNotEmpty() },
@@ -218,6 +211,35 @@ class OidcAuthService(
                 emailVerified = emailVerified,
                 groups = claims.groups.ifEmpty { extraGroups },
             )
+        }
+
+    /**
+     * Fetches userinfo and returns it only when its `sub` matches the ID token's, as OIDC Core 5.3.2 requires.
+     * A failed fetch or a mismatch is an error when the groups needed for sign-in must come from userinfo;
+     * otherwise it is logged and the result is null.
+     */
+    private suspend fun fetchUserInfoForSubject(
+        claims: OidcIdTokenClaims,
+        accessToken: String,
+    ): Either<MiruError, JsonObject?> =
+        either {
+            val failure =
+                when (val result = oidcClient.fetchUserInfo(accessToken)) {
+                    is Either.Left -> result.value
+                    is Either.Right -> {
+                        // null: the IdP publishes no userinfo endpoint.
+                        val userInfo = result.value ?: return@either null
+                        if (userInfo.stringClaim("sub") == claims.subject) {
+                            return@either userInfo
+                        }
+                        MiruError.UpstreamAuthError("oidc", "OIDC userinfo subject does not match the ID token subject")
+                    }
+                }
+            if (claims.groups.isEmpty()) {
+                raise(failure)
+            }
+            logger.warn("Ignoring OIDC userinfo: {}", failure.message)
+            null
         }
 
     private fun mapGroupsToRole(groups: Set<String>): Either<MiruError.Forbidden, MiruRole> =
@@ -281,8 +303,10 @@ class OidcAuthService(
      * Keeps an [MediaUserLinkMode.AUTO] account's linked media users equal to the media users that share
      * its verified email, adding new matches and dropping stale ones on every sign-in.
      *
-     * Links are left untouched when OIDC_AUTO_LINK_BY_EMAIL is off, when an admin set the links by hand
-     * ([MediaUserLinkMode.MANUAL]), or when the IdP sent no email or did not mark it as verified.
+     * Without a verified email an AUTO account has no matches, so its links are removed: an address the IdP
+     * never verified must not keep access it may have been given before verification was required.
+     * Links are left untouched when OIDC_AUTO_LINK_BY_EMAIL is off or an admin set them by hand
+     * ([MediaUserLinkMode.MANUAL]).
      */
     private suspend fun syncEmailLinkedMediaUsers(
         account: AuthAccountRecord,
@@ -291,35 +315,39 @@ class OidcAuthService(
     ): Either<MiruError, Set<String>> =
         either {
             val currentLinks = accountRepository.findLinkedMediaUserIds(account.id).bind()
-            val email = claims.email
             val isAuto = MediaUserLinkMode.fromStored(account.mediaUserLinkMode) == MediaUserLinkMode.AUTO
-            if (!authConfig.oidc.autoLinkByEmail || !isAuto || email.isNullOrBlank()) {
+            if (!authConfig.oidc.autoLinkByEmail || !isAuto) {
                 return@either currentLinks
             }
-            if (claims.emailVerified != true) {
+
+            val verifiedEmail = claims.email?.takeIf { it.isNotBlank() && claims.emailVerified == true }
+            if (verifiedEmail == null) {
                 logger.warn(
-                    "Not linking media users by email for SSO account '{}': the identity provider did not mark the email as verified",
+                    "SSO account '{}' has no email its identity provider marks as verified, so it is not linked to media users by email",
                     account.username,
                 )
+            }
+            val matchedIds =
+                if (verifiedEmail == null) {
+                    emptySet()
+                } else {
+                    userRepository
+                        .findAll()
+                        .bind()
+                        .filter { it.email != null && it.email.equals(verifiedEmail, ignoreCase = true) }
+                        .map { it.id }
+                        .toSet()
+                }
+            if (matchedIds == currentLinks) {
                 return@either currentLinks
             }
 
-            val matchedIds =
-                userRepository
-                    .findAll()
-                    .bind()
-                    .filter { it.email != null && it.email.equals(email, ignoreCase = true) }
-                    .map { it.id }
-                    .toSet()
-
-            if (matchedIds != currentLinks) {
-                accountRepository.replaceLinkedMediaUserIds(account.id, matchedIds, nowMs).bind()
-                logger.info(
-                    "Updated email-linked media users for SSO account '{}' ({} linked)",
-                    account.username,
-                    matchedIds.size,
-                )
+            val applied = accountRepository.replaceLinkedMediaUserIdsIfAuto(account.id, matchedIds, nowMs).bind()
+            if (!applied) {
+                // An admin made the account MANUAL while this sign-in was running; their links stand.
+                return@either accountRepository.findLinkedMediaUserIds(account.id).bind()
             }
+            logger.info("Updated email-linked media users for SSO account '{}' ({} linked)", account.username, matchedIds.size)
             matchedIds
         }
 

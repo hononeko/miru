@@ -77,6 +77,7 @@ data class AccountResponse(
 @Serializable
 data class AccountListResponse(
     val accounts: List<AccountResponse>,
+    val emailLinkingEnabled: Boolean,
 )
 
 @Serializable

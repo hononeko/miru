@@ -65,6 +65,8 @@ internal fun assertMediaUserLinkModeBackfill(config: DatabaseConfig) {
                 "oidc-hand-picked" to "MANUAL",
                 "oidc-no-email-linked" to "MANUAL",
                 "oidc-emailless-user" to "MANUAL",
+                "oidc-both-matches" to "AUTO",
+                "oidc-one-match-removed" to "MANUAL",
                 "local" to "MANUAL",
             )
     } finally {
@@ -89,6 +91,9 @@ private fun seedPreLinkModeAccounts(conn: Connection) {
                 Triple("mu-alice", "1", "ALICE@example.test"),
                 Triple("mu-bob", "2", "bob@example.test"),
                 Triple("mu-nomail", "3", null),
+                // The same person on two media user rows (e.g. two servers) shares one email.
+                Triple("mu-erin-1", "4", "erin@example.test"),
+                Triple("mu-erin-2", "5", "Erin@example.test"),
             ).forEach { (id, externalId, email) ->
                 insert.setString(1, id)
                 insert.setString(2, externalId)
@@ -113,6 +118,10 @@ private fun seedPreLinkModeAccounts(conn: Connection) {
                 SeedAccount("oidc-hand-picked", "alice@example.test", "OIDC", "sub-4"),
                 SeedAccount("oidc-no-email-linked", null, "OIDC", "sub-5"),
                 SeedAccount("oidc-emailless-user", "dave@example.test", "OIDC", "sub-6"),
+                // Linked to both email matches: what automatic linking produced.
+                SeedAccount("oidc-both-matches", "erin@example.test", "OIDC", "sub-7"),
+                // Linked to only one of two email matches: an admin removed the other.
+                SeedAccount("oidc-one-match-removed", "erin@example.test", "OIDC", "sub-8"),
                 SeedAccount("local", "alice@example.test", "LOCAL", null),
             ).forEach { account ->
                 insert.setString(1, account.id)
@@ -135,6 +144,9 @@ private fun seedPreLinkModeAccounts(conn: Connection) {
                 "oidc-hand-picked" to "mu-bob",
                 "oidc-no-email-linked" to "mu-alice",
                 "oidc-emailless-user" to "mu-nomail",
+                "oidc-both-matches" to "mu-erin-1",
+                "oidc-both-matches" to "mu-erin-2",
+                "oidc-one-match-removed" to "mu-erin-1",
                 "local" to "mu-alice",
             ).forEach { (accountId, mediaUserId) ->
                 insert.setString(1, accountId)

@@ -52,6 +52,7 @@
 	type WizardStep = 'starting' | 'waiting' | 'expired' | 'discovering' | 'select' | 'saving' | 'done';
 
 	let accounts = $state<AccountResponse[]>([]);
+	let emailLinkingEnabled = $state(false);
 	let apiKeys = $state<ApiKeyResponse[]>([]);
 	let mediaUsers = $state<UserSummaryDto[]>([]);
 	let readiness = $state<ReadinessResponse | null>(null);
@@ -172,7 +173,9 @@
 				api.GET('/readyz'),
 				api.GET('/api/v1/admin/plex/status')
 			]);
-			accounts = unwrap(accRes).accounts;
+			const accountList = unwrap(accRes);
+			accounts = accountList.accounts;
+			emailLinkingEnabled = accountList.emailLinkingEnabled;
 			apiKeys = unwrap(keyRes).apiKeys;
 			mediaUsers = usrRes.data?.users ?? [];
 			readiness = readyRes.data ?? null;
@@ -673,7 +676,11 @@
 							</Badge>
 							{#if acc.authProvider === 'OIDC' && acc.role !== 'ADMIN'}
 								<Badge tone="neutral" mono>
-									{acc.mediaUserLinkMode === 'AUTO' ? 'Linked by email' : 'Linked manually'}
+									{acc.mediaUserLinkMode === 'MANUAL'
+										? 'Linked manually'
+										: emailLinkingEnabled
+											? 'Linked by email'
+											: 'Email linking off'}
 								</Badge>
 							{/if}
 							<Badge tone={acc.role === 'ADMIN' ? 'primary' : 'neutral'}>{acc.role}</Badge>
@@ -1197,10 +1204,16 @@
 >
 	<div class="flex flex-col gap-3">
 		{#if linkTarget?.authProvider === 'OIDC'}
-			{#if linkTarget.mediaUserLinkMode === 'AUTO'}
+			{#if !emailLinkingEnabled}
+				<p class="rounded-lg border border-border bg-elevated px-3 py-2.5 text-[11px] text-fg-secondary">
+					Email linking is off (OIDC_AUTO_LINK_BY_EMAIL=false), so SSO sign-in never changes these
+					links.
+				</p>
+			{:else if linkTarget.mediaUserLinkMode === 'AUTO'}
 				<p class="rounded-lg border border-border bg-elevated px-3 py-2.5 text-[11px] text-fg-secondary">
 					Linked by email: each SSO sign-in links this account to the Plex users with the same
-					verified email. Saving a selection here switches it to manual linking.
+					verified email, and removes its links if the identity provider sends no verified email.
+					Saving a selection here switches it to manual linking.
 				</p>
 			{:else}
 				<div class="flex flex-col gap-2 rounded-lg border border-border bg-elevated px-3 py-2.5">

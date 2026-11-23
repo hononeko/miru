@@ -231,7 +231,10 @@ private fun Route.adminAccountRoutes(authService: AuthService) {
         get {
             val result =
                 authService.listAccounts().map { accounts ->
-                    AccountListResponse(accounts = accounts.map { it.toResponse() })
+                    AccountListResponse(
+                        accounts = accounts.map { it.toResponse() },
+                        emailLinkingEnabled = authService.emailLinkingEnabled,
+                    )
                 }
             call.respondEither(result)
         }

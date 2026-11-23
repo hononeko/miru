@@ -2501,12 +2501,17 @@ components:
 
     AccountListResponse:
       type: object
-      required: [accounts]
+      required: [accounts, emailLinkingEnabled]
       properties:
         accounts:
           type: array
           items:
             $ref: '#/components/schemas/AccountResponse'
+        emailLinkingEnabled:
+          type: boolean
+          description: >-
+            Whether SSO sign-in links `AUTO` accounts to media users by email (SSO enabled and
+            `OIDC_AUTO_LINK_BY_EMAIL` on). When false, sign-in never changes any account's links.
 
     CreateAccountRequest:
       type: object

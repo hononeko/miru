@@ -1,17 +1,57 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { LogIn } from 'lucide-svelte';
+	import { LoaderCircle, LogIn } from 'lucide-svelte';
 	import { MiruApiError } from '$api/client';
 	import MiruLogo from '$components/layout/MiruLogo.svelte';
 	import Badge from '$components/ui/Badge.svelte';
 	import Button from '$components/ui/Button.svelte';
+	import { cn } from '$lib/utils';
 	import { authStore } from '$stores/auth.svelte';
 
 	let username = $state('');
 	let password = $state('');
 	let submitting = $state(false);
+	let oidcRedirecting = $state(false);
 	let error = $state<string | null>(null);
+
+	let oidcResetTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function clearOidcResetTimer() {
+		if (oidcResetTimer !== null) {
+			clearTimeout(oidcResetTimer);
+			oidcResetTimer = null;
+		}
+	}
+
+	onMount(() => {
+		const handlePageShow = () => {
+			oidcRedirecting = false;
+			clearOidcResetTimer();
+		};
+		window.addEventListener('pageshow', handlePageShow);
+		return () => {
+			window.removeEventListener('pageshow', handlePageShow);
+			clearOidcResetTimer();
+		};
+	});
+
+	function handleOidcClick(e: MouseEvent) {
+		if (oidcRedirecting || submitting) {
+			e.preventDefault();
+			return;
+		}
+		if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) {
+			return;
+		}
+		oidcRedirecting = true;
+		clearOidcResetTimer();
+		oidcResetTimer = setTimeout(() => {
+			oidcRedirecting = false;
+			oidcResetTimer = null;
+		}, 10_000);
+	}
 
 	const queryErrorMessage = $derived.by(() => {
 		const code = page.url.searchParams.get('error');
@@ -97,10 +137,22 @@
 			{#if authStore.oidcEnabled}
 				<a
 					href={authStore.oidcLoginUrl ?? '/api/v1/auth/oidc/login'}
-					class="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-cyan px-4 font-heading text-sm font-semibold text-white transition-colors hover:bg-cyan-hi focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan/50"
+					onclick={handleOidcClick}
+					aria-disabled={oidcRedirecting || submitting ? 'true' : undefined}
+					aria-busy={oidcRedirecting ? 'true' : undefined}
+					tabindex={oidcRedirecting || submitting ? -1 : undefined}
+					class={cn(
+						'inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-cyan px-4 font-heading text-sm font-semibold text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan/50',
+						oidcRedirecting || submitting ? 'cursor-wait opacity-60' : 'hover:bg-cyan-hi'
+					)}
 				>
-					<LogIn class="h-4 w-4" />
-					Sign in with {authStore.oidcDisplayName}
+					{#if oidcRedirecting}
+						<LoaderCircle class="h-4 w-4 animate-spin" />
+						Redirecting to {authStore.oidcDisplayName}…
+					{:else}
+						<LogIn class="h-4 w-4" />
+						Sign in with {authStore.oidcDisplayName}
+					{/if}
 				</a>
 			{/if}
 
@@ -139,8 +191,13 @@
 						/>
 					</label>
 
-					<Button type="submit" variant="primary" size="lg" disabled={submitting} class="mt-1 w-full">
-						{submitting ? 'Signing in…' : 'Sign In'}
+					<Button type="submit" variant="primary" size="lg" disabled={submitting || oidcRedirecting} class="mt-1 w-full">
+						{#if submitting}
+							<LoaderCircle class="h-4 w-4 animate-spin" />
+							Signing in…
+						{:else}
+							Sign In
+						{/if}
 					</Button>
 				</form>
 			{/if}

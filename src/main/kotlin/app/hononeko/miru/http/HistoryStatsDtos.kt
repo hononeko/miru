@@ -142,10 +142,31 @@ data class HistoryDetailResponse(
 )
 
 @Serializable
+data class DailyMediaPlayDto(
+    val ratingKey: String,
+    val mediaType: String,
+    val title: String,
+    val playCount: Long,
+    val watchDurationSec: Long,
+    val users: List<String> = emptyList(),
+)
+
+@Serializable
+data class DailyUserPlayDto(
+    val userId: String,
+    val username: String,
+    val displayName: String? = null,
+    val playCount: Long,
+    val watchDurationSec: Long,
+)
+
+@Serializable
 data class DailyPlayStatDto(
     val date: String,
     val playCount: Long,
     val watchDurationSec: Long,
+    val media: List<DailyMediaPlayDto> = emptyList(),
+    val users: List<DailyUserPlayDto> = emptyList(),
 )
 
 @Serializable

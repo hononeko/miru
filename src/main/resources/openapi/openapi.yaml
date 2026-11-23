@@ -3402,9 +3402,48 @@ components:
           type: integer
           format: int64
 
+    DailyMediaPlayDto:
+      type: object
+      required: [ratingKey, mediaType, title, playCount, watchDurationSec, users]
+      properties:
+        ratingKey:
+          type: string
+        mediaType:
+          type: string
+        title:
+          type: string
+        playCount:
+          type: integer
+          format: int64
+        watchDurationSec:
+          type: integer
+          format: int64
+        users:
+          type: array
+          items:
+            type: string
+
+    DailyUserPlayDto:
+      type: object
+      required: [userId, username, playCount, watchDurationSec]
+      properties:
+        userId:
+          type: string
+        username:
+          type: string
+        displayName:
+          type: string
+          nullable: true
+        playCount:
+          type: integer
+          format: int64
+        watchDurationSec:
+          type: integer
+          format: int64
+
     DailyPlayStatDto:
       type: object
-      required: [date, playCount, watchDurationSec]
+      required: [date, playCount, watchDurationSec, media, users]
       properties:
         date:
           type: string
@@ -3415,6 +3454,14 @@ components:
         watchDurationSec:
           type: integer
           format: int64
+        media:
+          type: array
+          items:
+            $ref: '#/components/schemas/DailyMediaPlayDto'
+        users:
+          type: array
+          items:
+            $ref: '#/components/schemas/DailyUserPlayDto'
 
     TopMediaStatDto:
       type: object

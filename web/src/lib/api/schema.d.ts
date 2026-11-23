@@ -1321,6 +1321,25 @@ export interface components {
             /** Format: int64 */
             stoppedAtMs: number;
         };
+        DailyMediaPlayDto: {
+            ratingKey: string;
+            mediaType: string;
+            title: string;
+            /** Format: int64 */
+            playCount: number;
+            /** Format: int64 */
+            watchDurationSec: number;
+            users: string[];
+        };
+        DailyUserPlayDto: {
+            userId: string;
+            username: string;
+            displayName?: string | null;
+            /** Format: int64 */
+            playCount: number;
+            /** Format: int64 */
+            watchDurationSec: number;
+        };
         DailyPlayStatDto: {
             /** @description UTC date in YYYY-MM-DD format */
             date: string;
@@ -1328,6 +1347,8 @@ export interface components {
             playCount: number;
             /** Format: int64 */
             watchDurationSec: number;
+            media: components["schemas"]["DailyMediaPlayDto"][];
+            users: components["schemas"]["DailyUserPlayDto"][];
         };
         TopMediaStatDto: {
             ratingKey: string;

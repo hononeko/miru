@@ -9,9 +9,54 @@ export interface UserDateTimePrefs {
 }
 
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const ISO_CALENDAR_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 function pad2(n: number): string {
 	return String(n).padStart(2, '0');
+}
+
+function parseIsoCalendarDate(isoDate: string): { year: string; month: number; day: number } | null {
+	const match = ISO_CALENDAR_DATE_RE.exec(isoDate.trim());
+	if (!match) return null;
+	const month = Number(match[2]);
+	const day = Number(match[3]);
+	if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+	return { year: match[1], month, day };
+}
+
+export function formatCalendarDate(isoDate: string, dateFormat: DateFormatPreference = 'iso'): string {
+	const parsed = parseIsoCalendarDate(isoDate);
+	if (!parsed) return isoDate;
+	if (dateFormat === 'mdy') {
+		return `${MONTH_SHORT[parsed.month - 1]} ${parsed.day}, ${parsed.year}`;
+	}
+	if (dateFormat === 'dmy') {
+		return `${pad2(parsed.day)}/${pad2(parsed.month)}/${parsed.year}`;
+	}
+	return `${parsed.year}-${pad2(parsed.month)}-${pad2(parsed.day)}`;
+}
+
+export function getCalendarDateAxisParts(
+	isoDate: string,
+	prevIsoDate?: string | null
+): { dayLabel: string; monthLabel?: string } {
+	const parsed = parseIsoCalendarDate(isoDate);
+	if (!parsed) {
+		return { dayLabel: isoDate.slice(8, 10) || isoDate };
+	}
+	const dayLabel = pad2(parsed.day);
+	const monthShort = MONTH_SHORT[parsed.month - 1];
+	const prev = prevIsoDate ? parseIsoCalendarDate(prevIsoDate) : null;
+	if (!prev) {
+		return { dayLabel, monthLabel: monthShort };
+	}
+	if (parsed.year !== prev.year) {
+		return { dayLabel, monthLabel: `${monthShort} '${parsed.year.slice(2)}` };
+	}
+	if (parsed.month !== prev.month) {
+		return { dayLabel, monthLabel: monthShort };
+	}
+	return { dayLabel };
 }
 
 function formatDatePart(d: Date, dateFormat: DateFormatPreference = 'iso'): string {

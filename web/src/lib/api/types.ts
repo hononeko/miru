@@ -36,6 +36,8 @@ export type HistoryItemDto = Schemas['HistoryItemDto'];
 export type HistoryListResponse = Schemas['HistoryListResponse'];
 export type HistoryDetailResponse = Schemas['HistoryDetailResponse'];
 
+export type DailyMediaPlayDto = Schemas['DailyMediaPlayDto'];
+export type DailyUserPlayDto = Schemas['DailyUserPlayDto'];
 export type DailyPlayStatDto = Schemas['DailyPlayStatDto'];
 export type TopMediaStatDto = Schemas['TopMediaStatDto'];
 export type RewatchedMediaStatDto = Schemas['RewatchedMediaStatDto'];

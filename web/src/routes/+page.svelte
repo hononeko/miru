@@ -14,7 +14,7 @@
 	import KpiCard from '$components/miru/KpiCard.svelte';
 	import StreamCard from '$components/miru/StreamCard.svelte';
 	import UnlinkedUserEmptyState from '$components/miru/UnlinkedUserEmptyState.svelte';
-	import BarChart, { type BarPoint } from '$components/miru/BarChart.svelte';
+	import BarChart, { type BarPoint, type BarSegment } from '$components/miru/BarChart.svelte';
 	import ViewingHeatmap from '$components/miru/ViewingHeatmap.svelte';
 	import ClientsCodecsPanel from '$components/miru/ClientsCodecsPanel.svelte';
 	import { authStore } from '$stores/auth.svelte';
@@ -22,10 +22,13 @@
 	import { preferencesStore } from '$stores/preferences.svelte';
 	import { streamsStore } from '$stores/streams.svelte';
 	import {
+		cn,
 		formatBandwidthKbps,
+		formatCalendarDate,
 		formatDurationSec,
 		formatRelativeTime,
 		formatStatPercent,
+		getCalendarDateAxisParts,
 		statBarWidth
 	} from '$lib/utils';
 	import { Link2, Radio, Server, Tv } from 'lucide-svelte';
@@ -129,6 +132,21 @@
 		streamsStore.streams.filter((s) => s.state.toLowerCase() === 'paused').length
 	);
 
+	let nowMs = $state(Date.now());
+
+	$effect(() => {
+		if (streamsStore.lastUpdatedAtMs === null) return;
+		nowMs = Date.now();
+		const timer = setInterval(() => {
+			nowMs = Date.now();
+		}, 1_000);
+		return () => clearInterval(timer);
+	});
+
+	const showLastUpdated = $derived(
+		streamsStore.lastUpdatedAtMs !== null && nowMs - streamsStore.lastUpdatedAtMs > 10_000
+	);
+
 	const liveBreakdown = $derived.by(() => {
 		let dpCount = 0;
 		let dpKbps = 0;
@@ -164,14 +182,107 @@
 		];
 	});
 
-	const dailyBars = $derived.by<BarPoint[]>(() => {
-		const days = overview?.playsPerDay ?? [];
-		const tail = days.slice(-14);
-		return tail.map((d) => ({
-			label: d.date.slice(8, 10),
-			value: analyticsMetric === 'duration' ? d.watchDurationSec : d.playCount,
-			tooltip: `${d.date}: ${d.playCount} plays (${formatDurationSec(d.watchDurationSec)})`
+	const DAILY_USER_COLORS = ['bg-cyan', 'bg-primary', 'bg-direct-play', 'bg-hw-transcode', 'bg-direct-stream'] as const;
+	const DAILY_OTHER_COLOR = 'bg-fg-muted';
+
+	function userDisplayLabel(user: { displayName?: string | null; username: string }): string {
+		return user.displayName?.trim() || user.username;
+	}
+
+	function dailyMediaKindLabel(mediaType: string): string {
+		const normalized = mediaType.toLowerCase();
+		if (normalized === 'show' || normalized === 'episode') return 'TV Show';
+		if (normalized === 'movie') return 'Movie';
+		if (normalized === 'track') return 'Music';
+		if (normalized === 'live_tv') return 'Live TV';
+		return normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : 'Media';
+	}
+
+	const dailyDays = $derived(overview?.playsPerDay ?? []);
+
+	const dailyUserLegend = $derived.by(() => {
+		const totals = new Map<string, { id: string; label: string; total: number }>();
+		for (const day of dailyDays) {
+			for (const u of day.users ?? []) {
+				const val = analyticsMetric === 'duration' ? u.watchDurationSec : u.playCount;
+				const label = userDisplayLabel(u);
+				const prev = totals.get(u.userId);
+				if (prev) {
+					prev.total += val;
+				} else {
+					totals.set(u.userId, { id: u.userId, label, total: val });
+				}
+			}
+		}
+		const sorted = Array.from(totals.values()).sort(
+			(a, b) => b.total - a.total || a.label.localeCompare(b.label)
+		);
+		const top = sorted.slice(0, DAILY_USER_COLORS.length).map((u, idx) => ({
+			id: u.id,
+			label: u.label,
+			colorClass: DAILY_USER_COLORS[idx] as string
 		}));
+		if (sorted.length > DAILY_USER_COLORS.length) {
+			top.push({ id: '__other__', label: 'Other', colorClass: DAILY_OTHER_COLOR });
+		}
+		return top;
+	});
+
+	const dailyUserColorMap = $derived.by(() => {
+		const map = new Map<string, string>();
+		for (const item of dailyUserLegend) {
+			if (item.id !== '__other__') {
+				map.set(item.id, item.colorClass);
+			}
+		}
+		return map;
+	});
+
+	const dailyBars = $derived.by<BarPoint[]>(() => {
+		const days = dailyDays;
+		const showStackedUsers = dailyUserLegend.length > 1;
+		const colorOrder = new Map(dailyUserLegend.map((item, i) => [item.id, i]));
+		return days.map((d, idx) => {
+			const axis = getCalendarDateAxisParts(d.date, idx > 0 ? days[idx - 1].date : null);
+			const value = analyticsMetric === 'duration' ? d.watchDurationSec : d.playCount;
+			let segments: BarSegment[] | undefined;
+			if (showStackedUsers && (d.users?.length ?? 0) > 0) {
+				const bucketTotals = new Map<string, { label: string; value: number; colorClass: string; order: number }>();
+				for (const u of d.users) {
+					const uVal = analyticsMetric === 'duration' ? u.watchDurationSec : u.playCount;
+					if (uVal <= 0) continue;
+					const mappedColor = dailyUserColorMap.get(u.userId);
+					const key = mappedColor ? u.userId : '__other__';
+					const label = mappedColor ? userDisplayLabel(u) : 'Other';
+					const colorClass = mappedColor ?? DAILY_OTHER_COLOR;
+					const order = colorOrder.get(key) ?? 99;
+					const prev = bucketTotals.get(key);
+					if (prev) {
+						prev.value += uVal;
+					} else {
+						bucketTotals.set(key, { label, value: uVal, colorClass, order });
+					}
+				}
+				segments = Array.from(bucketTotals.values())
+					.sort((a, b) => a.order - b.order)
+					.map(({ label, value: segValue, colorClass }) => ({
+						label,
+						value: segValue,
+						colorClass
+					}));
+			}
+			const formattedDate = formatCalendarDate(d.date, preferencesStore.prefs.dateFormat);
+			const playsText = `${d.playCount} ${d.playCount === 1 ? 'play' : 'plays'}`;
+			return {
+				id: d.date,
+				label: axis.dayLabel,
+				subLabel: axis.monthLabel,
+				value,
+				tooltip: `${formattedDate}: ${playsText} (${formatDurationSec(d.watchDurationSec)})`,
+				ariaLabel: `${formattedDate}: ${playsText}, ${formatDurationSec(d.watchDurationSec)}`,
+				segments
+			};
+		});
 	});
 
 	const peakDay = $derived.by(() => {
@@ -317,9 +428,9 @@
 			<h2 class="font-heading text-base font-semibold text-fg-primary">
 				Active Streams ({streamsStore.totalCount})
 			</h2>
-			{#if streamsStore.lastUpdatedAtMs}
+			{#if showLastUpdated && streamsStore.lastUpdatedAtMs}
 				<span class="font-mono text-[11px] text-fg-muted">
-					Updated {formatRelativeTime(streamsStore.lastUpdatedAtMs, Date.now(), preferencesStore.prefs)}
+					Updated {formatRelativeTime(streamsStore.lastUpdatedAtMs, nowMs, preferencesStore.prefs)}
 				</span>
 			{/if}
 		</div>
@@ -337,40 +448,46 @@
 				</p>
 			</div>
 		{:else}
+			{@const isEvenStreams = streamsStore.streams.length % 2 === 0}
 			<div class="grid grid-cols-1 gap-4 xl:grid-cols-2">
 				{#each streamsStore.streams as stream (`${stream.serverId}:${stream.sessionKey}:${stream.media.ratingKey}`)}
 					<StreamCard {stream} />
 				{/each}
 
-				{#if streamsStore.streams.length % 2 === 1}
-					<!-- Live Session Breakdown Summary card balances odd stream grids on desktop -->
-					<div
-						class="hidden xl:flex flex-col justify-between gap-3 rounded-xl border border-border bg-surface p-4"
-					>
-						<div class="flex items-center justify-between">
-							<h3 class="font-heading text-sm font-semibold text-fg-primary">Live Session Breakdown</h3>
-							<Radio class="h-4 w-4 text-cyan-hi" />
-						</div>
-						<div class="flex flex-col gap-3">
-							{#each liveBreakdown as row}
-								<div class="flex flex-col gap-1">
-									<div class="flex items-center justify-between text-xs">
-										<span class="text-fg-secondary">{row.label}</span>
-										<span class="font-mono text-[11px] text-fg-primary tabular-nums">
-											{row.count} {row.count === 1 ? 'stream' : 'streams'} · {formatBandwidthKbps(row.kbps)}
-										</span>
-									</div>
-									<div class="h-1.5 w-full overflow-hidden rounded-full bg-subtle">
-										<div
-											class={`h-full rounded-full ${row.barClass} ${row.count > 0 ? 'min-w-0.5' : ''}`}
-											style:width={statBarWidth(row.pct)}
-										></div>
-									</div>
-								</div>
-							{/each}
-						</div>
+				<div
+					class={cn(
+						'flex flex-col justify-between gap-3 rounded-xl border border-border bg-surface p-4',
+						isEvenStreams && 'xl:col-span-2'
+					)}
+				>
+					<div class="flex items-center justify-between">
+						<h3 class="font-heading text-sm font-semibold text-fg-primary">Live Session Breakdown</h3>
+						<Radio class="h-4 w-4 text-cyan-hi" />
 					</div>
-				{/if}
+					<div
+						class={cn(
+							'grid grid-cols-1 gap-3 sm:grid-cols-2',
+							isEvenStreams ? 'xl:grid-cols-4' : 'xl:grid-cols-1'
+						)}
+					>
+						{#each liveBreakdown as row}
+							<div class="flex flex-col gap-1">
+								<div class="flex items-center justify-between text-xs">
+									<span class="text-fg-secondary">{row.label}</span>
+									<span class="font-mono text-[11px] text-fg-primary tabular-nums">
+										{row.count} {row.count === 1 ? 'stream' : 'streams'} · {formatBandwidthKbps(row.kbps)}
+									</span>
+								</div>
+								<div class="h-1.5 w-full overflow-hidden rounded-full bg-subtle">
+									<div
+										class={`h-full rounded-full ${row.barClass} ${row.count > 0 ? 'min-w-0.5' : ''}`}
+										style:width={statBarWidth(row.pct)}
+									></div>
+								</div>
+							</div>
+						{/each}
+					</div>
+				</div>
 			</div>
 		{/if}
 	</section>
@@ -382,18 +499,114 @@
 		</div>
 	{:else}
 		<section class="grid grid-cols-1 gap-4 lg:grid-cols-3">
-			<div class="flex flex-col justify-between gap-4 rounded-xl border border-border bg-surface p-4 lg:col-span-2">
-				<div class="flex items-center justify-between gap-2">
-					<h2 class="font-heading text-sm font-semibold text-fg-primary">
-						{analyticsMetric === 'duration' ? 'Watch Time Per Day' : 'Plays Per Day'} ({range})
-					</h2>
+			<div class="flex flex-col justify-between gap-3 rounded-xl border border-border bg-surface p-4 lg:col-span-2">
+				<div class="flex flex-wrap items-start justify-between gap-2">
+					<div>
+						<h2 class="font-heading text-sm font-semibold text-fg-primary">
+							{analyticsMetric === 'duration' ? 'Watch Time Per Day' : 'Plays Per Day'} ({range})
+						</h2>
+						<p class="mt-0.5 text-[11px] text-fg-muted">
+							Daily breakdown by media &amp; viewer · Click or tap any bar for details
+						</p>
+					</div>
 					{#if peakDay && (analyticsMetric === 'duration' ? peakDay.watchDurationSec > 0 : peakDay.playCount > 0)}
 						<span class="font-mono text-[11px] font-medium text-primary-hover">
 							Peak: {analyticsMetric === 'duration' ? formatDurationSec(peakDay.watchDurationSec) : `${peakDay.playCount} plays`} ({peakDay.date})
 						</span>
 					{/if}
 				</div>
-				<BarChart points={dailyBars} heightClass="h-36" />
+
+				{#if dailyUserLegend.length > 1}
+					<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-fg-secondary">
+						{#each dailyUserLegend as entry (entry.id)}
+							<span class="inline-flex items-center gap-1.5">
+								<span class={cn('h-2 w-2 rounded-full', entry.colorClass)}></span>
+								<span class="font-medium text-fg-primary">{entry.label}</span>
+							</span>
+						{/each}
+					</div>
+				{/if}
+
+				<BarChart points={dailyBars} heightClass="h-36" highlightPeak={dailyUserLegend.length <= 1}>
+					{#snippet detail(_point, idx, close)}
+						{@const day = dailyDays[idx]}
+						{#if day}
+							<div class="flex flex-col gap-2.5 text-xs">
+								<div class="flex items-center justify-between gap-2 border-b border-border pb-2">
+									<div class="flex items-center gap-1.5">
+										<span class="font-mono text-xs font-semibold text-fg-primary">
+											{formatCalendarDate(day.date, preferencesStore.prefs.dateFormat)}
+										</span>
+										{#if peakDay?.date === day.date}
+											<Badge tone="primary" mono>PEAK</Badge>
+										{/if}
+									</div>
+									<span class="font-mono text-[11px] text-cyan-hi tabular-nums">
+										{day.playCount} {day.playCount === 1 ? 'play' : 'plays'} · {formatDurationSec(day.watchDurationSec)}
+									</span>
+								</div>
+
+								{#if day.users.length > 0}
+									<div class="flex flex-col gap-1">
+										<span class="font-heading text-[10px] font-semibold uppercase tracking-wider text-fg-muted">
+											Viewers
+										</span>
+										<div class="flex flex-wrap gap-1.5">
+											{#each day.users as viewer (viewer.userId)}
+												{@const viewerColor = dailyUserLegend.length > 1 ? (dailyUserColorMap.get(viewer.userId) ?? DAILY_OTHER_COLOR) : null}
+												<span class="inline-flex items-center gap-1.5 rounded-md border border-border bg-elevated px-2 py-0.5 text-[11px] text-fg-primary">
+													{#if viewerColor}
+														<span class={cn('h-1.5 w-1.5 rounded-full', viewerColor)}></span>
+													{/if}
+													<span class="font-medium">{userDisplayLabel(viewer)}</span>
+													<span class="font-mono text-[10px] text-fg-muted tabular-nums">
+														{analyticsMetric === 'duration'
+															? formatDurationSec(viewer.watchDurationSec)
+															: viewer.playCount}
+													</span>
+												</span>
+											{/each}
+										</div>
+									</div>
+								{/if}
+
+								{#if day.media.length > 0}
+									<div class="flex flex-col gap-1">
+										<span class="font-heading text-[10px] font-semibold uppercase tracking-wider text-fg-muted">
+											Played Media
+										</span>
+										<div class="flex max-h-48 flex-col gap-1 overflow-y-auto">
+											{#each day.media as item (`${item.mediaType}:${item.ratingKey}:${item.title}`)}
+												<button
+													type="button"
+													onclick={() => {
+														close();
+														void mediaDetailsModal.open(item.ratingKey, {
+															preferSeries: item.mediaType === 'show'
+														});
+													}}
+													class="group flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg bg-elevated px-2.5 py-1.5 text-left transition-colors hover:bg-subtle/80 focus-visible:outline-1 focus-visible:outline-cyan"
+												>
+													<div class="min-w-0">
+														<p class="truncate font-heading text-[11px] font-semibold text-fg-primary group-hover:text-cyan-hi">
+															{item.title}
+														</p>
+														<p class="truncate text-[10px] text-fg-muted">
+															{dailyMediaKindLabel(item.mediaType)}{item.users.length > 0 ? ` · ${item.users.join(', ')}` : ''}
+														</p>
+													</div>
+													<span class="shrink-0 font-mono text-[10px] text-fg-secondary tabular-nums">
+														{item.playCount} {item.playCount === 1 ? 'play' : 'plays'} · {formatDurationSec(item.watchDurationSec)}
+													</span>
+												</button>
+											{/each}
+										</div>
+									</div>
+								{/if}
+							</div>
+						{/if}
+					{/snippet}
+				</BarChart>
 			</div>
 
 			<div class="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
@@ -440,8 +653,9 @@
 			</div>
 		</section>
 
-		<!-- Watch Analytics: Viewing Heatmap + Clients, Codecs & Transcode Reasons -->
+		<!-- Watch Analytics: Clients, Codecs & Transcode Reasons + Viewing Heatmap -->
 		<section class="flex flex-col gap-4" aria-label="Watch analytics">
+			<ClientsCodecsPanel {clientStats} metric={analyticsMetric} loading={loadingStats} />
 			<ViewingHeatmap
 				{heatmap}
 				range={heatmapRange}
@@ -449,7 +663,6 @@
 				loading={loadingHeatmap}
 				onchangeRange={(next) => (heatmapRange = next)}
 			/>
-			<ClientsCodecsPanel {clientStats} metric={analyticsMetric} loading={loadingStats} />
 		</section>
 	{/if}
 	{/if}

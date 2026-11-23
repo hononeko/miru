@@ -199,7 +199,8 @@ class HistoryAndStatsService(
             val metric = parseMetric(metricRaw).bind()
             val scopedUserIds = if (principal.isAdmin()) null else principal.linkedMediaUserIds
             val rows = playbackHistoryRepository.listForStats(userIds = scopedUserIds, fromMs = range.fromMs).bind()
-            val common = aggregateCommonStats(rows, metric)
+            val usersById = resolveUsers(rows.map { it.userId }.distinct()).bind()
+            val common = aggregateCommonStats(rows, metric, usersById = usersById)
 
             OverviewStatsResponse(
                 range = range.label,
@@ -234,7 +235,7 @@ class HistoryAndStatsService(
             val range = parseRange(rangeRaw).bind()
             val metric = parseMetric(metricRaw).bind()
             val rows = playbackHistoryRepository.listForStats(userIds = setOf(trimmedUserId), fromMs = range.fromMs).bind()
-            val common = aggregateCommonStats(rows, metric)
+            val common = aggregateCommonStats(rows, metric, usersById = mapOf(user.id to user))
             val avgCompletion = computeAverageCompletionPercent(rows)
             val completedPlays = rows.count { it.isWatched }.toLong()
             val longestStreak = computeLongestBingeStreakDays(rows)
@@ -450,7 +451,7 @@ class HistoryAndStatsService(
                         toMs = toMs,
                     ).bind()
 
-            val common = aggregateCommonStats(rows, metric)
+            val common = aggregateCommonStats(rows, metric, includeDailyBreakdowns = false)
             val playsByMonth = aggregatePlaysByMonth(rows)
             val peakMonthComparator =
                 when (metric) {
@@ -701,11 +702,12 @@ class HistoryAndStatsService(
     private fun aggregateCommonStats(
         rows: List<PlaybackHistoryStatsRow>,
         metric: AnalyticsMetric = AnalyticsMetric.PLAYS,
+        usersById: Map<String, UserRecord> = emptyMap(),
+        includeDailyBreakdowns: Boolean = true,
     ): CommonStats {
         val totalPlays = rows.size.toLong()
         var totalWatchDurationSec = 0L
         val activeUserIds = hashSetOf<String>()
-        val dailyAgg = linkedMapOf<String, Pair<Long, Long>>()
         var directPlay = 0L
         var directStream = 0L
         var transcode = 0L
@@ -719,10 +721,6 @@ class HistoryAndStatsService(
             val duration = row.watchedDurationSec.toLong()
             totalWatchDurationSec += duration
             activeUserIds += row.userId
-
-            val day = Instant.ofEpochMilli(row.stoppedAtMs).atZone(ZoneOffset.UTC).toLocalDate().toString()
-            val prev = dailyAgg[day] ?: (0L to 0L)
-            dailyAgg[day] = (prev.first + 1L) to (prev.second + duration)
 
             when (row.streamDecision.lowercase()) {
                 "direct_play" -> {
@@ -745,15 +743,12 @@ class HistoryAndStatsService(
         }
 
         val playsPerDay =
-            dailyAgg.entries
-                .sortedBy { it.key }
-                .map { (date, counts) ->
-                    DailyPlayStatDto(
-                        date = date,
-                        playCount = counts.first,
-                        watchDurationSec = counts.second,
-                    )
-                }
+            aggregatePlaysPerDay(
+                rows = rows,
+                usersById = usersById,
+                metric = metric,
+                includeBreakdowns = includeDailyBreakdowns,
+            )
 
         val decisionBreakdown =
             when (metric) {

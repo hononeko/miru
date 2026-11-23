@@ -1120,4 +1120,167 @@ class HistoryStatsRoutesTest :
                 }
             }
         }
+
+        test("includes per-day media and viewer breakdowns sorted by metric and scoped by user access") {
+            createHistoryHarness().use { harness ->
+                val adminLogin = harness.authService.setupInitialAdmin("admin", "Admin-strong-password-123").shouldBeRight()
+                seedUsersAndHistory(harness)
+
+                val aliceAccount =
+                    harness.authService
+                        .createAccount(
+                            username = "alice-daily",
+                            password = "Alice-strong-password-123",
+                            role = MiruRole.USER,
+                            linkedMediaUserIds = setOf("u-alice"),
+                        ).shouldBeRight()
+                val aliceLogin = harness.authService.login("alice-daily", "Alice-strong-password-123").shouldBeRight()
+                aliceAccount.account.id.shouldNotBeNull()
+
+                val extraRecords =
+                    listOf(
+                        historyEpisodeRecord(
+                            id = "hist-day-frieren-2",
+                            userId = "u-alice",
+                            ratingKey = "ep-1b",
+                            title = "Killing the Aura",
+                            grandparentTitle = "Frieren",
+                            year = 2023,
+                            thumbPath = "/library/metadata/ep-1b/thumb",
+                            librarySectionKey = "sec-anime",
+                            durationMs = 4_200_000L,
+                            viewOffsetMs = 4_100_000L,
+                            watchedDurationSec = 4_100,
+                            pausedDurationSec = 0,
+                            completionPercent = 97.6,
+                            streamTech = StreamTechRecord(streamDecision = "direct_play", hwTranscode = false),
+                            player = PlayerRecord(playerName = "Apple TV", playerPlatform = "tvOS"),
+                            startedAt = "2026-04-14T20:00:00Z",
+                            stoppedAt = "2026-04-14T21:10:00Z",
+                        ),
+                        historyMovieRecord(
+                            id = "hist-day-short-1",
+                            userId = "u-bob",
+                            ratingKey = "mov-short",
+                            title = "Short Clip",
+                            year = 2024,
+                            thumbPath = null,
+                            watchedDurationSec = 100,
+                            pausedDurationSec = 0,
+                            completionPercent = 100.0,
+                            streamTech = StreamTechRecord(streamDecision = "direct_play", hwTranscode = false),
+                            player = PlayerRecord(playerName = "Pixel", playerPlatform = "Android"),
+                            startedAt = "2026-04-14T08:00:00Z",
+                            stoppedAt = "2026-04-14T08:02:00Z",
+                        ),
+                        historyMovieRecord(
+                            id = "hist-day-short-2",
+                            userId = "u-bob",
+                            ratingKey = "mov-short",
+                            title = "Short Clip",
+                            year = 2024,
+                            thumbPath = null,
+                            watchedDurationSec = 100,
+                            pausedDurationSec = 0,
+                            completionPercent = 100.0,
+                            streamTech = StreamTechRecord(streamDecision = "direct_play", hwTranscode = false),
+                            player = PlayerRecord(playerName = "Pixel", playerPlatform = "Android"),
+                            startedAt = "2026-04-14T09:00:00Z",
+                            stoppedAt = "2026-04-14T09:02:00Z",
+                        ),
+                        historyMovieRecord(
+                            id = "hist-day-short-3",
+                            userId = "u-bob",
+                            ratingKey = "mov-short",
+                            title = "Short Clip",
+                            year = 2024,
+                            thumbPath = null,
+                            watchedDurationSec = 100,
+                            pausedDurationSec = 0,
+                            completionPercent = 100.0,
+                            streamTech = StreamTechRecord(streamDecision = "direct_play", hwTranscode = false),
+                            player = PlayerRecord(playerName = "Pixel", playerPlatform = "Android"),
+                            startedAt = "2026-04-14T10:00:00Z",
+                            stoppedAt = "2026-04-14T10:02:00Z",
+                        ),
+                        historyMovieRecord(
+                            id = "hist-day-long-1",
+                            userId = "u-bob",
+                            ratingKey = "mov-long",
+                            title = "Long Epic",
+                            year = 2020,
+                            thumbPath = null,
+                            watchedDurationSec = 5_000,
+                            pausedDurationSec = 0,
+                            completionPercent = 90.0,
+                            streamTech = StreamTechRecord(streamDecision = "direct_play", hwTranscode = false),
+                            player = PlayerRecord(playerName = "Pixel", playerPlatform = "Android"),
+                            startedAt = "2026-04-14T11:00:00Z",
+                            stoppedAt = "2026-04-14T12:25:00Z",
+                        ),
+                    )
+                extraRecords.forEach { harness.historyRepo.insert(it).shouldBeRight() }
+
+                testApplication {
+                    setupApp(harness)
+
+                    val playsOverview =
+                        MiruJson.decodeFromString<OverviewStatsResponse>(
+                            client
+                                .get("/api/v1/stats/overview?range=7d&metric=plays") {
+                                    cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                                }.bodyAsText(),
+                        )
+                    val april14Plays = playsOverview.playsPerDay.first { it.date == "2026-04-14" }
+                    april14Plays.playCount shouldBe 6L
+                    april14Plays.watchDurationSec shouldBe 10_800L
+                    april14Plays.media.map { it.title to it.playCount } shouldContainExactly
+                        listOf("Short Clip" to 3L, "Frieren" to 2L, "Long Epic" to 1L)
+                    april14Plays.media.first { it.title == "Frieren" }.let { frieren ->
+                        frieren.mediaType shouldBe "show"
+                        frieren.users shouldContainExactly listOf("Alice")
+                    }
+                    april14Plays.users.map { (it.displayName ?: it.username) to it.playCount } shouldContainExactly
+                        listOf("Bob" to 4L, "Alice" to 2L)
+
+                    val durationOverview =
+                        MiruJson.decodeFromString<OverviewStatsResponse>(
+                            client
+                                .get("/api/v1/stats/overview?range=7d&metric=duration") {
+                                    cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                                }.bodyAsText(),
+                        )
+                    val april14Duration = durationOverview.playsPerDay.first { it.date == "2026-04-14" }
+                    april14Duration.media.map { it.title to it.watchDurationSec } shouldContainExactly
+                        listOf("Frieren" to 5_500L, "Long Epic" to 5_000L, "Short Clip" to 300L)
+                    april14Duration.users.map { (it.displayName ?: it.username) to it.watchDurationSec } shouldContainExactly
+                        listOf("Alice" to 5_500L, "Bob" to 5_300L)
+
+                    val scopedOverview =
+                        MiruJson.decodeFromString<OverviewStatsResponse>(
+                            client
+                                .get("/api/v1/stats/overview?range=7d") {
+                                    cookie(SESSION_COOKIE_NAME, aliceLogin.signedToken)
+                                }.bodyAsText(),
+                        )
+                    val scopedApril14 = scopedOverview.playsPerDay.first { it.date == "2026-04-14" }
+                    scopedApril14.playCount shouldBe 2L
+                    scopedApril14.media.map { it.title } shouldContainExactly listOf("Frieren")
+                    scopedApril14.users.map { it.userId } shouldContainExactly listOf("u-alice")
+
+                    val bobStats =
+                        MiruJson.decodeFromString<UserStatsResponse>(
+                            client
+                                .get("/api/v1/users/u-bob/stats?range=7d") {
+                                    cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                                }.bodyAsText(),
+                        )
+                    val bobApril14 = bobStats.playsPerDay.first { it.date == "2026-04-14" }
+                    bobApril14.playCount shouldBe 4L
+                    bobApril14.media.map { it.title to it.playCount } shouldContainExactly
+                        listOf("Short Clip" to 3L, "Long Epic" to 1L)
+                    bobApril14.users.map { it.displayName } shouldContainExactly listOf("Bob")
+                }
+            }
+        }
     })

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { ArrowLeft, Calendar, Flame, Repeat, Sparkles } from 'lucide-svelte';
+	import { ArrowLeft, Calendar, Flame, Sparkles } from 'lucide-svelte';
 	import { api, MiruApiError, unwrap } from '$api/client';
 	import type {
 		AnalyticsMetricPreference,
@@ -22,11 +22,13 @@
 	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
 	import {
 		cn,
+		formatCalendarDate,
 		formatDurationSec,
 		formatMediaTitle,
 		formatRelativeTime,
 		formatShortDateTime,
 		formatStatPercent,
+		getCalendarDateAxisParts,
 		getDecisionMeta,
 		statBarWidth
 	} from '$lib/utils';
@@ -131,13 +133,23 @@
 		}
 	});
 
+	const dailyDays = $derived(stats?.playsPerDay ?? []);
+
 	const dailyBars = $derived.by<BarPoint[]>(() => {
-		const days = stats?.playsPerDay ?? [];
-		return days.slice(-14).map((d) => ({
-			label: d.date.slice(8, 10),
-			value: analyticsMetric === 'duration' ? d.watchDurationSec : d.playCount,
-			tooltip: `${d.date}: ${d.playCount} plays (${formatDurationSec(d.watchDurationSec)})`
-		}));
+		const days = dailyDays;
+		return days.map((d, idx) => {
+			const axis = getCalendarDateAxisParts(d.date, idx > 0 ? days[idx - 1].date : null);
+			const formattedDate = formatCalendarDate(d.date, preferencesStore.prefs.dateFormat);
+			const playsText = `${d.playCount} ${d.playCount === 1 ? 'play' : 'plays'}`;
+			return {
+				id: d.date,
+				label: axis.dayLabel,
+				subLabel: axis.monthLabel,
+				value: analyticsMetric === 'duration' ? d.watchDurationSec : d.playCount,
+				tooltip: `${formattedDate}: ${playsText} (${formatDurationSec(d.watchDurationSec)})`,
+				ariaLabel: `${formattedDate}: ${playsText}, ${formatDurationSec(d.watchDurationSec)}`
+			};
+		});
 	});
 
 	const wrappedMonthBars = $derived.by<BarPoint[]>(() => {
@@ -275,14 +287,58 @@
 						</span>
 					{/if}
 				</div>
-				<BarChart points={dailyBars} heightClass="h-36" />
+				<BarChart points={dailyBars} heightClass="h-36">
+					{#snippet detail(_point, idx, close)}
+						{@const day = dailyDays[idx]}
+						{#if day}
+							<div class="flex flex-col gap-2 text-xs">
+								<div class="flex items-center justify-between gap-2 border-b border-border pb-2">
+									<div class="flex items-center gap-1.5">
+										<span class="font-mono text-xs font-semibold text-fg-primary">
+											{formatCalendarDate(day.date, preferencesStore.prefs.dateFormat)}
+										</span>
+										{#if peakDay?.date === day.date}
+											<Badge tone="primary" mono>PEAK</Badge>
+										{/if}
+									</div>
+									<span class="font-mono text-[11px] text-cyan-hi tabular-nums">
+										{day.playCount} {day.playCount === 1 ? 'play' : 'plays'} · {formatDurationSec(day.watchDurationSec)}
+									</span>
+								</div>
+
+								{#if day.media.length > 0}
+									<div class="flex max-h-48 flex-col gap-1 overflow-y-auto">
+										{#each day.media as item (`${item.mediaType}:${item.ratingKey}:${item.title}`)}
+											<button
+												type="button"
+												onclick={() => {
+													close();
+													void mediaDetailsModal.open(item.ratingKey, {
+														preferSeries: item.mediaType === 'show'
+													});
+												}}
+												class="group flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg bg-elevated px-2.5 py-1.5 text-left transition-colors hover:bg-subtle/80 focus-visible:outline-1 focus-visible:outline-cyan"
+											>
+												<span class="truncate font-heading text-[11px] font-semibold text-fg-primary group-hover:text-cyan-hi">
+													{item.title}
+												</span>
+												<span class="shrink-0 font-mono text-[10px] text-fg-secondary tabular-nums">
+													{item.playCount} {item.playCount === 1 ? 'play' : 'plays'} · {formatDurationSec(item.watchDurationSec)}
+												</span>
+											</button>
+										{/each}
+									</div>
+								{/if}
+							</div>
+						{/if}
+					{/snippet}
+				</BarChart>
 			</div>
 
 			<div class="flex flex-col justify-between gap-4 rounded-xl border border-border bg-surface p-4">
 				<div class="flex flex-col gap-3">
 					<div class="flex items-center justify-between gap-2">
 						<h2 class="font-heading text-sm font-semibold text-fg-primary">Most Rewatched</h2>
-						<Repeat class="h-4 w-4 text-cyan-hi" />
 					</div>
 					{#if stats.mostRewatched.length === 0}
 						<p class="rounded-lg bg-elevated/50 px-3 py-6 text-center text-xs text-fg-muted">

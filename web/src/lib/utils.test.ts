@@ -5,6 +5,7 @@ import {
 	formatApiKeyExpiry,
 	formatBandwidthKbps,
 	formatBytes,
+	formatCalendarDate,
 	formatClockMs,
 	formatDateTime,
 	formatDurationSec,
@@ -13,6 +14,7 @@ import {
 	formatRelativeTime,
 	formatShortDateTime,
 	getApiKeyStatus,
+	getCalendarDateAxisParts,
 	getDecisionMeta,
 	resolveApiKeyExpiresAtMs,
 	safeInitial,
@@ -202,5 +204,17 @@ describe('statistic percentages', () => {
 		expect(statBarWidth(120)).toBe('100%');
 		expect(statBarWidth(-5)).toBe('0%');
 		expect(statBarWidth(undefined)).toBe('0%');
+	});
+
+	it('formats calendar ISO dates without timezone shifts and generates axis month markers', () => {
+		expect(formatCalendarDate('2026-11-04', 'iso')).toBe('2026-11-04');
+		expect(formatCalendarDate('2026-11-04', 'mdy')).toBe('Nov 4, 2026');
+		expect(formatCalendarDate('2026-11-04', 'dmy')).toBe('04/11/2026');
+		expect(formatCalendarDate('invalid', 'mdy')).toBe('invalid');
+
+		expect(getCalendarDateAxisParts('2025-12-28')).toEqual({ dayLabel: '28', monthLabel: 'Dec' });
+		expect(getCalendarDateAxisParts('2025-12-31', '2025-12-28')).toEqual({ dayLabel: '31' });
+		expect(getCalendarDateAxisParts('2026-01-02', '2025-12-31')).toEqual({ dayLabel: '02', monthLabel: "Jan '26" });
+		expect(getCalendarDateAxisParts('2026-02-01', '2026-01-02')).toEqual({ dayLabel: '01', monthLabel: 'Feb' });
 	});
 });

@@ -81,18 +81,18 @@ export class StreamsStore {
 
 	applyStarted(payload: SessionStartedEventDto): void {
 		this.upsertStream(payload.stream);
-		this.lastUpdatedAtMs = payload.timestampMs || Date.now();
+		this.lastUpdatedAtMs = Date.now();
 	}
 
 	applyUpdated(payload: SessionUpdatedEventDto): void {
 		this.upsertStream(payload.stream);
-		this.lastUpdatedAtMs = payload.timestampMs || Date.now();
+		this.lastUpdatedAtMs = Date.now();
 	}
 
 	applyStopped(payload: SessionStoppedEventDto): void {
 		const targetKey = `${payload.serverId}:${payload.sessionKey}:${payload.ratingKey}`;
 		this.streams = this.streams.filter((s) => streamKey(s) !== targetKey);
-		this.lastUpdatedAtMs = payload.timestampMs || Date.now();
+		this.lastUpdatedAtMs = Date.now();
 	}
 
 	private upsertStream(stream: ActiveStreamDto): void {

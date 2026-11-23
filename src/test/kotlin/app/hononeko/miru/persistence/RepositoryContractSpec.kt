@@ -1209,6 +1209,7 @@ private fun FunSpecRootScope.authAccountTests(ctxProvider: () -> ContractContext
                         username = "oidc.renamed",
                         usernameNormalized = "oidc.renamed",
                         email = "renamed@miru.local",
+                        emailVerified = true,
                         role = "ADMIN",
                         updatedAtMs = 5_000L,
                     ).shouldBeRight()
@@ -1217,9 +1218,15 @@ private fun FunSpecRootScope.authAccountTests(ctxProvider: () -> ContractContext
                     username = "oidc.renamed",
                     usernameNormalized = "oidc.renamed",
                     email = "renamed@miru.local",
+                    emailVerified = true,
                     role = "ADMIN",
                     updatedAtMs = 5_000L,
                 )
+            val unverified =
+                localWithNullSubject.copy(id = "acc-local-3", usernameNormalized = "local3", role = "USER", emailVerified = false)
+            ctx.authAccounts.insert(unverified).shouldBeRight()
+            ctx.authAccounts.findById("acc-local-3").shouldBeRight().shouldNotBeNull().emailVerified shouldBe false
+            ctx.authAccounts.findById("acc-local-1").shouldBeRight().shouldNotBeNull().emailVerified shouldBe null
             ctx.authAccounts.countAdmins().shouldBeRight() shouldBe 2L
         }
     }

@@ -9,6 +9,7 @@ import app.hononeko.miru.artwork.ArtworkProxyService
 import app.hononeko.miru.artwork.createAvatarHttpClient
 import app.hononeko.miru.auth.Argon2idPasswordHasher
 import app.hononeko.miru.auth.AuthService
+import app.hononeko.miru.auth.EmailMediaUserLinker
 import app.hononeko.miru.auth.oidc.OidcAuthService
 import app.hononeko.miru.auth.oidc.OidcClient
 import app.hononeko.miru.config.AppConfig
@@ -114,9 +115,10 @@ private fun runServer() {
     val userRepository = ExposedUserRepository(databaseHandle)
     val playbackHistoryRepository = ExposedPlaybackHistoryRepository(databaseHandle)
     val accountRepository = ExposedAuthAccountRepository(databaseHandle)
-    val authService = initAuthService(appConfig, databaseHandle, accountRepository, userRepository)
+    val emailLinker = EmailMediaUserLinker(accountRepository, userRepository, appConfig.auth)
+    val authService = initAuthService(appConfig, databaseHandle, accountRepository, userRepository, emailLinker)
     val (oidcClient, oidcAuthService) =
-        initOidcServices(appConfig, authService, accountRepository, userRepository)
+        initOidcServices(appConfig, authService, accountRepository, emailLinker)
     val historyAndStatsService =
         HistoryAndStatsService(
             playbackHistoryRepository = playbackHistoryRepository,
@@ -165,7 +167,12 @@ private fun runServer() {
         )
     val libraryRepository = ExposedLibraryRepository(databaseHandle)
     val libraryQueryService = LibraryQueryService(libraryRepository = libraryRepository)
-    val syncServices = createSyncServices(plexRuntimeManager, libraryRepository, userRepository)
+    val syncServices =
+        createSyncServices(plexRuntimeManager, libraryRepository, userRepository) {
+            emailLinker.relinkAll().onLeft { error ->
+                logger.warn("Linking SSO accounts by email after the user sync failed: {}", error.message)
+            }
+        }
     val readinessChecks = listOf(NamedReadinessCheck("database", DatabaseReadinessCheck(databaseHandle)))
 
     val server =
@@ -225,6 +232,7 @@ internal fun createSyncServices(
     plexRuntimeManager: PlexRuntimeManager,
     libraryRepository: app.hononeko.miru.persistence.repository.LibraryRepository,
     userRepository: app.hononeko.miru.persistence.repository.UserRepository,
+    afterUserSync: suspend () -> Unit = {},
 ): SyncServices {
     val libraryCollectorScope =
         CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("library-stats-collector"))
@@ -243,6 +251,7 @@ internal fun createSyncServices(
             serverIdProvider = plexRuntimeManager.serverIdProvider,
             userRepository = userRepository,
             scope = userSyncScope,
+            onUsersSynced = afterUserSync,
         )
     plexRuntimeManager.setOnReloadLibrarySync {
         libraryStatsCollector.syncFastCounts()
@@ -356,6 +365,7 @@ private fun initAuthService(
     databaseHandle: DatabaseHandle,
     accountRepository: ExposedAuthAccountRepository,
     userRepository: ExposedUserRepository,
+    emailLinker: EmailMediaUserLinker,
 ): AuthService {
     val authService =
         AuthService(
@@ -366,6 +376,7 @@ private fun initAuthService(
             passwordHasher = Argon2idPasswordHasher(),
             authConfig = appConfig.auth,
             preferencesRepository = ExposedUserPreferencesRepository(databaseHandle),
+            emailLinker = emailLinker,
         )
     runBlocking {
         authService.bootstrapAdminIfConfigured()
@@ -381,7 +392,7 @@ private fun initOidcServices(
     appConfig: AppConfig,
     authService: AuthService,
     accountRepository: ExposedAuthAccountRepository,
-    userRepository: ExposedUserRepository,
+    emailLinker: EmailMediaUserLinker,
 ): Pair<OidcClient?, OidcAuthService?> {
     if (!appConfig.auth.oidcEnabled) return null to null
     val oidcClient = OidcClient(config = appConfig.auth.oidc)
@@ -390,7 +401,7 @@ private fun initOidcServices(
             oidcClient = oidcClient,
             authService = authService,
             accountRepository = accountRepository,
-            userRepository = userRepository,
+            emailLinker = emailLinker,
             authConfig = appConfig.auth,
         )
     return oidcClient to oidcAuthService

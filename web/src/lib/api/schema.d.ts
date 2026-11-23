@@ -294,7 +294,7 @@ export interface paths {
         get?: never;
         /**
          * Set how an account's linked media users are maintained
-         * @description `AUTO` (SSO accounts only) makes every SSO sign-in replace the account's links with the media users that share its verified email; the current links stay until that next sign-in. `MANUAL` keeps the current links as they are.
+         * @description `AUTO` (SSO accounts only) links the account to the media users that share its verified email, right away if its last SSO sign-in recorded whether the email is verified, otherwise at its next sign-in. `MANUAL` keeps the current links as they are.
          */
         put: operations["setMediaUserLinkMode"];
         post?: never;
@@ -853,7 +853,7 @@ export interface components {
         /** @enum {string} */
         MiruRole: "ADMIN" | "USER";
         /**
-         * @description `AUTO`: every SSO sign-in replaces the account's links with the media users that share its verified email (when `OIDC_AUTO_LINK_BY_EMAIL` is on). `MANUAL`: the links are exactly what an admin set. Local accounts are always `MANUAL`.
+         * @description `AUTO`: the account is linked to the media users that share its verified email (when `OIDC_AUTO_LINK_BY_EMAIL` is on), recomputed when a sign-in changes its email or verification and after every media user sync; an account whose email is not verified has no links. `MANUAL`: the links are exactly what an admin set. Local accounts are always `MANUAL`.
          * @enum {string}
          */
         MediaUserLinkMode: "AUTO" | "MANUAL";
@@ -943,6 +943,8 @@ export interface components {
             authProvider: string;
             linkedMediaUserIds: string[];
             mediaUserLinkMode: components["schemas"]["MediaUserLinkMode"];
+            /** @description Whether the identity provider marked `email` as verified at the account's last SSO sign-in; null when not recorded (local accounts, and SSO accounts that have not signed in since). */
+            emailVerified?: boolean | null;
             /** Format: int64 */
             createdAtMs: number;
             /** Format: int64 */

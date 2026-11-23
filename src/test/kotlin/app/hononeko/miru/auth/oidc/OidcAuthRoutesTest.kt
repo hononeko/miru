@@ -4,6 +4,7 @@ import app.hononeko.miru.MiruJson
 import app.hononeko.miru.auth.Argon2Params
 import app.hononeko.miru.auth.Argon2idPasswordHasher
 import app.hononeko.miru.auth.AuthService
+import app.hononeko.miru.auth.EmailMediaUserLinker
 import app.hononeko.miru.auth.MiruRole
 import app.hononeko.miru.auth.SESSION_COOKIE_NAME
 import app.hononeko.miru.config.AppConfig
@@ -155,6 +156,7 @@ private class OidcTestHarness(
     val sessionRepo: ExposedAuthSessionRepository,
     val serverRepo: ExposedMediaServerRepository,
     val userRepo: ExposedUserRepository,
+    val emailLinker: EmailMediaUserLinker,
     val authService: AuthService,
     val oidcClient: OidcClient?,
     val oidcAuthService: OidcAuthService?,
@@ -321,6 +323,7 @@ private fun createOidcHarness(
             oidc = oidcConfig,
         )
 
+    val emailLinker = EmailMediaUserLinker(accountRepo, userRepo, authConfig, clock = { nowMs.get() })
     val authService =
         AuthService(
             accountRepository = accountRepo,
@@ -330,6 +333,7 @@ private fun createOidcHarness(
             passwordHasher = hasher,
             authConfig = authConfig,
             clock = { nowMs.get() },
+            emailLinker = emailLinker,
         )
 
     val mockEngine =
@@ -357,7 +361,7 @@ private fun createOidcHarness(
                 oidcClient = it,
                 authService = authService,
                 accountRepository = accountRepo,
-                userRepository = userRepo,
+                emailLinker = emailLinker,
                 authConfig = authConfig,
                 clock = { nowMs.get() },
             )
@@ -380,6 +384,7 @@ private fun createOidcHarness(
         sessionRepo = sessionRepo,
         serverRepo = serverRepo,
         userRepo = userRepo,
+        emailLinker = emailLinker,
         authService = authService,
         oidcClient = oidcClient,
         oidcAuthService = oidcAuthService,
@@ -937,7 +942,7 @@ class OidcAuthRoutesTest :
             }
         }
 
-        test("keeps email links in sync on every sign-in, stops after an admin edits them, and resumes when switched back to AUTO") {
+        test("keeps email links in sync after each user sync, stops after an admin edits them, and resumes when switched back to AUTO") {
             var scenario = MockIdpScenario()
             val expectedChallengeHolder = mutableMapOf<String, String>()
 
@@ -964,15 +969,22 @@ class OidcAuthRoutesTest :
                     val aliceAccountId =
                         harness.accountRepo.findByProviderAndSubject("OIDC", "sub-alice").shouldBeRight().shouldNotBeNull().id
 
-                    // A new Plex user with the same email is linked at the next sign-in.
-                    harness.upsertMediaUser(id = "mu-alice-2", externalUserId = "101", email = "Alice@Miru.local")
-                    client.linkedMediaUserIds(client.signInWithOidc("code-2", expectedChallengeHolder)) shouldContainExactly
-                        listOf("mu-alice", "mu-alice-2")
+                    harness.accountRepo.findById(aliceAccountId).shouldBeRight().shouldNotBeNull().emailVerified shouldBe true
 
-                    // A Plex user whose email no longer matches is unlinked at the next sign-in.
-                    harness.upsertMediaUser(id = "mu-alice-2", externalUserId = "101", email = "someone-else@miru.local")
-                    val aliceSession = client.signInWithOidc("code-3", expectedChallengeHolder)
+                    // A sign-in with the same verified email does no linking work, even if Plex users changed...
+                    harness.upsertMediaUser(id = "mu-alice-2", externalUserId = "101", email = "Alice@Miru.local")
+                    val aliceSession = client.signInWithOidc("code-2", expectedChallengeHolder)
                     client.linkedMediaUserIds(aliceSession) shouldContainExactly listOf("mu-alice")
+
+                    // ...the user sync picks the change up, and the existing session sees it straight away.
+                    harness.emailLinker.relinkAll().shouldBeRight() shouldBe 1
+                    client.linkedMediaUserIds(aliceSession) shouldContainExactly listOf("mu-alice", "mu-alice-2")
+
+                    // A Plex user whose email no longer matches is unlinked at the next user sync.
+                    harness.upsertMediaUser(id = "mu-alice-2", externalUserId = "101", email = "someone-else@miru.local")
+                    harness.emailLinker.relinkAll().shouldBeRight() shouldBe 1
+                    client.linkedMediaUserIds(aliceSession) shouldContainExactly listOf("mu-alice")
+                    harness.emailLinker.relinkAll().shouldBeRight() shouldBe 0
 
                     scenario = admin
                     val adminSession = client.signInWithOidc("code-admin", expectedChallengeHolder)
@@ -986,7 +998,7 @@ class OidcAuthRoutesTest :
                         setBody(body)
                     }
 
-                    // An admin edit makes the links manual; sign-in no longer changes them, even when emptied.
+                    // An admin edit makes the links manual; neither the user sync nor sign-in changes them, even when emptied.
                     val handPicked =
                         putAsAdmin(
                             "/api/v1/admin/accounts/$aliceAccountId/media-users",
@@ -995,9 +1007,12 @@ class OidcAuthRoutesTest :
                     handPicked.status shouldBe HttpStatusCode.OK
                     MiruJson.decodeFromString<AccountResponse>(handPicked.bodyAsText()).mediaUserLinkMode shouldBe
                         MediaUserLinkMode.MANUAL
-                    scenario = alice
+                    harness.emailLinker.relinkAll().shouldBeRight() shouldBe 0
+                    scenario = alice.copy(email = "alice.new@miru.local")
                     client.linkedMediaUserIds(client.signInWithOidc("code-4", expectedChallengeHolder)) shouldContainExactly
                         listOf("mu-other")
+                    scenario = alice
+                    client.signInWithOidc("code-4b", expectedChallengeHolder)
 
                     putAsAdmin(
                         "/api/v1/admin/accounts/$aliceAccountId/media-users",
@@ -1005,7 +1020,7 @@ class OidcAuthRoutesTest :
                     ).status shouldBe HttpStatusCode.OK
                     client.linkedMediaUserIds(client.signInWithOidc("code-5", expectedChallengeHolder)).shouldBeEmpty()
 
-                    // Switching back to AUTO keeps the current links until the next sign-in relinks by email.
+                    // Switching back to AUTO relinks right away from the email verified at the last sign-in.
                     val backToAuto =
                         putAsAdmin(
                             "/api/v1/admin/accounts/$aliceAccountId/media-user-link-mode",
@@ -1014,9 +1029,21 @@ class OidcAuthRoutesTest :
                     backToAuto.status shouldBe HttpStatusCode.OK
                     val autoAccount = MiruJson.decodeFromString<AccountResponse>(backToAuto.bodyAsText())
                     autoAccount.mediaUserLinkMode shouldBe MediaUserLinkMode.AUTO
-                    autoAccount.linkedMediaUserIds.shouldBeEmpty()
+                    autoAccount.emailVerified shouldBe true
+                    autoAccount.linkedMediaUserIds shouldContainExactly listOf("mu-alice")
                     client.linkedMediaUserIds(client.signInWithOidc("code-6", expectedChallengeHolder)) shouldContainExactly
                         listOf("mu-alice")
+
+                    // Switching to MANUAL freezes the current links.
+                    val frozen =
+                        putAsAdmin(
+                            "/api/v1/admin/accounts/$aliceAccountId/media-user-link-mode",
+                            MiruJson.encodeToString(SetMediaUserLinkModeRequest(mode = MediaUserLinkMode.MANUAL)),
+                        )
+                    MiruJson.decodeFromString<AccountResponse>(frozen.bodyAsText()).let { account ->
+                        account.mediaUserLinkMode shouldBe MediaUserLinkMode.MANUAL
+                        account.linkedMediaUserIds shouldContainExactly listOf("mu-alice")
+                    }
 
                     // AUTO is refused for local accounts, which never sign in with SSO.
                     val local =
@@ -1042,7 +1069,7 @@ class OidcAuthRoutesTest :
                         .accounts
                         .associate { it.username to it.mediaUserLinkMode } shouldBe
                         mapOf(
-                            "alice" to MediaUserLinkMode.AUTO,
+                            "alice" to MediaUserLinkMode.MANUAL,
                             "boss" to MediaUserLinkMode.AUTO,
                             "localviewer" to MediaUserLinkMode.MANUAL,
                         )
@@ -1063,6 +1090,7 @@ class OidcAuthRoutesTest :
                 harness.upsertMediaUser(id = "mu-alice", externalUserId = "100", email = "alice@miru.local")
 
                 harness.authService.emailLinkingEnabled shouldBe false
+                harness.emailLinker.relinkAll().shouldBeRight() shouldBe 0
 
                 testApplication {
                     setupApp(harness)

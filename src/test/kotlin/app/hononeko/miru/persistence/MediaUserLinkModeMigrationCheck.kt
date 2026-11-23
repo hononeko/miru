@@ -57,6 +57,17 @@ internal fun assertMediaUserLinkModeBackfill(config: DatabaseConfig) {
                     }
                 }
             }
+        val verificationRecorded =
+            handle.dataSource.connection.use { conn ->
+                conn.createStatement().use { stmt ->
+                    stmt.executeQuery("SELECT COUNT(*) FROM auth_accounts WHERE email_verified IS NOT NULL").use { rs ->
+                        rs.next()
+                        rs.getInt(1)
+                    }
+                }
+            }
+        // No account's email has been checked yet: that is recorded at each account's next sign-in.
+        verificationRecorded shouldBe 0
         modes shouldBe
             mapOf(
                 "oidc-auto" to "AUTO",

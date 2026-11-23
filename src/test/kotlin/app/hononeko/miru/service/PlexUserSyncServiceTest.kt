@@ -266,6 +266,7 @@ class PlexUserSyncServiceTest :
                         }
                     }
 
+                var afterSyncRuns = 0
                 val service =
                     PlexUserSyncService(
                         adapter = adapter,
@@ -278,10 +279,12 @@ class PlexUserSyncServiceTest :
                         },
                         userRepository = userRepo,
                         scope = this,
+                        onUsersSynced = { afterSyncRuns++ },
                     )
 
-                // Unconfigured syncOnce returns Left cleanly without throwing
+                // Unconfigured syncOnce returns Left cleanly without throwing, and skips the after-sync hook
                 service.syncOnce().shouldBeLeft().shouldBeInstanceOf<MiruError.UpstreamUnavailable>()
+                afterSyncRuns shouldBe 0
 
                 // Start loop while unconfigured, then configure and advance 1 hour
                 service.start()
@@ -295,6 +298,7 @@ class PlexUserSyncServiceTest :
                 val synced = userRepo.findByServer("srv-1").shouldBeRight()
                 synced shouldHaveSize 1
                 synced.single().thumbUrl shouldBe "https://plex.tv/users/alice/avatar"
+                afterSyncRuns shouldBe 1
 
                 // Failing adapter on next tick does not crash loop
                 adapter.nextResult = { MiruError.UpstreamUnavailable("plex", "timeout").left() }

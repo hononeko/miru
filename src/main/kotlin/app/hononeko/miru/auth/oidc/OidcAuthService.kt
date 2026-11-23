@@ -1,6 +1,7 @@
 package app.hononeko.miru.auth.oidc
 
 import app.hononeko.miru.auth.AuthService
+import app.hononeko.miru.auth.EmailMediaUserLinker
 import app.hononeko.miru.auth.MediaUserLinkMode
 import app.hononeko.miru.auth.MiruRole
 import app.hononeko.miru.auth.TokenCrypto
@@ -9,7 +10,6 @@ import app.hononeko.miru.config.AuthConfig
 import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.persistence.model.AuthAccountRecord
 import app.hononeko.miru.persistence.repository.AuthAccountRepository
-import app.hononeko.miru.persistence.repository.UserRepository
 import arrow.core.Either
 import arrow.core.raise.either
 import arrow.core.raise.ensure
@@ -28,7 +28,7 @@ class OidcAuthService(
     private val oidcClient: OidcClient,
     private val authService: AuthService,
     private val accountRepository: AuthAccountRepository,
-    private val userRepository: UserRepository,
+    private val emailLinker: EmailMediaUserLinker,
     private val authConfig: AuthConfig,
     private val clock: () -> Long = { System.currentTimeMillis() },
     private val idGenerator: () -> String = { UUID.randomUUID().toString() },
@@ -134,8 +134,16 @@ class OidcAuthService(
             val enriched = enrichClaimsFromUserInfo(claims, tokenResponse.accessToken).bind()
             val role = mapGroupsToRole(enriched.groups).bind()
 
-            val account = upsertOidcAccount(enriched, role, now).bind()
-            val linkedMediaUserIds = syncEmailLinkedMediaUsers(account, enriched, now).bind()
+            val (account, emailChanged) = upsertOidcAccount(enriched, role, now).bind()
+            // Links only need recomputing when the email or its verification changed; the media user sync
+            // keeps them current otherwise.
+            val linkedMediaUserIds =
+                if (emailChanged) {
+                    warnIfUnverified(account)
+                    emailLinker.relink(account).bind()
+                } else {
+                    accountRepository.findLinkedMediaUserIds(account.id).bind()
+                }
             val loginResult = authService.issueSessionForAccount(account, linkedMediaUserIds).bind()
 
             OidcCallbackResult(
@@ -252,14 +260,26 @@ class OidcAuthService(
             }
         }
 
+    /**
+     * Creates or updates the account for these claims. The second value is true when the account is new or its
+     * email or recorded verification changed, which is when its email links need recomputing.
+     */
     private suspend fun upsertOidcAccount(
         claims: OidcIdTokenClaims,
         role: MiruRole,
         nowMs: Long,
-    ): Either<MiruError, AuthAccountRecord> =
+    ): Either<MiruError, Pair<AuthAccountRecord, Boolean>> =
         either {
             val existing = accountRepository.findByProviderAndSubject(PROVIDER_OIDC, claims.subject).bind()
             val candidateBase = deriveBaseUsername(claims)
+            // With email linking on, userinfo was consulted, so a missing claim means unverified. With it off,
+            // a missing claim stays unknown so that turning linking on later does not unlink anyone.
+            val emailVerified =
+                when {
+                    claims.email == null -> if (authConfig.oidc.autoLinkByEmail) false else null
+                    authConfig.oidc.autoLinkByEmail -> claims.emailVerified == true
+                    else -> claims.emailVerified
+                }
 
             if (existing != null) {
                 ensure(!existing.disabled) {
@@ -268,16 +288,21 @@ class OidcAuthService(
 
                 val targetUsername = resolveUniqueUsername(candidateBase, excludeAccountId = existing.id).bind()
                 val updatedEmail = claims.email ?: existing.email
-                accountRepository
-                    .updateOidcProfile(
-                        id = existing.id,
-                        username = targetUsername,
-                        usernameNormalized = targetUsername.lowercase(),
-                        email = updatedEmail,
-                        role = role.name,
-                        updatedAtMs = nowMs,
-                    ).bind()
-                    ?: existing
+                val updated =
+                    accountRepository
+                        .updateOidcProfile(
+                            id = existing.id,
+                            username = targetUsername,
+                            usernameNormalized = targetUsername.lowercase(),
+                            email = updatedEmail,
+                            emailVerified = emailVerified,
+                            role = role.name,
+                            updatedAtMs = nowMs,
+                        ).bind()
+                        ?: existing
+                val emailChanged =
+                    !existing.email.equals(updated.email, ignoreCase = true) || existing.emailVerified != updated.emailVerified
+                updated to emailChanged
             } else {
                 val uniqueUsername = resolveUniqueUsername(candidateBase, excludeAccountId = null).bind()
                 val record =
@@ -292,64 +317,22 @@ class OidcAuthService(
                         authProvider = PROVIDER_OIDC,
                         externalSubject = claims.subject,
                         mediaUserLinkMode = MediaUserLinkMode.AUTO.name,
+                        emailVerified = emailVerified,
                         createdAtMs = nowMs,
                         updatedAtMs = nowMs,
                     )
-                accountRepository.insert(record).bind()
+                accountRepository.insert(record).bind() to true
             }
         }
 
-    /**
-     * Keeps an [MediaUserLinkMode.AUTO] account's linked media users equal to the media users that share
-     * its verified email, adding new matches and dropping stale ones on every sign-in.
-     *
-     * Without a verified email an AUTO account has no matches, so its links are removed: an address the IdP
-     * never verified must not keep access it may have been given before verification was required.
-     * Links are left untouched when OIDC_AUTO_LINK_BY_EMAIL is off or an admin set them by hand
-     * ([MediaUserLinkMode.MANUAL]).
-     */
-    private suspend fun syncEmailLinkedMediaUsers(
-        account: AuthAccountRecord,
-        claims: OidcIdTokenClaims,
-        nowMs: Long,
-    ): Either<MiruError, Set<String>> =
-        either {
-            val currentLinks = accountRepository.findLinkedMediaUserIds(account.id).bind()
-            val isAuto = MediaUserLinkMode.fromStored(account.mediaUserLinkMode) == MediaUserLinkMode.AUTO
-            if (!authConfig.oidc.autoLinkByEmail || !isAuto) {
-                return@either currentLinks
-            }
-
-            val verifiedEmail = claims.email?.takeIf { it.isNotBlank() && claims.emailVerified == true }
-            if (verifiedEmail == null) {
-                logger.warn(
-                    "SSO account '{}' has no email its identity provider marks as verified, so it is not linked to media users by email",
-                    account.username,
-                )
-            }
-            val matchedIds =
-                if (verifiedEmail == null) {
-                    emptySet()
-                } else {
-                    userRepository
-                        .findAll()
-                        .bind()
-                        .filter { it.email != null && it.email.equals(verifiedEmail, ignoreCase = true) }
-                        .map { it.id }
-                        .toSet()
-                }
-            if (matchedIds == currentLinks) {
-                return@either currentLinks
-            }
-
-            val applied = accountRepository.replaceLinkedMediaUserIdsIfAuto(account.id, matchedIds, nowMs).bind()
-            if (!applied) {
-                // An admin made the account MANUAL while this sign-in was running; their links stand.
-                return@either accountRepository.findLinkedMediaUserIds(account.id).bind()
-            }
-            logger.info("Updated email-linked media users for SSO account '{}' ({} linked)", account.username, matchedIds.size)
-            matchedIds
+    private fun warnIfUnverified(account: AuthAccountRecord) {
+        if (account.emailVerified == false && emailLinker.manages(account)) {
+            logger.warn(
+                "SSO account '{}' has no email its identity provider marks as verified, so it is not linked to media users by email",
+                account.username,
+            )
         }
+    }
 
     private suspend fun resolveUniqueUsername(
         base: String,

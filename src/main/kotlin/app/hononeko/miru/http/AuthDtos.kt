@@ -70,6 +70,7 @@ data class AccountResponse(
     val authProvider: String,
     val linkedMediaUserIds: List<String>,
     val mediaUserLinkMode: MediaUserLinkMode,
+    val emailVerified: Boolean? = null,
     val createdAtMs: Long,
     val updatedAtMs: Long,
 )
@@ -191,6 +192,7 @@ internal fun AccountWithLinks.toResponse(): AccountResponse =
         authProvider = account.authProvider,
         linkedMediaUserIds = linkedMediaUserIds.sorted(),
         mediaUserLinkMode = MediaUserLinkMode.fromStored(account.mediaUserLinkMode),
+        emailVerified = account.emailVerified,
         createdAtMs = account.createdAtMs,
         updatedAtMs = account.updatedAtMs,
     )

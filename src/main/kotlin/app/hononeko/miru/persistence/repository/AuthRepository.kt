@@ -46,6 +46,7 @@ interface AuthAccountRepository {
         username: String,
         usernameNormalized: String,
         email: String?,
+        emailVerified: Boolean?,
         role: String,
         updatedAtMs: Long,
     ): Either<MiruError.PersistenceError, AuthAccountRecord?>
@@ -149,6 +150,7 @@ class ExposedAuthAccountRepository(
                 it[authProvider] = account.authProvider
                 it[externalSubject] = account.externalSubject
                 it[mediaUserLinkMode] = account.mediaUserLinkMode
+                it[emailVerified] = account.emailVerified
                 it[createdAtMs] = account.createdAtMs
                 it[updatedAtMs] = account.updatedAtMs
             }
@@ -194,6 +196,7 @@ class ExposedAuthAccountRepository(
         username: String,
         usernameNormalized: String,
         email: String?,
+        emailVerified: Boolean?,
         role: String,
         updatedAtMs: Long,
     ): Either<MiruError.PersistenceError, AuthAccountRecord?> =
@@ -203,6 +206,7 @@ class ExposedAuthAccountRepository(
                     it[AuthAccountsTable.username] = username
                     it[AuthAccountsTable.usernameNormalized] = usernameNormalized
                     it[AuthAccountsTable.email] = email
+                    it[AuthAccountsTable.emailVerified] = emailVerified
                     it[AuthAccountsTable.role] = role
                     it[AuthAccountsTable.updatedAtMs] = updatedAtMs
                 }
@@ -502,6 +506,7 @@ private fun ResultRow.toAuthAccountRecord(): AuthAccountRecord =
         authProvider = this[AuthAccountsTable.authProvider],
         externalSubject = this[AuthAccountsTable.externalSubject],
         mediaUserLinkMode = this[AuthAccountsTable.mediaUserLinkMode],
+        emailVerified = this[AuthAccountsTable.emailVerified],
         createdAtMs = this[AuthAccountsTable.createdAtMs],
         updatedAtMs = this[AuthAccountsTable.updatedAtMs],
     )

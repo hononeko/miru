@@ -527,9 +527,9 @@ paths:
       operationId: setMediaUserLinkMode
       summary: Set how an account's linked media users are maintained
       description: >-
-        `AUTO` (SSO accounts only) makes every SSO sign-in replace the account's links with the media
-        users that share its verified email; the current links stay until that next sign-in. `MANUAL`
-        keeps the current links as they are.
+        `AUTO` (SSO accounts only) links the account to the media users that share its verified email,
+        right away if its last SSO sign-in recorded whether the email is verified, otherwise at its next
+        sign-in. `MANUAL` keeps the current links as they are.
       security:
         - CookieAuth: []
         - ApiKeyAuth: []
@@ -2320,9 +2320,10 @@ components:
       type: string
       enum: [AUTO, MANUAL]
       description: >-
-        `AUTO`: every SSO sign-in replaces the account's links with the media users that share its
-        verified email (when `OIDC_AUTO_LINK_BY_EMAIL` is on). `MANUAL`: the links are exactly what an
-        admin set. Local accounts are always `MANUAL`.
+        `AUTO`: the account is linked to the media users that share its verified email (when
+        `OIDC_AUTO_LINK_BY_EMAIL` is on), recomputed when a sign-in changes its email or verification and
+        after every media user sync; an account whose email is not verified has no links. `MANUAL`: the
+        links are exactly what an admin set. Local accounts are always `MANUAL`.
 
     AuthSource:
       type: string
@@ -2492,6 +2493,12 @@ components:
             type: string
         mediaUserLinkMode:
           $ref: '#/components/schemas/MediaUserLinkMode'
+        emailVerified:
+          type: boolean
+          nullable: true
+          description: >-
+            Whether the identity provider marked `email` as verified at the account's last SSO sign-in;
+            null when not recorded (local accounts, and SSO accounts that have not signed in since).
         createdAtMs:
           type: integer
           format: int64

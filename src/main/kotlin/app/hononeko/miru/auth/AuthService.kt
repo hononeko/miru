@@ -68,6 +68,7 @@ class AuthService(
     private val clock: () -> Long = { System.currentTimeMillis() },
     private val idGenerator: () -> String = { UUID.randomUUID().toString() },
     private val preferencesRepository: UserPreferencesRepository? = null,
+    private val emailLinker: EmailMediaUserLinker? = null,
 ) {
     private val logger = LoggerFactory.getLogger(AuthService::class.java)
     private val setupMutex = Mutex()
@@ -417,8 +418,9 @@ class AuthService(
         }
 
     /**
-     * Sets how the account's linked media users are maintained. [MediaUserLinkMode.AUTO] applies only to
-     * SSO accounts; their links stay as they are until the account's next SSO sign-in recomputes them.
+     * Sets how the account's linked media users are maintained. [MediaUserLinkMode.AUTO] applies only to SSO
+     * accounts and relinks the account right away from the email its last sign-in recorded; an account with no
+     * recorded verification keeps its links until its next sign-in.
      */
     suspend fun setMediaUserLinkMode(
         accountId: String,
@@ -434,7 +436,12 @@ class AuthService(
             val updated =
                 accountRepository.updateMediaUserLinkMode(accountId, mode.name, clock()).bind()
                     ?: raise(MiruError.NotFound(resource = "Account", id = accountId))
-            val links = accountRepository.findLinkedMediaUserIds(accountId).bind()
+            val links =
+                if (mode == MediaUserLinkMode.AUTO && emailLinker != null) {
+                    emailLinker.relink(updated).bind()
+                } else {
+                    accountRepository.findLinkedMediaUserIds(accountId).bind()
+                }
             AccountWithLinks(account = updated, linkedMediaUserIds = links)
         }
 

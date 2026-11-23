@@ -1211,15 +1211,21 @@
 				</p>
 			{:else if linkTarget.mediaUserLinkMode === 'AUTO'}
 				<p class="rounded-lg border border-border bg-elevated px-3 py-2.5 text-[11px] text-fg-secondary">
-					Linked by email: each SSO sign-in links this account to the Plex users with the same
-					verified email, and removes its links if the identity provider sends no verified email.
+					Linked by email: this account is linked to the Plex users with the same verified email,
+					updated when its sign-in email changes and after each hourly Plex user sync.
+					{#if linkTarget.emailVerified === false}
+						Its identity provider has not marked the email as verified, so it has no email links.
+					{:else if linkTarget.emailVerified == null}
+						Its email is checked at its next SSO sign-in.
+					{/if}
 					Saving a selection here switches it to manual linking.
 				</p>
 			{:else}
 				<div class="flex flex-col gap-2 rounded-lg border border-border bg-elevated px-3 py-2.5">
 					<p class="text-[11px] text-fg-secondary">
-						Linked manually: SSO sign-in leaves these links as they are. Switching to email linking
-						takes effect at this account's next SSO sign-in.
+						Linked manually: Miru leaves these links as they are. Switching to email linking relinks
+						the account right away if its email was checked at its last SSO sign-in, otherwise at its
+						next one.
 					</p>
 					<Button
 						variant="outline"

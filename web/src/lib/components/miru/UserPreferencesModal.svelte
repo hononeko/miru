@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { Monitor, Moon, Sun, LogOut, X } from 'lucide-svelte';
+	import { Monitor, Moon, Sun, LogOut } from 'lucide-svelte';
 	import Badge from '$components/ui/Badge.svelte';
 	import Button from '$components/ui/Button.svelte';
 	import { authStore } from '$stores/auth.svelte';
@@ -165,7 +165,7 @@
 	</div>
 
 	<!-- Account Summary Header -->
-	<div class="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
+	<div class="flex items-start gap-3 border-b border-border px-5 py-4">
 		<div class="flex min-w-0 items-center gap-3">
 			<div
 				class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary font-heading text-sm font-bold text-white"
@@ -192,14 +192,6 @@
 				</p>
 			</div>
 		</div>
-		<button
-			type="button"
-			onclick={handleCancel}
-			aria-label="Close preferences"
-			class="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-lg text-fg-muted hover:bg-elevated hover:text-fg-primary"
-		>
-			<X class="h-4 w-4" />
-		</button>
 	</div>
 
 	<!-- Preferences Form -->

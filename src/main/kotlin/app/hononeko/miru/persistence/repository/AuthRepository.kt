@@ -399,6 +399,7 @@ class ExposedUserPreferencesRepository(
                 it[dateFormat] = preferences.dateFormat
                 it[defaultStatsRange] = preferences.defaultStatsRange
                 it[relativeTimestamps] = preferences.relativeTimestamps
+                it[analyticsMetric] = preferences.analyticsMetric
                 it[updatedAtMs] = preferences.updatedAtMs
             }
             preferences
@@ -452,5 +453,6 @@ private fun ResultRow.toUserPreferencesRecord(): UserPreferencesRecord =
         dateFormat = this[UserPreferencesTable.dateFormat],
         defaultStatsRange = this[UserPreferencesTable.defaultStatsRange],
         relativeTimestamps = this[UserPreferencesTable.relativeTimestamps],
+        analyticsMetric = this[UserPreferencesTable.analyticsMetric],
         updatedAtMs = this[UserPreferencesTable.updatedAtMs],
     )

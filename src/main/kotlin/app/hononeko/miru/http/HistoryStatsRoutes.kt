@@ -59,8 +59,13 @@ fun Route.historyStatsRoutes(
                 val result =
                     either {
                         val principal = call.requireMiruPrincipal().bind()
-                        val range = call.request.queryParameters["range"]
-                        historyAndStatsService.getOverviewStats(principal = principal, rangeRaw = range).bind()
+                        val qp = call.request.queryParameters
+                        historyAndStatsService
+                            .getOverviewStats(
+                                principal = principal,
+                                rangeRaw = qp["range"],
+                                metricRaw = qp["metric"],
+                            ).bind()
                     }
                 call.respondEither(result)
             }
@@ -75,6 +80,7 @@ fun Route.historyStatsRoutes(
                                 principal = principal,
                                 rangeRaw = qp["range"],
                                 userId = qp["userId"],
+                                metricRaw = qp["metric"],
                             ).bind()
                     }
                 call.respondEither(result)
@@ -90,6 +96,7 @@ fun Route.historyStatsRoutes(
                                 principal = principal,
                                 rangeRaw = qp["range"],
                                 userId = qp["userId"],
+                                metricRaw = qp["metric"],
                             ).bind()
                     }
                 call.respondEither(result)
@@ -100,12 +107,13 @@ fun Route.historyStatsRoutes(
                     either {
                         val principal = call.requireMiruPrincipal().bind()
                         val year = call.parameters["year"]
-                        val userId = call.request.queryParameters["userId"]
+                        val qp = call.request.queryParameters
                         historyAndStatsService
                             .getWrappedStats(
                                 principal = principal,
                                 yearRaw = year,
-                                userId = userId,
+                                userId = qp["userId"],
+                                metricRaw = qp["metric"],
                             ).bind()
                     }
                 call.respondEither(result)
@@ -116,12 +124,13 @@ fun Route.historyStatsRoutes(
                     either {
                         val principal = call.requireMiruPrincipal().bind()
                         val userId = call.parameters["id"].orEmpty()
-                        val range = call.request.queryParameters["range"]
+                        val qp = call.request.queryParameters
                         historyAndStatsService
                             .getUserStats(
                                 principal = principal,
                                 userId = userId,
-                                rangeRaw = range,
+                                rangeRaw = qp["range"],
+                                metricRaw = qp["metric"],
                             ).bind()
                     }
                 call.respondEither(result)

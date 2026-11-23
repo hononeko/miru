@@ -8,6 +8,7 @@
 	import { themeStore } from '$stores/theme.svelte';
 	import { sheetDrag } from '$lib/actions/sheetDrag';
 	import type {
+		AnalyticsMetricPreference,
 		DateFormatPreference,
 		StatsRange,
 		ThemePreference,
@@ -22,7 +23,8 @@
 		timeFormat: preferencesStore.prefs.timeFormat,
 		dateFormat: preferencesStore.prefs.dateFormat,
 		defaultStatsRange: preferencesStore.prefs.defaultStatsRange,
-		relativeTimestamps: preferencesStore.prefs.relativeTimestamps
+		relativeTimestamps: preferencesStore.prefs.relativeTimestamps,
+		analyticsMetric: preferencesStore.prefs.analyticsMetric
 	});
 	let previewSampleMs = $state(Date.now());
 	let saveError = $state<string | null>(null);
@@ -48,6 +50,11 @@
 
 	const RANGE_OPTIONS: StatsRange[] = ['7d', '30d', '90d', 'all'];
 
+	const ANALYTICS_METRIC_OPTIONS: { value: AnalyticsMetricPreference; label: string }[] = [
+		{ value: 'plays', label: 'Number of Plays' },
+		{ value: 'duration', label: 'Playback Duration' }
+	];
+
 	const previewText = $derived(formatPreferencePreview(draft, previewSampleMs));
 
 	function syncDraftFromStore() {
@@ -56,7 +63,8 @@
 			timeFormat: preferencesStore.prefs.timeFormat,
 			dateFormat: preferencesStore.prefs.dateFormat,
 			defaultStatsRange: preferencesStore.prefs.defaultStatsRange,
-			relativeTimestamps: preferencesStore.prefs.relativeTimestamps
+			relativeTimestamps: preferencesStore.prefs.relativeTimestamps,
+			analyticsMetric: preferencesStore.prefs.analyticsMetric
 		};
 		previewSampleMs = Date.now();
 		saveError = null;
@@ -329,6 +337,41 @@
 							</button>
 						{/each}
 					</div>
+				</div>
+
+				<div class="flex flex-col gap-1.5">
+					<div class="flex items-center justify-between gap-2">
+						<span class="text-xs font-medium text-fg-secondary">Advanced Analytics Calculation</span>
+						<span class="font-mono text-[11px] text-fg-muted">
+							{draft.analyticsMetric === 'duration' ? 'By watch time' : 'By play count'}
+						</span>
+					</div>
+					<div
+						role="radiogroup"
+						aria-label="Advanced analytics metric"
+						class="grid grid-cols-2 gap-1 rounded-xl border border-border bg-elevated p-1"
+					>
+						{#each ANALYTICS_METRIC_OPTIONS as metricOpt}
+							{@const active = draft.analyticsMetric === metricOpt.value}
+							<button
+								type="button"
+								role="radio"
+								aria-checked={active}
+								onclick={() => (draft.analyticsMetric = metricOpt.value)}
+								class={cn(
+									'cursor-pointer rounded-lg px-2.5 py-1.5 font-heading text-xs font-semibold transition-colors',
+									active
+										? 'border border-cyan/60 bg-cyan-soft text-cyan-hi'
+										: 'border border-transparent text-fg-secondary hover:text-fg-primary'
+								)}
+							>
+								{metricOpt.label}
+							</button>
+						{/each}
+					</div>
+					<p class="text-[11px] text-fg-muted">
+						Controls whether heatmaps, client/codec shares, rankings, and Wrapped peaks are weighted by play count or playback duration
+					</p>
 				</div>
 
 				<div class="flex items-center justify-between gap-3 rounded-xl border border-border bg-elevated px-3.5 py-3">

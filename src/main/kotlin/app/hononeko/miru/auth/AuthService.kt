@@ -515,6 +515,7 @@ class AuthService(
                             dateFormat = validated.dateFormat,
                             defaultStatsRange = validated.defaultStatsRange,
                             relativeTimestamps = validated.relativeTimestamps,
+                            analyticsMetric = validated.analyticsMetric,
                             updatedAtMs = now,
                         )
                     return@either preferencesRepository.upsert(record).bind().toResponse()
@@ -527,6 +528,7 @@ class AuthService(
                 dateFormat = validated.dateFormat,
                 defaultStatsRange = validated.defaultStatsRange,
                 relativeTimestamps = validated.relativeTimestamps,
+                analyticsMetric = validated.analyticsMetric,
                 updatedAtMs = now,
             )
         }
@@ -628,6 +630,7 @@ class AuthService(
             val timeFormat = request.timeFormat.trim()
             val dateFormat = request.dateFormat.trim()
             val defaultStatsRange = request.defaultStatsRange.trim()
+            val analyticsMetric = request.analyticsMetric.trim()
             val errors = linkedMapOf<String, String>()
 
             if (theme !in ALLOWED_THEMES) {
@@ -641,6 +644,9 @@ class AuthService(
             }
             if (defaultStatsRange !in ALLOWED_STATS_RANGES) {
                 errors["defaultStatsRange"] = "must be one of: ${ALLOWED_STATS_RANGES.joinToString(", ")}"
+            }
+            if (analyticsMetric !in ALLOWED_ANALYTICS_METRICS) {
+                errors["analyticsMetric"] = "must be one of: ${ALLOWED_ANALYTICS_METRICS.joinToString(", ")}"
             }
 
             ensure(errors.isEmpty()) {
@@ -656,6 +662,7 @@ class AuthService(
                 dateFormat = dateFormat,
                 defaultStatsRange = defaultStatsRange,
                 relativeTimestamps = request.relativeTimestamps,
+                analyticsMetric = analyticsMetric,
             )
         }
 
@@ -666,6 +673,7 @@ class AuthService(
             dateFormat = DEFAULT_DATE_FORMAT,
             defaultStatsRange = DEFAULT_STATS_RANGE,
             relativeTimestamps = DEFAULT_RELATIVE_TIMESTAMPS,
+            analyticsMetric = DEFAULT_ANALYTICS_METRIC,
             updatedAtMs = null,
         )
 
@@ -691,10 +699,12 @@ class AuthService(
         const val DEFAULT_DATE_FORMAT = "iso"
         const val DEFAULT_STATS_RANGE = "30d"
         const val DEFAULT_RELATIVE_TIMESTAMPS = true
+        const val DEFAULT_ANALYTICS_METRIC = "plays"
         val ALLOWED_THEMES = listOf("system", "dark", "light")
         val ALLOWED_TIME_FORMATS = listOf("24h", "12h")
         val ALLOWED_DATE_FORMATS = listOf("iso", "mdy", "dmy")
         val ALLOWED_STATS_RANGES = listOf("7d", "30d", "90d", "all")
+        val ALLOWED_ANALYTICS_METRICS = listOf("plays", "duration")
         private val USERNAME_REGEX = Regex("^[A-Za-z0-9._-]+$")
     }
 }

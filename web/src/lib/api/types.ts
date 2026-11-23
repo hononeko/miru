@@ -84,3 +84,4 @@ export type StatsRange = UserPreferencesResponse['defaultStatsRange'];
 export type ThemePreference = UserPreferencesResponse['theme'];
 export type TimeFormatPreference = UserPreferencesResponse['timeFormat'];
 export type DateFormatPreference = UserPreferencesResponse['dateFormat'];
+export type AnalyticsMetricPreference = UserPreferencesResponse['analyticsMetric'];

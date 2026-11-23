@@ -1,14 +1,19 @@
 <script lang="ts">
-	import type { ClientBreakdownItemDto, ClientStatsResponse } from '$api/types';
+	import type {
+		AnalyticsMetricPreference,
+		ClientBreakdownItemDto,
+		ClientStatsResponse
+	} from '$api/types';
 	import Badge from '$components/ui/Badge.svelte';
 	import { formatDurationSec } from '$lib/utils';
 
 	type Props = {
 		clientStats: ClientStatsResponse | null;
+		metric?: AnalyticsMetricPreference;
 		loading?: boolean;
 	};
 
-	let { clientStats, loading = false }: Props = $props();
+	let { clientStats, metric = 'plays', loading = false }: Props = $props();
 
 	type SectionGroup = {
 		title: string;
@@ -81,7 +86,7 @@
 									{item.name}
 								</span>
 								<span class="shrink-0 font-mono text-[11px] text-fg-secondary tabular-nums">
-									{item.playCount} · {item.percent.toFixed(1)}%
+									{metric === 'duration' ? formatDurationSec(item.watchDurationSec) : item.playCount} · {item.percent.toFixed(1)}%
 								</span>
 							</div>
 							<div class="h-1.5 w-full overflow-hidden rounded-full bg-subtle">

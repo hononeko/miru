@@ -4,6 +4,7 @@
 	import { ArrowLeft, Calendar, Flame, Repeat, Sparkles } from 'lucide-svelte';
 	import { api, MiruApiError, unwrap } from '$api/client';
 	import type {
+		AnalyticsMetricPreference,
 		StatsRange,
 		UserDetailResponse,
 		UserStatsResponse,
@@ -50,6 +51,9 @@
 	});
 
 	const userId = $derived(page.params.id ?? '');
+	const analyticsMetric = $derived<AnalyticsMetricPreference>(
+		preferencesStore.prefs.analyticsMetric
+	);
 
 	const availableYears = $derived.by(() => {
 		const years = new Set<number>([currentUtcYear, currentUtcYear - 1, currentUtcYear - 2]);
@@ -60,7 +64,11 @@
 		return Array.from(years).sort((a, b) => b - a);
 	});
 
-	async function loadProfile(id: string, selectedRange: StatsRange) {
+	async function loadProfile(
+		id: string,
+		selectedRange: StatsRange,
+		selectedMetric: AnalyticsMetricPreference
+	) {
 		if (!id) return;
 		if (!authStore.isAdmin) {
 			loading = false;
@@ -71,7 +79,9 @@
 		try {
 			const [dRes, sRes] = await Promise.all([
 				api.GET('/api/v1/users/{id}', { params: { path: { id } } }),
-				api.GET('/api/v1/users/{id}/stats', { params: { path: { id }, query: { range: selectedRange } } })
+				api.GET('/api/v1/users/{id}/stats', {
+					params: { path: { id }, query: { range: selectedRange, metric: selectedMetric } }
+				})
 			]);
 			detail = unwrap(dRes);
 			stats = unwrap(sRes);
@@ -82,7 +92,11 @@
 		}
 	}
 
-	async function loadWrapped(id: string, year: number) {
+	async function loadWrapped(
+		id: string,
+		year: number,
+		selectedMetric: AnalyticsMetricPreference
+	) {
 		if (!id || !authStore.isAdmin) return;
 		loadingWrapped = true;
 		try {
@@ -90,7 +104,7 @@
 				await api.GET('/api/v1/stats/wrapped/{year}', {
 					params: {
 						path: { year },
-						query: { userId: id }
+						query: { userId: id, metric: selectedMetric }
 					}
 				})
 			);
@@ -106,12 +120,12 @@
 			void goto('/');
 			return;
 		}
-		void loadProfile(userId, range);
+		void loadProfile(userId, range, analyticsMetric);
 	});
 
 	$effect(() => {
 		if (!authStore.loading && authStore.isAdmin && userId) {
-			void loadWrapped(userId, wrappedYear);
+			void loadWrapped(userId, wrappedYear, analyticsMetric);
 		}
 	});
 
@@ -119,7 +133,7 @@
 		const days = stats?.playsPerDay ?? [];
 		return days.slice(-14).map((d) => ({
 			label: d.date.slice(8, 10),
-			value: d.playCount,
+			value: analyticsMetric === 'duration' ? d.watchDurationSec : d.playCount,
 			tooltip: `${d.date}: ${d.playCount} plays (${formatDurationSec(d.watchDurationSec)})`
 		}));
 	});
@@ -127,7 +141,7 @@
 	const wrappedMonthBars = $derived.by<BarPoint[]>(() => {
 		return (wrapped?.playsByMonth ?? []).map((m) => ({
 			label: m.monthName,
-			value: m.playCount,
+			value: analyticsMetric === 'duration' ? m.watchDurationSec : m.playCount,
 			tooltip: `${m.monthName} ${wrapped?.year ?? wrappedYear}: ${m.playCount} plays (${formatDurationSec(m.watchDurationSec)})`
 		}));
 	});
@@ -135,7 +149,15 @@
 	const peakDay = $derived.by(() => {
 		const days = stats?.playsPerDay ?? [];
 		if (days.length === 0) return null;
-		return days.reduce((best, cur) => (cur.playCount > best.playCount ? cur : best), days[0]);
+		return days.reduce(
+			(best, cur) =>
+				(analyticsMetric === 'duration'
+					? cur.watchDurationSec > best.watchDurationSec
+					: cur.playCount > best.playCount)
+					? cur
+					: best,
+			days[0]
+		);
 	});
 </script>
 
@@ -245,9 +267,9 @@
 					<h2 class="font-heading text-sm font-semibold text-fg-primary">
 						Daily Activity ({range})
 					</h2>
-					{#if peakDay && peakDay.playCount > 0}
+					{#if peakDay && (analyticsMetric === 'duration' ? peakDay.watchDurationSec > 0 : peakDay.playCount > 0)}
 						<span class="font-mono text-[11px] font-medium text-primary-hover">
-							Peak: {peakDay.playCount} plays ({peakDay.date})
+							Peak: {analyticsMetric === 'duration' ? formatDurationSec(peakDay.watchDurationSec) : `${peakDay.playCount} plays`} ({peakDay.date})
 						</span>
 					{/if}
 				</div>
@@ -308,7 +330,7 @@
 								<div class="flex items-center justify-between text-xs">
 									<span class="truncate font-medium text-fg-primary">{plat.platform}</span>
 									<span class="shrink-0 font-mono text-[11px] text-fg-secondary tabular-nums">
-										{plat.playCount} · {plat.percent.toFixed(1)}%
+										{analyticsMetric === 'duration' ? formatDurationSec(plat.watchDurationSec) : plat.playCount} · {plat.percent.toFixed(1)}%
 									</span>
 								</div>
 								<div class="h-1.5 w-full overflow-hidden rounded-full bg-subtle">

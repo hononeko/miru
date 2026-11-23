@@ -1534,6 +1534,14 @@ paths:
             type: string
             enum: [7d, 30d, 90d, 365d, all]
             default: 30d
+        - name: metric
+          in: query
+          required: false
+          description: Whether breakdowns and rankings are calculated by number of plays or playback duration
+          schema:
+            type: string
+            enum: [plays, duration]
+            default: plays
       responses:
         '200':
           description: Aggregated overview playback statistics
@@ -1576,6 +1584,14 @@ paths:
           required: false
           schema:
             type: string
+        - name: metric
+          in: query
+          required: false
+          description: Whether peak activity is ranked by number of plays or playback duration
+          schema:
+            type: string
+            enum: [plays, duration]
+            default: plays
       responses:
         '200':
           description: 7x24 playback heatmap buckets and peak activity slot
@@ -1624,6 +1640,14 @@ paths:
           required: false
           schema:
             type: string
+        - name: metric
+          in: query
+          required: false
+          description: Whether client, codec, and transcode percentages and ordering are calculated by plays or duration
+          schema:
+            type: string
+            enum: [plays, duration]
+            default: plays
       responses:
         '200':
           description: Client, platform, codec, and transcode reason distributions
@@ -1672,6 +1696,14 @@ paths:
           required: false
           schema:
             type: string
+        - name: metric
+          in: query
+          required: false
+          description: Whether annual rankings, peak periods, and percentages are calculated by plays or duration
+          schema:
+            type: string
+            enum: [plays, duration]
+            default: plays
       responses:
         '200':
           description: Annual Wrapped playback analytics summary
@@ -1726,6 +1758,14 @@ paths:
             type: string
             enum: [7d, 30d, 90d, 365d, all]
             default: 30d
+        - name: metric
+          in: query
+          required: false
+          description: Whether user stats rankings and percentages are calculated by plays or duration
+          schema:
+            type: string
+            enum: [plays, duration]
+            default: plays
       responses:
         '200':
           description: User-scoped playback statistics
@@ -2313,7 +2353,7 @@ components:
 
     UserPreferencesResponse:
       type: object
-      required: [theme, timeFormat, dateFormat, defaultStatsRange, relativeTimestamps]
+      required: [theme, timeFormat, dateFormat, defaultStatsRange, relativeTimestamps, analyticsMetric]
       properties:
         theme:
           type: string
@@ -2329,6 +2369,10 @@ components:
           enum: [7d, 30d, 90d, all]
         relativeTimestamps:
           type: boolean
+        analyticsMetric:
+          type: string
+          enum: [plays, duration]
+          default: plays
         updatedAtMs:
           type: integer
           format: int64
@@ -2336,7 +2380,7 @@ components:
 
     UpdateUserPreferencesRequest:
       type: object
-      required: [theme, timeFormat, dateFormat, defaultStatsRange, relativeTimestamps]
+      required: [theme, timeFormat, dateFormat, defaultStatsRange, relativeTimestamps, analyticsMetric]
       properties:
         theme:
           type: string
@@ -2352,6 +2396,10 @@ components:
           enum: [7d, 30d, 90d, all]
         relativeTimestamps:
           type: boolean
+        analyticsMetric:
+          type: string
+          enum: [plays, duration]
+          default: plays
 
     AccountResponse:
       type: object

@@ -8,6 +8,8 @@ import app.hononeko.miru.library.LibrarySyncSummary
 import app.hononeko.miru.persistence.model.LibrarySectionRecord
 import app.hononeko.miru.persistence.model.LibrarySnapshotRecord
 import app.hononeko.miru.persistence.model.MediaItemCacheRecord
+import app.hononeko.miru.persistence.model.StaleMediaReportRecord
+import app.hononeko.miru.persistence.model.StaleMediaSort
 import app.hononeko.miru.persistence.repository.LibraryRepository
 import arrow.core.Either
 import arrow.core.raise.either
@@ -33,8 +35,16 @@ data class LibraryRecentResult(
     val items: List<MediaItemCacheRecord>,
 )
 
+data class LibraryStaleResult(
+    val section: LibrarySectionRecord,
+    val unwatchedDays: Int,
+    val sort: String,
+    val report: StaleMediaReportRecord,
+)
+
 class LibraryQueryService(
     private val libraryRepository: LibraryRepository,
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
     private val logger = LoggerFactory.getLogger(LibraryQueryService::class.java)
 
@@ -146,6 +156,72 @@ class LibraryQueryService(
                 items = items,
             )
         }
+
+    suspend fun getStaleMedia(
+        principal: MiruPrincipal,
+        sectionId: String,
+        serverId: String? = null,
+        unwatchedDays: Int = DEFAULT_STALE_UNWATCHED_DAYS,
+        sortRaw: String? = null,
+        limit: Int = DEFAULT_STALE_LIMIT,
+    ): Either<MiruError, LibraryStaleResult> =
+        either {
+            val errors = linkedMapOf<String, String>()
+            if (unwatchedDays !in 0..MAX_STALE_UNWATCHED_DAYS) {
+                errors["unwatchedDays"] = "must be between 0 and $MAX_STALE_UNWATCHED_DAYS"
+            }
+            if (limit !in 1..MAX_STALE_LIMIT) {
+                errors["limit"] = "must be between 1 and $MAX_STALE_LIMIT"
+            }
+            val parsedSort = parseStaleSort(sortRaw)
+            if (parsedSort == null) {
+                errors["sort"] = "must be one of: size_desc, size_asc, age_desc, age_asc"
+            }
+            ensure(errors.isEmpty()) {
+                MiruError.ValidationError(
+                    message = "Invalid stale media query parameters",
+                    fieldErrors = errors,
+                )
+            }
+            val (sortLabel, sortMode) = parsedSort ?: ("size_desc" to StaleMediaSort.SIZE_DESC)
+            val section = resolveAccessibleSection(principal = principal, sectionId = sectionId, serverId = serverId).bind()
+            val neverPlayedOnly = unwatchedDays == 0
+            val cutoffMs =
+                if (neverPlayedOnly) {
+                    null
+                } else {
+                    clock() - unwatchedDays.toLong() * MILLIS_PER_DAY
+                }
+
+            val report =
+                libraryRepository
+                    .findStaleMedia(
+                        serverId = section.serverId,
+                        sectionKey = section.sectionKey,
+                        unwatchedCutoffMs = cutoffMs,
+                        neverPlayedOnly = neverPlayedOnly,
+                        sort = sortMode,
+                        limit = limit,
+                    ).bind()
+
+            LibraryStaleResult(
+                section = section,
+                unwatchedDays = unwatchedDays,
+                sort = sortLabel,
+                report = report,
+            )
+        }
+
+    private fun parseStaleSort(sortRaw: String?): Pair<String, StaleMediaSort>? {
+        val normalized = sortRaw?.trim()?.takeIf { it.isNotEmpty() }?.lowercase() ?: "size_desc"
+        return when (normalized) {
+            "size_desc" -> "size_desc" to StaleMediaSort.SIZE_DESC
+            "size_asc" -> "size_asc" to StaleMediaSort.SIZE_ASC
+            "age_desc", "oldest", "added_asc" -> "age_desc" to StaleMediaSort.AGE_DESC
+            "age_asc", "newest", "added_desc" -> "age_asc" to StaleMediaSort.AGE_ASC
+            else -> null
+        }
+    }
 
     private suspend fun resolveAccessibleSection(
         principal: MiruPrincipal,
@@ -267,5 +343,10 @@ class LibraryQueryService(
         const val MAX_STATS_LIMIT = 365
         const val DEFAULT_RECENT_LIMIT = 25
         const val MAX_RECENT_LIMIT = 100
+        const val DEFAULT_STALE_UNWATCHED_DAYS = 180
+        const val MAX_STALE_UNWATCHED_DAYS = 36_500
+        const val DEFAULT_STALE_LIMIT = 100
+        const val MAX_STALE_LIMIT = 500
+        private const val MILLIS_PER_DAY = 86_400_000L
     }
 }

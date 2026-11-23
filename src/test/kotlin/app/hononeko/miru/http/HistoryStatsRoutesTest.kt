@@ -415,6 +415,9 @@ class HistoryStatsRoutesTest :
                     client.get("/api/v1/history").status shouldBe HttpStatusCode.Unauthorized
                     client.get("/api/v1/history/hist-1").status shouldBe HttpStatusCode.Unauthorized
                     client.get("/api/v1/stats/overview").status shouldBe HttpStatusCode.Unauthorized
+                    client.get("/api/v1/stats/heatmap").status shouldBe HttpStatusCode.Unauthorized
+                    client.get("/api/v1/stats/clients").status shouldBe HttpStatusCode.Unauthorized
+                    client.get("/api/v1/stats/wrapped/2026").status shouldBe HttpStatusCode.Unauthorized
                     client.get("/api/v1/users/u-alice/stats").status shouldBe HttpStatusCode.Unauthorized
                 }
             }
@@ -824,6 +827,194 @@ class HistoryStatsRoutesTest :
                     val badUserErrors =
                         MiruJson.decodeFromString<ProblemDetails>(badUserRange.bodyAsText()).errors.shouldNotBeNull()
                     badUserErrors shouldContainKey "range"
+
+                    val badHeatmapRange = client.get("/api/v1/stats/heatmap?range=invalid")
+                    badHeatmapRange.status shouldBe HttpStatusCode.BadRequest
+                    MiruJson.decodeFromString<ProblemDetails>(badHeatmapRange.bodyAsText()).errors.shouldNotBeNull() shouldContainKey
+                        "range"
+
+                    val badClientsRange = client.get("/api/v1/stats/clients?range=invalid")
+                    badClientsRange.status shouldBe HttpStatusCode.BadRequest
+                    MiruJson.decodeFromString<ProblemDetails>(badClientsRange.bodyAsText()).errors.shouldNotBeNull() shouldContainKey
+                        "range"
+
+                    val badWrappedYear = client.get("/api/v1/stats/wrapped/not-a-year")
+                    badWrappedYear.status shouldBe HttpStatusCode.BadRequest
+                    MiruJson.decodeFromString<ProblemDetails>(badWrappedYear.bodyAsText()).errors.shouldNotBeNull() shouldContainKey
+                        "year"
+                }
+            }
+        }
+
+        test("computes heatmap, client breakdowns, user completion/binge/rewatched metrics, and annual wrapped stats with RBAC") {
+            createHistoryHarness().use { harness ->
+                val adminLogin = harness.authService.setupInitialAdmin("admin", "Admin-strong-password-123").shouldBeRight()
+                seedUsersAndHistory(harness)
+
+                // Add a rewatch for Alice on Spirited Away (mov-1) so mostRewatched is populated
+                harness.historyRepo
+                    .insert(
+                        historyMovieRecord(
+                            id = "hist-6",
+                            userId = "u-alice",
+                            ratingKey = "mov-1",
+                            title = "Spirited Away",
+                            year = 2001,
+                            thumbPath = "/library/metadata/mov-1/thumb",
+                            watchedDurationSec = 7_500,
+                            pausedDurationSec = 0,
+                            completionPercent = 100.0,
+                            streamTech =
+                                StreamTechRecord(
+                                    streamDecision = "direct_play",
+                                    videoDecision = "directplay",
+                                    audioDecision = "directplay",
+                                    hwTranscode = false,
+                                    videoCodec = "hevc",
+                                    audioCodec = "flac",
+                                    videoResolution = "1080p",
+                                    bandwidthKbps = 12_000,
+                                ),
+                            player =
+                                PlayerRecord(
+                                    playerName = "Living Room Apple TV",
+                                    playerPlatform = "tvOS",
+                                    playerProduct = "Plex for Apple TV",
+                                    playerMachineId = "atv-1",
+                                ),
+                            startedAt = "2026-04-12T18:00:00Z",
+                            stoppedAt = "2026-04-12T20:05:00Z",
+                        ),
+                    ).shouldBeRight()
+
+                val aliceAccount =
+                    harness.authService
+                        .createAccount(
+                            username = "alice-viewer",
+                            password = "Alice-strong-password-123",
+                            role = MiruRole.USER,
+                            linkedMediaUserIds = setOf("u-alice"),
+                        ).shouldBeRight()
+                val aliceKey =
+                    harness.authService
+                        .createApiKey(
+                            accountId = aliceAccount.account.id,
+                            name = "Alice Viewer Key",
+                            role = MiruRole.USER,
+                        ).shouldBeRight()
+
+                testApplication {
+                    setupApp(harness)
+
+                    // 1. Heatmap endpoint (default range = 90d, 365d, RBAC)
+                    val heatmapResp =
+                        client.get("/api/v1/stats/heatmap") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                        }
+                    heatmapResp.status shouldBe HttpStatusCode.OK
+                    val heatmap = MiruJson.decodeFromString<HeatmapStatsResponse>(heatmapResp.bodyAsText())
+                    heatmap.range shouldBe "90d"
+                    heatmap.totalPlays shouldBe 5L
+                    heatmap.cells shouldHaveSize 168
+                    heatmap.maxCellPlays shouldBe 1L
+                    heatmap.peakHour shouldBe 20
+
+                    val heatmap365 =
+                        MiruJson.decodeFromString<HeatmapStatsResponse>(
+                            client
+                                .get("/api/v1/stats/heatmap?range=365d") {
+                                    cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                                }.bodyAsText(),
+                        )
+                    heatmap365.range shouldBe "365d"
+                    heatmap365.totalPlays shouldBe 6L
+
+                    val aliceHeatmap =
+                        MiruJson.decodeFromString<HeatmapStatsResponse>(
+                            client
+                                .get("/api/v1/stats/heatmap?range=90d") {
+                                    header("X-Api-Key", aliceKey.rawKey)
+                                }.bodyAsText(),
+                        )
+                    aliceHeatmap.totalPlays shouldBe 3L
+                    client
+                        .get("/api/v1/stats/heatmap?userId=u-bob") {
+                            header("X-Api-Key", aliceKey.rawKey)
+                        }.status shouldBe HttpStatusCode.Forbidden
+
+                    // 2. Clients & codec breakdown endpoint
+                    val clientsResp =
+                        client.get("/api/v1/stats/clients?range=90d") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                        }
+                    clientsResp.status shouldBe HttpStatusCode.OK
+                    val clients = MiruJson.decodeFromString<ClientStatsResponse>(clientsResp.bodyAsText())
+                    clients.range shouldBe "90d"
+                    clients.totalPlays shouldBe 5L
+                    clients.transcodeOrRemuxPlays shouldBe 2L
+                    clients.players.first().name shouldBe "Plex for Apple TV"
+                    clients.players.first().playCount shouldBe 2L
+                    clients.platforms.first().name shouldBe "tvOS"
+                    clients.videoCodecs.first { it.name == "HEVC" }.playCount shouldBe 3L
+                    clients.audioCodecs.map { it.name }.toSet() shouldBe setOf("AAC", "FLAC", "Unknown")
+                    clients.transcodeReasons.map { it.name to it.playCount } shouldContainExactly
+                        listOf("Audio Transcode" to 1L, "Video Transcode" to 1L)
+
+                    client
+                        .get("/api/v1/stats/clients?userId=u-bob") {
+                            header("X-Api-Key", aliceKey.rawKey)
+                        }.status shouldBe HttpStatusCode.Forbidden
+
+                    // 3. User stats completion, binge streak, and mostRewatched
+                    val aliceUserStats =
+                        MiruJson.decodeFromString<UserStatsResponse>(
+                            client
+                                .get("/api/v1/users/u-alice/stats?range=90d") {
+                                    cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                                }.bodyAsText(),
+                        )
+                    aliceUserStats.totalPlays shouldBe 3L
+                    aliceUserStats.completedPlays shouldBe 3L
+                    aliceUserStats.averageCompletionPercent shouldBe 97.73
+                    aliceUserStats.longestBingeStreakDays shouldBe 3
+                    aliceUserStats.maxDailyPlays shouldBe 1
+                    aliceUserStats.mostRewatched.single().let { item ->
+                        item.ratingKey shouldBe "mov-1"
+                        item.title shouldBe "Spirited Away"
+                        item.playCount shouldBe 2L
+                        item.watchDurationSec shouldBe 14_700L
+                        item.thumbUrl shouldBe "/api/v1/media/mov-1/thumb"
+                    }
+
+                    // 4. Wrapped endpoint
+                    val wrappedResp =
+                        client.get("/api/v1/stats/wrapped/2026?userId=u-alice") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                        }
+                    wrappedResp.status shouldBe HttpStatusCode.OK
+                    val wrapped = MiruJson.decodeFromString<WrappedStatsResponse>(wrappedResp.bodyAsText())
+                    wrapped.year shouldBe 2026
+                    wrapped.userId shouldBe "u-alice"
+                    wrapped.username shouldBe "alice"
+                    wrapped.totalPlays shouldBe 3L
+                    wrapped.completedPlays shouldBe 3L
+                    wrapped.longestBingeStreakDays shouldBe 3
+                    wrapped.activeDaysCount shouldBe 3
+                    wrapped.uniqueMoviesCount shouldBe 1
+                    wrapped.uniqueShowsCount shouldBe 1
+                    wrapped.peakMonth shouldBe "Apr"
+                    wrapped.mostRewatched.single().ratingKey shouldBe "mov-1"
+                    wrapped.playsByMonth shouldHaveSize 12
+                    wrapped.playsByMonth.first { it.month == 4 }.playCount shouldBe 3L
+
+                    client
+                        .get("/api/v1/stats/wrapped/2026?userId=u-bob") {
+                            header("X-Api-Key", aliceKey.rawKey)
+                        }.status shouldBe HttpStatusCode.Forbidden
+                    client
+                        .get("/api/v1/stats/wrapped/2026?userId=u-missing") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                        }.status shouldBe HttpStatusCode.NotFound
                 }
             }
         }

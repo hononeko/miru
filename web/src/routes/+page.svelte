@@ -1,12 +1,21 @@
 <script lang="ts">
 	import { api, MiruApiError, unwrap } from '$api/client';
-	import type { OverviewStatsResponse, PlexConnectionStatus, StatsRange } from '$api/types';
+	import type {
+		ClientStatsResponse,
+		HeatmapRange,
+		HeatmapStatsResponse,
+		OverviewStatsResponse,
+		PlexConnectionStatus,
+		StatsRange
+	} from '$api/types';
 	import Badge from '$components/ui/Badge.svelte';
 	import RangeTabs from '$components/ui/RangeTabs.svelte';
 	import KpiCard from '$components/miru/KpiCard.svelte';
 	import StreamCard from '$components/miru/StreamCard.svelte';
 	import UnlinkedUserEmptyState from '$components/miru/UnlinkedUserEmptyState.svelte';
 	import BarChart, { type BarPoint } from '$components/miru/BarChart.svelte';
+	import ViewingHeatmap from '$components/miru/ViewingHeatmap.svelte';
+	import ClientsCodecsPanel from '$components/miru/ClientsCodecsPanel.svelte';
 	import { authStore } from '$stores/auth.svelte';
 	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
@@ -16,8 +25,12 @@
 
 	let lastDefaultRange = preferencesStore.prefs.defaultStatsRange;
 	let range = $state<StatsRange>(lastDefaultRange);
+	let heatmapRange = $state<HeatmapRange>('90d');
 	let overview = $state<OverviewStatsResponse | null>(null);
+	let heatmap = $state<HeatmapStatsResponse | null>(null);
+	let clientStats = $state<ClientStatsResponse | null>(null);
 	let loadingStats = $state(true);
+	let loadingHeatmap = $state(true);
 	let statsError = $state<string | null>(null);
 	let plexStatus = $state<PlexConnectionStatus | null>(null);
 
@@ -40,6 +53,7 @@
 	async function loadOverview(selectedRange: StatsRange) {
 		if (authStore.isUnlinkedUser) {
 			overview = null;
+			clientStats = null;
 			statsError = null;
 			loadingStats = false;
 			return;
@@ -47,11 +61,16 @@
 		loadingStats = true;
 		statsError = null;
 		try {
-			overview = unwrap(
-				await api.GET('/api/v1/stats/overview', {
+			const [overviewRes, clientsRes] = await Promise.all([
+				api.GET('/api/v1/stats/overview', {
+					params: { query: { range: selectedRange } }
+				}),
+				api.GET('/api/v1/stats/clients', {
 					params: { query: { range: selectedRange } }
 				})
-			);
+			]);
+			overview = unwrap(overviewRes);
+			clientStats = unwrap(clientsRes);
 		} catch (e) {
 			statsError = e instanceof MiruApiError ? e.detail : 'Failed to load overview stats';
 		} finally {
@@ -59,9 +78,34 @@
 		}
 	}
 
+	async function loadHeatmap(selectedHeatmapRange: HeatmapRange) {
+		if (authStore.isUnlinkedUser) {
+			heatmap = null;
+			loadingHeatmap = false;
+			return;
+		}
+		loadingHeatmap = true;
+		try {
+			heatmap = unwrap(
+				await api.GET('/api/v1/stats/heatmap', {
+					params: { query: { range: selectedHeatmapRange } }
+				})
+			);
+		} catch {
+			// Keep previous heatmap state if overview already reports error
+		} finally {
+			loadingHeatmap = false;
+		}
+	}
+
 	$effect(() => {
 		void authStore.isUnlinkedUser;
 		void loadOverview(range);
+	});
+
+	$effect(() => {
+		void authStore.isUnlinkedUser;
+		void loadHeatmap(heatmapRange);
 	});
 
 	const playingCount = $derived(
@@ -366,6 +410,17 @@
 					</div>
 				{/if}
 			</div>
+		</section>
+
+		<!-- Watch Analytics: Viewing Heatmap + Clients, Codecs & Transcode Reasons -->
+		<section class="flex flex-col gap-4" aria-label="Watch analytics">
+			<ViewingHeatmap
+				{heatmap}
+				range={heatmapRange}
+				loading={loadingHeatmap}
+				onchangeRange={(next) => (heatmapRange = next)}
+			/>
+			<ClientsCodecsPanel {clientStats} loading={loadingStats} />
 		</section>
 	{/if}
 	{/if}

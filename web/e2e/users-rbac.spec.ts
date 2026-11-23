@@ -75,6 +75,13 @@ test.describe('Users & RBAC isolation (ADMIN vs scoped USER vs unlinked USER)', 
 		await page.getByRole('link', { name: /Bob Viewer/ }).click();
 		await expect(page).toHaveURL(`${miru.baseUrl}/users/${bobMediaUserId}`);
 		await expect(page.getByRole('heading', { name: 'Bob Viewer' })).toBeVisible();
+		await expect(page.getByText('Avg Completion')).toBeVisible();
+		await expect(page.getByText('Longest Binge Streak')).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Most Rewatched' })).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Year in Review (Wrapped)' })).toBeVisible();
+		await page.getByRole('button', { name: 'Open Wrapped Summary' }).click();
+		await expect(page.getByRole('dialog')).toContainText('Monthly Activity');
+		await page.keyboard.press('Escape');
 		await expect(page.getByRole('heading', { name: 'Recent Plays' })).toBeVisible();
 
 		// Visit /admin as admin

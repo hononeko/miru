@@ -611,6 +611,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/stats/heatmap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Retrieve day-of-week by hour-of-day playback activity heatmap */
+        get: operations["getHeatmapStats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/stats/clients": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Retrieve player, platform, video/audio codec, and transcode reason breakdowns */
+        get: operations["getClientStats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/stats/wrapped/{year}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Retrieve annual Year-in-Review (Wrapped) playback summary */
+        get: operations["getWrappedStats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/users/{id}/stats": {
         parameters: {
             query?: never;
@@ -691,6 +742,23 @@ export interface paths {
         };
         /** Get recently added media items for a library section */
         get: operations["getLibraryRecentlyAdded"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/libraries/{id}/stale": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get stale or unwatched media items for a library section ranked by disk footprint or age */
+        get: operations["getLibraryStaleMedia"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1253,7 +1321,7 @@ export interface components {
         };
         OverviewStatsResponse: {
             /** @enum {string} */
-            range: "7d" | "30d" | "90d" | "all";
+            range: "7d" | "30d" | "90d" | "365d" | "all";
             /** Format: int64 */
             fromMs?: number | null;
             /** Format: int64 */
@@ -1266,21 +1334,126 @@ export interface components {
             topShows: components["schemas"]["TopMediaStatDto"][];
             decisionBreakdown: components["schemas"]["DecisionBreakdownStatDto"];
         };
-        UserStatsResponse: {
-            userId: string;
-            username: string;
-            displayName?: string | null;
+        RewatchedMediaStatDto: {
+            ratingKey: string;
+            mediaType: string;
+            title: string;
+            grandparentTitle?: string | null;
+            /** Format: int64 */
+            playCount: number;
+            /** Format: int64 */
+            watchDurationSec: number;
+            thumbUrl?: string | null;
+        };
+        HeatmapCellDto: {
+            dayOfWeek: number;
+            dayName: string;
+            hour: number;
+            /** Format: int64 */
+            playCount: number;
+            /** Format: int64 */
+            watchDurationSec: number;
+        };
+        HeatmapStatsResponse: {
             /** @enum {string} */
-            range: "7d" | "30d" | "90d" | "all";
+            range: "7d" | "30d" | "90d" | "365d" | "all";
             /** Format: int64 */
             fromMs?: number | null;
             /** Format: int64 */
             totalPlays: number;
             /** Format: int64 */
             totalWatchDurationSec: number;
+            /** Format: int64 */
+            maxCellPlays: number;
+            /** Format: int64 */
+            maxCellWatchDurationSec: number;
+            peakDayName?: string | null;
+            peakHour?: number | null;
+            cells: components["schemas"]["HeatmapCellDto"][];
+        };
+        ClientBreakdownItemDto: {
+            name: string;
+            /** Format: int64 */
+            playCount: number;
+            /** Format: int64 */
+            watchDurationSec: number;
+            /** Format: double */
+            percent: number;
+        };
+        ClientStatsResponse: {
+            /** @enum {string} */
+            range: "7d" | "30d" | "90d" | "365d" | "all";
+            /** Format: int64 */
+            fromMs?: number | null;
+            /** Format: int64 */
+            totalPlays: number;
+            /** Format: int64 */
+            totalWatchDurationSec: number;
+            /** Format: int64 */
+            transcodeOrRemuxPlays: number;
+            players: components["schemas"]["ClientBreakdownItemDto"][];
+            platforms: components["schemas"]["ClientBreakdownItemDto"][];
+            videoCodecs: components["schemas"]["ClientBreakdownItemDto"][];
+            audioCodecs: components["schemas"]["ClientBreakdownItemDto"][];
+            transcodeReasons: components["schemas"]["ClientBreakdownItemDto"][];
+        };
+        WrappedMonthStatDto: {
+            month: number;
+            monthName: string;
+            /** Format: int64 */
+            playCount: number;
+            /** Format: int64 */
+            watchDurationSec: number;
+        };
+        WrappedStatsResponse: {
+            year: number;
+            userId?: string | null;
+            username?: string | null;
+            displayName?: string | null;
+            /** Format: int64 */
+            totalPlays: number;
+            /** Format: int64 */
+            totalWatchDurationSec: number;
+            /** Format: int64 */
+            completedPlays: number;
+            /** Format: double */
+            averageCompletionPercent: number;
+            longestBingeStreakDays: number;
+            activeDaysCount: number;
+            uniqueMoviesCount: number;
+            uniqueShowsCount: number;
+            peakMonth?: string | null;
+            peakDayOfWeek?: string | null;
+            topMovies: components["schemas"]["TopMediaStatDto"][];
+            topShows: components["schemas"]["TopMediaStatDto"][];
+            mostRewatched: components["schemas"]["RewatchedMediaStatDto"][];
+            topPlatforms: components["schemas"]["PlatformStatDto"][];
+            topClients: components["schemas"]["ClientBreakdownItemDto"][];
+            decisionBreakdown: components["schemas"]["DecisionBreakdownStatDto"];
+            playsByMonth: components["schemas"]["WrappedMonthStatDto"][];
+        };
+        UserStatsResponse: {
+            userId: string;
+            username: string;
+            displayName?: string | null;
+            /** @enum {string} */
+            range: "7d" | "30d" | "90d" | "365d" | "all";
+            /** Format: int64 */
+            fromMs?: number | null;
+            /** Format: int64 */
+            totalPlays: number;
+            /** Format: int64 */
+            totalWatchDurationSec: number;
+            /** Format: double */
+            averageCompletionPercent: number;
+            /** Format: int64 */
+            completedPlays: number;
+            longestBingeStreakDays: number;
+            maxDailyPlays: number;
             playsPerDay: components["schemas"]["DailyPlayStatDto"][];
             topMovies: components["schemas"]["TopMediaStatDto"][];
             topShows: components["schemas"]["TopMediaStatDto"][];
+            mostRewatched: components["schemas"]["RewatchedMediaStatDto"][];
             decisionBreakdown: components["schemas"]["DecisionBreakdownStatDto"];
             topPlatforms: components["schemas"]["PlatformStatDto"][];
             libraryBreakdown: components["schemas"]["LibraryBreakdownStatDto"][];
@@ -1353,6 +1526,40 @@ export interface components {
         RecentMediaListResponse: {
             sectionId: string;
             items: components["schemas"]["RecentMediaItemResponse"][];
+        };
+        StaleMediaItemResponse: {
+            ratingKey: string;
+            sectionKey: string;
+            mediaType: string;
+            title: string;
+            parentTitle?: string | null;
+            grandparentTitle?: string | null;
+            year?: number | null;
+            thumbUrl?: string | null;
+            /** Format: int64 */
+            durationMs?: number | null;
+            /** Format: int64 */
+            fileSizeBytes?: number | null;
+            videoResolution?: string | null;
+            videoCodec?: string | null;
+            audioCodec?: string | null;
+            /** Format: int64 */
+            addedAtMs: number;
+            /** Format: int64 */
+            lastPlayedAtMs?: number | null;
+            /** Format: int64 */
+            playCount: number;
+        };
+        StaleMediaListResponse: {
+            sectionId: string;
+            unwatchedDays: number;
+            /** @enum {string} */
+            sort: "size_desc" | "size_asc" | "age_desc" | "age_asc";
+            totalStaleCount: number;
+            /** Format: int64 */
+            totalReclaimableBytes: number;
+            neverPlayedCount: number;
+            items: components["schemas"]["StaleMediaItemResponse"][];
         };
         /** @enum {string} */
         LibrarySyncMode: "FAST" | "DEEP";
@@ -3271,7 +3478,7 @@ export interface operations {
     getOverviewStats: {
         parameters: {
             query?: {
-                range?: "7d" | "30d" | "90d" | "all";
+                range?: "7d" | "30d" | "90d" | "365d" | "all";
             };
             header?: never;
             path?: never;
@@ -3308,10 +3515,170 @@ export interface operations {
             };
         };
     };
+    getHeatmapStats: {
+        parameters: {
+            query?: {
+                range?: "7d" | "30d" | "90d" | "365d" | "all";
+                userId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 7x24 playback heatmap buckets and peak activity slot */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HeatmapStatsResponse"];
+                };
+            };
+            /** @description Invalid range parameter */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Forbidden access to target media user */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    getClientStats: {
+        parameters: {
+            query?: {
+                range?: "7d" | "30d" | "90d" | "365d" | "all";
+                userId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Client, platform, codec, and transcode reason distributions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClientStatsResponse"];
+                };
+            };
+            /** @description Invalid range parameter */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Forbidden access to target media user */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    getWrappedStats: {
+        parameters: {
+            query?: {
+                userId?: string;
+            };
+            header?: never;
+            path: {
+                year: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Annual Wrapped playback analytics summary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WrappedStatsResponse"];
+                };
+            };
+            /** @description Invalid year parameter */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Forbidden access to target media user */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Media user not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
     getUserStats: {
         parameters: {
             query?: {
-                range?: "7d" | "30d" | "90d" | "all";
+                range?: "7d" | "30d" | "90d" | "365d" | "all";
             };
             header?: never;
             path: {
@@ -3561,6 +3928,79 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RecentMediaListResponse"];
+                };
+            };
+            /** @description Invalid query parameters */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Access to the requested library section is forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Library section not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Ambiguous section key across multiple servers */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    getLibraryStaleMedia: {
+        parameters: {
+            query?: {
+                serverId?: string;
+                /** @description Minimum days since last playback (use 0 for never-played items only) */
+                unwatchedDays?: number;
+                sort?: "size_desc" | "size_asc" | "age_desc" | "age_asc";
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Stale or unwatched media hygiene report for the section */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StaleMediaListResponse"];
                 };
             };
             /** @description Invalid query parameters */

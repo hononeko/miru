@@ -169,6 +169,15 @@ internal fun ResultRow.toPlaybackHistoryStatsRow(): PlaybackHistoryStatsRow =
         playerPlatform = this[PlaybackHistoryTable.playerPlatform],
         playerProduct = this[PlaybackHistoryTable.playerProduct],
         stoppedAtMs = this[PlaybackHistoryTable.stoppedAtMs],
+        completionPercent = this[PlaybackHistoryTable.completionPercent],
+        isWatched = this[PlaybackHistoryTable.isWatched],
+        videoDecision = this[PlaybackHistoryTable.videoDecision],
+        audioDecision = this[PlaybackHistoryTable.audioDecision],
+        videoCodec = this[PlaybackHistoryTable.videoCodec],
+        audioCodec = this[PlaybackHistoryTable.audioCodec],
+        videoResolution = this[PlaybackHistoryTable.videoResolution],
+        playerName = this[PlaybackHistoryTable.playerName],
+        startedAtMs = this[PlaybackHistoryTable.startedAtMs],
     )
 
 internal fun ResultRow.toLibrarySectionRecord(): LibrarySectionRecord =

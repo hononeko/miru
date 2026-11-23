@@ -65,6 +65,52 @@ fun Route.historyStatsRoutes(
                 call.respondEither(result)
             }
 
+            get("/stats/heatmap") {
+                val result =
+                    either {
+                        val principal = call.requireMiruPrincipal().bind()
+                        val qp = call.request.queryParameters
+                        historyAndStatsService
+                            .getHeatmapStats(
+                                principal = principal,
+                                rangeRaw = qp["range"],
+                                userId = qp["userId"],
+                            ).bind()
+                    }
+                call.respondEither(result)
+            }
+
+            get("/stats/clients") {
+                val result =
+                    either {
+                        val principal = call.requireMiruPrincipal().bind()
+                        val qp = call.request.queryParameters
+                        historyAndStatsService
+                            .getClientStats(
+                                principal = principal,
+                                rangeRaw = qp["range"],
+                                userId = qp["userId"],
+                            ).bind()
+                    }
+                call.respondEither(result)
+            }
+
+            get("/stats/wrapped/{year}") {
+                val result =
+                    either {
+                        val principal = call.requireMiruPrincipal().bind()
+                        val year = call.parameters["year"]
+                        val userId = call.request.queryParameters["userId"]
+                        historyAndStatsService
+                            .getWrappedStats(
+                                principal = principal,
+                                yearRaw = year,
+                                userId = userId,
+                            ).bind()
+                    }
+                call.respondEither(result)
+            }
+
             get("/users/{id}/stats") {
                 val result =
                     either {

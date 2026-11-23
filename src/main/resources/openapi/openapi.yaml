@@ -1532,7 +1532,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [7d, 30d, 90d, all]
+            enum: [7d, 30d, 90d, 365d, all]
             default: 30d
       responses:
         '200':
@@ -1549,6 +1549,156 @@ paths:
                 $ref: '#/components/schemas/ProblemDetails'
         '401':
           description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/stats/heatmap:
+    get:
+      tags: [Stats]
+      operationId: getHeatmapStats
+      summary: Retrieve day-of-week by hour-of-day playback activity heatmap
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: range
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [7d, 30d, 90d, 365d, all]
+            default: 90d
+        - name: userId
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 7x24 playback heatmap buckets and peak activity slot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HeatmapStatsResponse'
+        '400':
+          description: Invalid range parameter
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden access to target media user
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/stats/clients:
+    get:
+      tags: [Stats]
+      operationId: getClientStats
+      summary: Retrieve player, platform, video/audio codec, and transcode reason breakdowns
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: range
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [7d, 30d, 90d, 365d, all]
+            default: 30d
+        - name: userId
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Client, platform, codec, and transcode reason distributions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientStatsResponse'
+        '400':
+          description: Invalid range parameter
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden access to target media user
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/stats/wrapped/{year}:
+    get:
+      tags: [Stats]
+      operationId: getWrappedStats
+      summary: Retrieve annual Year-in-Review (Wrapped) playback summary
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: year
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1970
+            maximum: 2100
+        - name: userId
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Annual Wrapped playback analytics summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WrappedStatsResponse'
+        '400':
+          description: Invalid year parameter
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden access to target media user
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Media user not found
           content:
             application/problem+json:
               schema:
@@ -1574,7 +1724,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [7d, 30d, 90d, all]
+            enum: [7d, 30d, 90d, 365d, all]
             default: 30d
       responses:
         '200':
@@ -1813,6 +1963,88 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RecentMediaListResponse'
+        '400':
+          description: Invalid query parameters
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Access to the requested library section is forbidden
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Library section not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Ambiguous section key across multiple servers
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/libraries/{id}/stale:
+    get:
+      tags: [Libraries]
+      operationId: getLibraryStaleMedia
+      summary: Get stale or unwatched media items for a library section ranked by disk footprint or age
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: serverId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: unwatchedDays
+          in: query
+          required: false
+          description: Minimum days since last playback (use 0 for never-played items only)
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 36500
+            default: 180
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [size_desc, size_asc, age_desc, age_asc]
+            default: size_desc
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+      responses:
+        '200':
+          description: Stale or unwatched media hygiene report for the section
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StaleMediaListResponse'
         '400':
           description: Invalid query parameters
           content:
@@ -3125,7 +3357,7 @@ components:
       properties:
         range:
           type: string
-          enum: [7d, 30d, 90d, all]
+          enum: [7d, 30d, 90d, 365d, all]
         fromMs:
           type: integer
           format: int64
@@ -3153,6 +3385,257 @@ components:
         decisionBreakdown:
           $ref: '#/components/schemas/DecisionBreakdownStatDto'
 
+    RewatchedMediaStatDto:
+      type: object
+      required: [ratingKey, mediaType, title, playCount, watchDurationSec]
+      properties:
+        ratingKey:
+          type: string
+        mediaType:
+          type: string
+        title:
+          type: string
+        grandparentTitle:
+          type: string
+          nullable: true
+        playCount:
+          type: integer
+          format: int64
+        watchDurationSec:
+          type: integer
+          format: int64
+        thumbUrl:
+          type: string
+          nullable: true
+
+    HeatmapCellDto:
+      type: object
+      required: [dayOfWeek, dayName, hour, playCount, watchDurationSec]
+      properties:
+        dayOfWeek:
+          type: integer
+          minimum: 0
+          maximum: 6
+        dayName:
+          type: string
+        hour:
+          type: integer
+          minimum: 0
+          maximum: 23
+        playCount:
+          type: integer
+          format: int64
+        watchDurationSec:
+          type: integer
+          format: int64
+
+    HeatmapStatsResponse:
+      type: object
+      required:
+        - range
+        - totalPlays
+        - totalWatchDurationSec
+        - maxCellPlays
+        - maxCellWatchDurationSec
+        - cells
+      properties:
+        range:
+          type: string
+          enum: [7d, 30d, 90d, 365d, all]
+        fromMs:
+          type: integer
+          format: int64
+          nullable: true
+        totalPlays:
+          type: integer
+          format: int64
+        totalWatchDurationSec:
+          type: integer
+          format: int64
+        maxCellPlays:
+          type: integer
+          format: int64
+        maxCellWatchDurationSec:
+          type: integer
+          format: int64
+        peakDayName:
+          type: string
+          nullable: true
+        peakHour:
+          type: integer
+          nullable: true
+        cells:
+          type: array
+          items:
+            $ref: '#/components/schemas/HeatmapCellDto'
+
+    ClientBreakdownItemDto:
+      type: object
+      required: [name, playCount, watchDurationSec, percent]
+      properties:
+        name:
+          type: string
+        playCount:
+          type: integer
+          format: int64
+        watchDurationSec:
+          type: integer
+          format: int64
+        percent:
+          type: number
+          format: double
+
+    ClientStatsResponse:
+      type: object
+      required:
+        - range
+        - totalPlays
+        - totalWatchDurationSec
+        - transcodeOrRemuxPlays
+        - players
+        - platforms
+        - videoCodecs
+        - audioCodecs
+        - transcodeReasons
+      properties:
+        range:
+          type: string
+          enum: [7d, 30d, 90d, 365d, all]
+        fromMs:
+          type: integer
+          format: int64
+          nullable: true
+        totalPlays:
+          type: integer
+          format: int64
+        totalWatchDurationSec:
+          type: integer
+          format: int64
+        transcodeOrRemuxPlays:
+          type: integer
+          format: int64
+        players:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClientBreakdownItemDto'
+        platforms:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClientBreakdownItemDto'
+        videoCodecs:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClientBreakdownItemDto'
+        audioCodecs:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClientBreakdownItemDto'
+        transcodeReasons:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClientBreakdownItemDto'
+
+    WrappedMonthStatDto:
+      type: object
+      required: [month, monthName, playCount, watchDurationSec]
+      properties:
+        month:
+          type: integer
+          minimum: 1
+          maximum: 12
+        monthName:
+          type: string
+        playCount:
+          type: integer
+          format: int64
+        watchDurationSec:
+          type: integer
+          format: int64
+
+    WrappedStatsResponse:
+      type: object
+      required:
+        - year
+        - totalPlays
+        - totalWatchDurationSec
+        - completedPlays
+        - averageCompletionPercent
+        - longestBingeStreakDays
+        - activeDaysCount
+        - uniqueMoviesCount
+        - uniqueShowsCount
+        - topMovies
+        - topShows
+        - mostRewatched
+        - topPlatforms
+        - topClients
+        - decisionBreakdown
+        - playsByMonth
+      properties:
+        year:
+          type: integer
+        userId:
+          type: string
+          nullable: true
+        username:
+          type: string
+          nullable: true
+        displayName:
+          type: string
+          nullable: true
+        totalPlays:
+          type: integer
+          format: int64
+        totalWatchDurationSec:
+          type: integer
+          format: int64
+        completedPlays:
+          type: integer
+          format: int64
+        averageCompletionPercent:
+          type: number
+          format: double
+        longestBingeStreakDays:
+          type: integer
+        activeDaysCount:
+          type: integer
+        uniqueMoviesCount:
+          type: integer
+        uniqueShowsCount:
+          type: integer
+        peakMonth:
+          type: string
+          nullable: true
+        peakDayOfWeek:
+          type: string
+          nullable: true
+        topMovies:
+          type: array
+          items:
+            $ref: '#/components/schemas/TopMediaStatDto'
+        topShows:
+          type: array
+          items:
+            $ref: '#/components/schemas/TopMediaStatDto'
+        mostRewatched:
+          type: array
+          items:
+            $ref: '#/components/schemas/RewatchedMediaStatDto'
+        topPlatforms:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlatformStatDto'
+        topClients:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClientBreakdownItemDto'
+        decisionBreakdown:
+          $ref: '#/components/schemas/DecisionBreakdownStatDto'
+        playsByMonth:
+          type: array
+          items:
+            $ref: '#/components/schemas/WrappedMonthStatDto'
+
     UserStatsResponse:
       type: object
       required:
@@ -3161,9 +3644,14 @@ components:
         - range
         - totalPlays
         - totalWatchDurationSec
+        - averageCompletionPercent
+        - completedPlays
+        - longestBingeStreakDays
+        - maxDailyPlays
         - playsPerDay
         - topMovies
         - topShows
+        - mostRewatched
         - decisionBreakdown
         - topPlatforms
         - libraryBreakdown
@@ -3177,7 +3665,7 @@ components:
           nullable: true
         range:
           type: string
-          enum: [7d, 30d, 90d, all]
+          enum: [7d, 30d, 90d, 365d, all]
         fromMs:
           type: integer
           format: int64
@@ -3188,6 +3676,16 @@ components:
         totalWatchDurationSec:
           type: integer
           format: int64
+        averageCompletionPercent:
+          type: number
+          format: double
+        completedPlays:
+          type: integer
+          format: int64
+        longestBingeStreakDays:
+          type: integer
+        maxDailyPlays:
+          type: integer
         playsPerDay:
           type: array
           items:
@@ -3200,6 +3698,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/TopMediaStatDto'
+        mostRewatched:
+          type: array
+          items:
+            $ref: '#/components/schemas/RewatchedMediaStatDto'
         decisionBreakdown:
           $ref: '#/components/schemas/DecisionBreakdownStatDto'
         topPlatforms:
@@ -3354,6 +3856,88 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/RecentMediaItemResponse'
+
+    StaleMediaItemResponse:
+      type: object
+      required: [ratingKey, sectionKey, mediaType, title, addedAtMs, playCount]
+      properties:
+        ratingKey:
+          type: string
+        sectionKey:
+          type: string
+        mediaType:
+          type: string
+        title:
+          type: string
+        parentTitle:
+          type: string
+          nullable: true
+        grandparentTitle:
+          type: string
+          nullable: true
+        year:
+          type: integer
+          nullable: true
+        thumbUrl:
+          type: string
+          nullable: true
+        durationMs:
+          type: integer
+          format: int64
+          nullable: true
+        fileSizeBytes:
+          type: integer
+          format: int64
+          nullable: true
+        videoResolution:
+          type: string
+          nullable: true
+        videoCodec:
+          type: string
+          nullable: true
+        audioCodec:
+          type: string
+          nullable: true
+        addedAtMs:
+          type: integer
+          format: int64
+        lastPlayedAtMs:
+          type: integer
+          format: int64
+          nullable: true
+        playCount:
+          type: integer
+          format: int64
+
+    StaleMediaListResponse:
+      type: object
+      required:
+        - sectionId
+        - unwatchedDays
+        - sort
+        - totalStaleCount
+        - totalReclaimableBytes
+        - neverPlayedCount
+        - items
+      properties:
+        sectionId:
+          type: string
+        unwatchedDays:
+          type: integer
+        sort:
+          type: string
+          enum: [size_desc, size_asc, age_desc, age_asc]
+        totalStaleCount:
+          type: integer
+        totalReclaimableBytes:
+          type: integer
+          format: int64
+        neverPlayedCount:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/StaleMediaItemResponse'
 
     LibrarySyncMode:
       type: string

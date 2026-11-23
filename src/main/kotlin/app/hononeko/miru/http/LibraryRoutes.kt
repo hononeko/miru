@@ -27,82 +27,7 @@ fun Route.libraryRoutes(
 ) {
     route("/api/v1/libraries") {
         authenticated(authService = authService, authMode = authMode) {
-            get {
-                val serverId = call.request.queryParameters["serverId"]
-                val result =
-                    either {
-                        val principal = call.requireMiruPrincipal().bind()
-                        val sections =
-                            libraryQueryService
-                                .listLibraries(principal = principal, serverId = serverId)
-                                .bind()
-                        LibraryListResponse(libraries = sections.map { it.toResponse() })
-                    }
-                call.respondEither(result)
-            }
-
-            get("/{id}") {
-                val sectionId = call.parameters["id"].orEmpty()
-                val serverId = call.request.queryParameters["serverId"]
-                val result =
-                    either {
-                        val principal = call.requireMiruPrincipal().bind()
-                        libraryQueryService
-                            .getLibrarySection(
-                                principal = principal,
-                                sectionId = sectionId,
-                                serverId = serverId,
-                            ).bind()
-                            .toResponse()
-                    }
-                call.respondEither(result)
-            }
-
-            get("/{id}/stats") {
-                val sectionId = call.parameters["id"].orEmpty()
-                val query = call.request.queryParameters
-                val result =
-                    either {
-                        val principal = call.requireMiruPrincipal().bind()
-                        val fromMs = parseOptionalLongParam(query, "from").bind()
-                        val toMs = parseOptionalLongParam(query, "to").bind()
-                        val limit =
-                            parseOptionalIntParam(query, "limit", LibraryQueryService.DEFAULT_STATS_LIMIT).bind()
-                        val serverId = query["serverId"]
-                        libraryQueryService
-                            .getLibraryStats(
-                                principal = principal,
-                                sectionId = sectionId,
-                                serverId = serverId,
-                                fromMs = fromMs,
-                                toMs = toMs,
-                                limit = limit,
-                            ).bind()
-                            .toResponse()
-                    }
-                call.respondEither(result)
-            }
-
-            get("/{id}/recent") {
-                val sectionId = call.parameters["id"].orEmpty()
-                val query = call.request.queryParameters
-                val result =
-                    either {
-                        val principal = call.requireMiruPrincipal().bind()
-                        val limit =
-                            parseOptionalIntParam(query, "limit", LibraryQueryService.DEFAULT_RECENT_LIMIT).bind()
-                        val serverId = query["serverId"]
-                        libraryQueryService
-                            .getRecentlyAdded(
-                                principal = principal,
-                                sectionId = sectionId,
-                                serverId = serverId,
-                                limit = limit,
-                            ).bind()
-                            .toResponse()
-                    }
-                call.respondEither(result)
-            }
+            registerLibraryReadRoutes(libraryQueryService)
         }
 
         if (librarySyncTrigger != null) {
@@ -119,6 +44,115 @@ fun Route.libraryRoutes(
                 }
             }
         }
+    }
+}
+
+private fun Route.registerLibraryReadRoutes(libraryQueryService: LibraryQueryService) {
+    get {
+        val serverId = call.request.queryParameters["serverId"]
+        val result =
+            either {
+                val principal = call.requireMiruPrincipal().bind()
+                val sections =
+                    libraryQueryService
+                        .listLibraries(principal = principal, serverId = serverId)
+                        .bind()
+                LibraryListResponse(libraries = sections.map { it.toResponse() })
+            }
+        call.respondEither(result)
+    }
+
+    get("/{id}") {
+        val sectionId = call.parameters["id"].orEmpty()
+        val serverId = call.request.queryParameters["serverId"]
+        val result =
+            either {
+                val principal = call.requireMiruPrincipal().bind()
+                libraryQueryService
+                    .getLibrarySection(
+                        principal = principal,
+                        sectionId = sectionId,
+                        serverId = serverId,
+                    ).bind()
+                    .toResponse()
+            }
+        call.respondEither(result)
+    }
+
+    get("/{id}/stats") {
+        val sectionId = call.parameters["id"].orEmpty()
+        val query = call.request.queryParameters
+        val result =
+            either {
+                val principal = call.requireMiruPrincipal().bind()
+                val fromMs = parseOptionalLongParam(query, "from").bind()
+                val toMs = parseOptionalLongParam(query, "to").bind()
+                val limit =
+                    parseOptionalIntParam(query, "limit", LibraryQueryService.DEFAULT_STATS_LIMIT).bind()
+                val serverId = query["serverId"]
+                libraryQueryService
+                    .getLibraryStats(
+                        principal = principal,
+                        sectionId = sectionId,
+                        serverId = serverId,
+                        fromMs = fromMs,
+                        toMs = toMs,
+                        limit = limit,
+                    ).bind()
+                    .toResponse()
+            }
+        call.respondEither(result)
+    }
+
+    get("/{id}/recent") {
+        val sectionId = call.parameters["id"].orEmpty()
+        val query = call.request.queryParameters
+        val result =
+            either {
+                val principal = call.requireMiruPrincipal().bind()
+                val limit =
+                    parseOptionalIntParam(query, "limit", LibraryQueryService.DEFAULT_RECENT_LIMIT).bind()
+                val serverId = query["serverId"]
+                libraryQueryService
+                    .getRecentlyAdded(
+                        principal = principal,
+                        sectionId = sectionId,
+                        serverId = serverId,
+                        limit = limit,
+                    ).bind()
+                    .toResponse()
+            }
+        call.respondEither(result)
+    }
+
+    get("/{id}/stale") {
+        val sectionId = call.parameters["id"].orEmpty()
+        val query = call.request.queryParameters
+        val result =
+            either {
+                val principal = call.requireMiruPrincipal().bind()
+                val unwatchedDays =
+                    parseOptionalIntParam(
+                        query,
+                        "unwatchedDays",
+                        LibraryQueryService.DEFAULT_STALE_UNWATCHED_DAYS,
+                    ).bind()
+                val limit =
+                    parseOptionalIntParam(query, "limit", LibraryQueryService.DEFAULT_STALE_LIMIT).bind()
+                val sort = query["sort"]
+                val serverId = query["serverId"]
+                libraryQueryService
+                    .getStaleMedia(
+                        principal = principal,
+                        sectionId = sectionId,
+                        serverId = serverId,
+                        unwatchedDays = unwatchedDays,
+                        sortRaw = sort,
+                        limit = limit,
+                    ).bind()
+                    .toResponse()
+            }
+        call.respondEither(result)
     }
 }
 

@@ -153,6 +153,94 @@ data class LibraryBreakdownStatDto(
 )
 
 @Serializable
+data class RewatchedMediaStatDto(
+    val ratingKey: String,
+    val mediaType: String,
+    val title: String,
+    val grandparentTitle: String? = null,
+    val playCount: Long,
+    val watchDurationSec: Long,
+    val thumbUrl: String? = null,
+)
+
+@Serializable
+data class HeatmapCellDto(
+    val dayOfWeek: Int,
+    val dayName: String,
+    val hour: Int,
+    val playCount: Long,
+    val watchDurationSec: Long,
+)
+
+@Serializable
+data class HeatmapStatsResponse(
+    val range: String,
+    val fromMs: Long? = null,
+    val totalPlays: Long,
+    val totalWatchDurationSec: Long,
+    val maxCellPlays: Long,
+    val maxCellWatchDurationSec: Long,
+    val peakDayName: String? = null,
+    val peakHour: Int? = null,
+    val cells: List<HeatmapCellDto>,
+)
+
+@Serializable
+data class ClientBreakdownItemDto(
+    val name: String,
+    val playCount: Long,
+    val watchDurationSec: Long,
+    val percent: Double,
+)
+
+@Serializable
+data class ClientStatsResponse(
+    val range: String,
+    val fromMs: Long? = null,
+    val totalPlays: Long,
+    val totalWatchDurationSec: Long,
+    val transcodeOrRemuxPlays: Long,
+    val players: List<ClientBreakdownItemDto>,
+    val platforms: List<ClientBreakdownItemDto>,
+    val videoCodecs: List<ClientBreakdownItemDto>,
+    val audioCodecs: List<ClientBreakdownItemDto>,
+    val transcodeReasons: List<ClientBreakdownItemDto>,
+)
+
+@Serializable
+data class WrappedMonthStatDto(
+    val month: Int,
+    val monthName: String,
+    val playCount: Long,
+    val watchDurationSec: Long,
+)
+
+@Serializable
+data class WrappedStatsResponse(
+    val year: Int,
+    val userId: String? = null,
+    val username: String? = null,
+    val displayName: String? = null,
+    val totalPlays: Long,
+    val totalWatchDurationSec: Long,
+    val completedPlays: Long,
+    val averageCompletionPercent: Double,
+    val longestBingeStreakDays: Int,
+    val activeDaysCount: Int,
+    val uniqueMoviesCount: Int,
+    val uniqueShowsCount: Int,
+    val peakMonth: String? = null,
+    val peakDayOfWeek: String? = null,
+    val topMovies: List<TopMediaStatDto>,
+    val topShows: List<TopMediaStatDto>,
+    val mostRewatched: List<RewatchedMediaStatDto>,
+    val topPlatforms: List<PlatformStatDto>,
+    val topClients: List<ClientBreakdownItemDto>,
+    val decisionBreakdown: DecisionBreakdownStatDto,
+    val playsByMonth: List<WrappedMonthStatDto>,
+)
+
+@Serializable
 data class OverviewStatsResponse(
     val range: String,
     val fromMs: Long? = null,
@@ -174,9 +262,14 @@ data class UserStatsResponse(
     val fromMs: Long? = null,
     val totalPlays: Long,
     val totalWatchDurationSec: Long,
+    val averageCompletionPercent: Double = 0.0,
+    val completedPlays: Long = 0L,
+    val longestBingeStreakDays: Int = 0,
+    val maxDailyPlays: Int = 0,
     val playsPerDay: List<DailyPlayStatDto>,
     val topMovies: List<TopMediaStatDto>,
     val topShows: List<TopMediaStatDto>,
+    val mostRewatched: List<RewatchedMediaStatDto> = emptyList(),
     val decisionBreakdown: DecisionBreakdownStatDto,
     val topPlatforms: List<PlatformStatDto>,
     val libraryBreakdown: List<LibraryBreakdownStatDto>,

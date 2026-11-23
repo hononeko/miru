@@ -92,6 +92,14 @@ test.describe('Libraries browsing, admin-triggered deep sync & media details', (
 		await expect(mediaDialog.getByRole('heading', { name: 'Season Details' })).toBeVisible();
 		await expect(mediaDialog).toContainText('Severance');
 		await mediaDialog.getByRole('button', { name: 'Close', exact: true }).click();
+
+		// Switch to Hygiene / Stale Media tab and verify threshold & sort controls
+		await page.getByRole('button', { name: 'Hygiene / Stale Media' }).click();
+		await expect(page.getByText('Reclaimable Storage')).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Stale & Unwatched Media · TV Shows' })).toBeVisible();
+		await page.getByRole('group', { name: 'Unwatched threshold' }).getByRole('button', { name: 'Never played' }).click();
+		await page.getByRole('group', { name: 'Stale media sort' }).getByRole('button', { name: 'Oldest first' }).click();
+		await expect(page.getByRole('button', { name: /Half Loop/ })).toBeVisible();
 	});
 
 	test('non-admin USER sees only shared Plex libraries, handles unshared /403 routes, and updates on revocation', async ({ page }) => {

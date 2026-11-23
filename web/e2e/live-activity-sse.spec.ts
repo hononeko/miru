@@ -135,5 +135,13 @@ test.describe('Live Activity SSE, stream lifecycle, KPI strip & Top Watched rang
 		await expect(topWatchedCard.getByRole('heading', { name: 'Top Watched (all)' })).toBeVisible();
 		await expect(topWatchedCard).toContainText('Severance');
 		await expect(kpiSection).toContainText('Direct Play (all)');
+
+		// 6. Viewing Heatmap & Clients/Codecs/Transcode analytics on Live page
+		await expect(page.getByRole('heading', { name: 'Viewing Heatmap (90d)' })).toBeVisible();
+		const heatmapRangeGroup = page.getByRole('group', { name: 'Heatmap time range' });
+		await heatmapRangeGroup.getByRole('button', { name: '365d' }).click();
+		await expect(page.getByRole('heading', { name: 'Viewing Heatmap (365d)' })).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Top Players & Apps' })).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Transcode & Remux Reasons' })).toBeVisible();
 	});
 });

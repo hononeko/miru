@@ -3,6 +3,7 @@ package app.hononeko.miru.http
 import app.hononeko.miru.auth.AccountWithLinks
 import app.hononeko.miru.auth.AuthProvidersInfo
 import app.hononeko.miru.auth.AuthSource
+import app.hononeko.miru.auth.MediaUserLinkMode
 import app.hononeko.miru.auth.MiruPrincipal
 import app.hononeko.miru.auth.MiruRole
 import app.hononeko.miru.persistence.model.ApiKeyRecord
@@ -68,6 +69,7 @@ data class AccountResponse(
     val disabled: Boolean,
     val authProvider: String,
     val linkedMediaUserIds: List<String>,
+    val mediaUserLinkMode: MediaUserLinkMode,
     val createdAtMs: Long,
     val updatedAtMs: Long,
 )
@@ -92,6 +94,11 @@ data class CreateAccountRequest(
 @Serializable
 data class SetLinkedMediaUsersRequest(
     val mediaUserIds: Set<String>,
+)
+
+@Serializable
+data class SetMediaUserLinkModeRequest(
+    val mode: MediaUserLinkMode,
 )
 
 @Serializable
@@ -182,6 +189,7 @@ internal fun AccountWithLinks.toResponse(): AccountResponse =
         disabled = account.disabled,
         authProvider = account.authProvider,
         linkedMediaUserIds = linkedMediaUserIds.sorted(),
+        mediaUserLinkMode = MediaUserLinkMode.fromStored(account.mediaUserLinkMode),
         createdAtMs = account.createdAtMs,
         updatedAtMs = account.updatedAtMs,
     )

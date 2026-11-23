@@ -13,6 +13,7 @@ object AuthAccountsTable : Table("auth_accounts") {
     val disabled = bool("disabled").default(false)
     val authProvider = text("auth_provider").default("LOCAL")
     val externalSubject = text("external_subject").nullable()
+    val mediaUserLinkMode = text("media_user_link_mode").default("MANUAL")
     val createdAtMs = long("created_at_ms")
     val updatedAtMs = long("updated_at_ms")
 

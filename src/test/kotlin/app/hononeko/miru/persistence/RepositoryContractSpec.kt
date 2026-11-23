@@ -108,6 +108,7 @@ fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
         staleMediaTests { ctx }
         cascadeTests { ctx }
         authAccountTests { ctx }
+        authAccountLinkModeTests { ctx }
         authSessionTests { ctx }
         apiKeyTests { ctx }
         userPreferencesTests { ctx }
@@ -1036,6 +1037,56 @@ private fun FunSpecRootScope.cascadeTests(ctxProvider: () -> ContractContext) {
             ctx.library.findSectionsByServer(server.id).shouldBeRight() shouldHaveSize 0
             ctx.library.findSnapshots(server.id, "sec-1").shouldBeRight() shouldHaveSize 0
             ctx.library.findRecentlyAdded(server.id).shouldBeRight() shouldHaveSize 0
+        }
+    }
+}
+
+private fun FunSpecRootScope.authAccountLinkModeTests(ctxProvider: () -> ContractContext) {
+    context("AuthAccountRepository media user link mode") {
+        test("persists media user link mode, defaults it to MANUAL, and updates it with or without the links") {
+            val ctx = ctxProvider()
+            ctx.servers.upsert(sampleServer(id = "srv-link-mode")).shouldBeRight()
+            ctx.users.upsert(sampleUser(id = "mu-1", serverId = "srv-link-mode", externalUserId = "10", username = "alice")).shouldBeRight()
+
+            val local =
+                AuthAccountRecord(
+                    id = "acc-local",
+                    username = "local",
+                    usernameNormalized = "local",
+                    passwordHash = "hash",
+                    role = "USER",
+                    createdAtMs = 1_000L,
+                    updatedAtMs = 1_000L,
+                )
+            val sso =
+                local.copy(
+                    id = "acc-sso",
+                    username = "sso",
+                    usernameNormalized = "sso",
+                    passwordHash = "",
+                    authProvider = "OIDC",
+                    externalSubject = "sub-link-mode",
+                    mediaUserLinkMode = "AUTO",
+                )
+            ctx.authAccounts.insert(local).shouldBeRight()
+            ctx.authAccounts.insert(sso).shouldBeRight()
+
+            ctx.authAccounts.findById("acc-local").shouldBeRight().shouldNotBeNull().mediaUserLinkMode shouldBe "MANUAL"
+            ctx.authAccounts.findById("acc-sso").shouldBeRight().shouldNotBeNull().mediaUserLinkMode shouldBe "AUTO"
+
+            // Replacing links without a mode (email sync) leaves the mode alone.
+            ctx.authAccounts.replaceLinkedMediaUserIds("acc-sso", setOf("mu-1"), createdAtMs = 2_000L).shouldBeRight()
+            ctx.authAccounts.findById("acc-sso").shouldBeRight() shouldBe sso
+            ctx.authAccounts.findLinkedMediaUserIds("acc-sso").shouldBeRight() shouldBe setOf("mu-1")
+
+            // An admin edit sets links and mode together.
+            ctx.authAccounts.replaceLinkedMediaUserIds("acc-sso", emptySet(), createdAtMs = 3_000L, linkMode = "MANUAL").shouldBeRight()
+            ctx.authAccounts.findById("acc-sso").shouldBeRight() shouldBe sso.copy(mediaUserLinkMode = "MANUAL", updatedAtMs = 3_000L)
+            ctx.authAccounts.findLinkedMediaUserIds("acc-sso").shouldBeRight() shouldBe emptySet()
+
+            ctx.authAccounts.updateMediaUserLinkMode("acc-sso", "AUTO", updatedAtMs = 4_000L).shouldBeRight() shouldBe
+                sso.copy(updatedAtMs = 4_000L)
+            ctx.authAccounts.updateMediaUserLinkMode("missing", "AUTO", updatedAtMs = 4_000L).shouldBeRight().shouldBeNull()
         }
     }
 }

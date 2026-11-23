@@ -10,6 +10,7 @@ data class AuthAccountRecord(
     val disabled: Boolean = false,
     val authProvider: String = "LOCAL",
     val externalSubject: String? = null,
+    val mediaUserLinkMode: String = "MANUAL",
     val createdAtMs: Long,
     val updatedAtMs: Long,
 ) {
@@ -17,7 +18,7 @@ data class AuthAccountRecord(
         "AuthAccountRecord(id=$id, username=$username, usernameNormalized=$usernameNormalized, " +
             "email=$email, passwordHash=***, role=$role, disabled=$disabled, " +
             "authProvider=$authProvider, externalSubject=$externalSubject, " +
-            "createdAtMs=$createdAtMs, updatedAtMs=$updatedAtMs)"
+            "mediaUserLinkMode=$mediaUserLinkMode, createdAtMs=$createdAtMs, updatedAtMs=$updatedAtMs)"
 }
 
 data class AuthSessionRecord(

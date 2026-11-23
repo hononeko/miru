@@ -55,11 +55,22 @@ interface AuthAccountRepository {
 
     suspend fun findLinkedMediaUserIds(accountId: String): Either<MiruError.PersistenceError, Set<String>>
 
+    /**
+     * Replaces the account's linked media users. When [linkMode] is given, the account's
+     * media user link mode is set to it in the same transaction.
+     */
     suspend fun replaceLinkedMediaUserIds(
         accountId: String,
         mediaUserIds: Set<String>,
         createdAtMs: Long,
+        linkMode: String? = null,
     ): Either<MiruError.PersistenceError, Unit>
+
+    suspend fun updateMediaUserLinkMode(
+        id: String,
+        linkMode: String,
+        updatedAtMs: Long,
+    ): Either<MiruError.PersistenceError, AuthAccountRecord?>
 }
 
 interface AuthSessionRepository {
@@ -124,6 +135,7 @@ class ExposedAuthAccountRepository(
                 it[disabled] = account.disabled
                 it[authProvider] = account.authProvider
                 it[externalSubject] = account.externalSubject
+                it[mediaUserLinkMode] = account.mediaUserLinkMode
                 it[createdAtMs] = account.createdAtMs
                 it[updatedAtMs] = account.updatedAtMs
             }
@@ -227,6 +239,7 @@ class ExposedAuthAccountRepository(
         accountId: String,
         mediaUserIds: Set<String>,
         createdAtMs: Long,
+        linkMode: String?,
     ): Either<MiruError.PersistenceError, Unit> =
         database.exposedQuery("auth_account_replace_linked_media_users") {
             AuthAccountMediaUsersTable.deleteWhere { AuthAccountMediaUsersTable.accountId eq accountId }
@@ -236,6 +249,34 @@ class ExposedAuthAccountRepository(
                     it[mediaUserId] = linkedId
                     it[AuthAccountMediaUsersTable.createdAtMs] = createdAtMs
                 }
+            }
+            if (linkMode != null) {
+                AuthAccountsTable.update({ AuthAccountsTable.id eq accountId }) {
+                    it[AuthAccountsTable.mediaUserLinkMode] = linkMode
+                    it[AuthAccountsTable.updatedAtMs] = createdAtMs
+                }
+            }
+        }
+
+    override suspend fun updateMediaUserLinkMode(
+        id: String,
+        linkMode: String,
+        updatedAtMs: Long,
+    ): Either<MiruError.PersistenceError, AuthAccountRecord?> =
+        database.exposedQuery("auth_account_update_media_user_link_mode") {
+            val updated =
+                AuthAccountsTable.update({ AuthAccountsTable.id eq id }) {
+                    it[AuthAccountsTable.mediaUserLinkMode] = linkMode
+                    it[AuthAccountsTable.updatedAtMs] = updatedAtMs
+                }
+            if (updated <= 0) {
+                null
+            } else {
+                AuthAccountsTable
+                    .selectAll()
+                    .where { AuthAccountsTable.id eq id }
+                    .singleOrNull()
+                    ?.toAuthAccountRecord()
             }
         }
 }
@@ -417,6 +458,7 @@ private fun ResultRow.toAuthAccountRecord(): AuthAccountRecord =
         disabled = this[AuthAccountsTable.disabled],
         authProvider = this[AuthAccountsTable.authProvider],
         externalSubject = this[AuthAccountsTable.externalSubject],
+        mediaUserLinkMode = this[AuthAccountsTable.mediaUserLinkMode],
         createdAtMs = this[AuthAccountsTable.createdAtMs],
         updatedAtMs = this[AuthAccountsTable.updatedAtMs],
     )

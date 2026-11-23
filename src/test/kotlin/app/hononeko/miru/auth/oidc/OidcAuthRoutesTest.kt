@@ -14,10 +14,15 @@ import app.hononeko.miru.config.OidcConfig
 import app.hononeko.miru.config.PlexConfig
 import app.hononeko.miru.config.ServerConfig
 import app.hononeko.miru.config.SessionConfig
+import app.hononeko.miru.auth.MediaUserLinkMode
+import app.hononeko.miru.http.AccountListResponse
+import app.hononeko.miru.http.AccountResponse
 import app.hononeko.miru.http.AuthProvidersResponse
 import app.hononeko.miru.http.LoginRequest
 import app.hononeko.miru.http.PrincipalResponse
 import app.hononeko.miru.http.ProblemDetails
+import app.hononeko.miru.http.SetLinkedMediaUsersRequest
+import app.hononeko.miru.http.SetMediaUserLinkModeRequest
 import app.hononeko.miru.http.SetupAdminRequest
 import app.hononeko.miru.miruModule
 import app.hononeko.miru.persistence.DatabaseFactory
@@ -31,12 +36,14 @@ import app.hononeko.miru.persistence.repository.ExposedMediaServerRepository
 import app.hononeko.miru.persistence.repository.ExposedUserRepository
 import io.kotest.assertions.arrow.core.shouldBeRight
 import io.kotest.core.spec.style.FunSpec
+import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.string.shouldNotContain
+import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.client.request.cookie
@@ -44,6 +51,7 @@ import io.ktor.client.request.forms.FormDataContent
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
+import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
@@ -128,6 +136,8 @@ private data class MockIdpScenario(
     val subject: String = "sub-1",
     val preferredUsername: String? = "oidc_user",
     val email: String? = "oidc@miru.local",
+    val emailVerifiedInIdToken: Boolean? = true,
+    val emailVerifiedInUserInfo: Boolean? = null,
     val groupsInIdToken: List<String>? = listOf("miru-users"),
     val groupsInUserInfo: List<String>? = null,
     val includeEndSessionEndpoint: Boolean = true,
@@ -219,6 +229,7 @@ private fun createMockIdpEngine(
                         put("iat", nowSec)
                         scenario.preferredUsername?.let { put("preferred_username", it) }
                         scenario.email?.let { put("email", it) }
+                        scenario.emailVerifiedInIdToken?.let { put("email_verified", it) }
                         scenario.groupsInIdToken?.let { groups ->
                             put("groups", buildJsonArray { groups.forEach { add(JsonPrimitive(it)) } })
                         }
@@ -245,6 +256,7 @@ private fun createMockIdpEngine(
                     buildJsonObject {
                         put("sub", scenario.subject)
                         scenario.email?.let { put("email", it) }
+                        scenario.emailVerifiedInUserInfo?.let { put("email_verified", it) }
                         scenario.groupsInUserInfo?.let { groups ->
                             put("groups", buildJsonArray { groups.forEach { add(JsonPrimitive(it)) } })
                         }
@@ -266,6 +278,7 @@ private fun createOidcHarness(
     allowLocalLogin: Boolean = false,
     oidcEnabled: Boolean = true,
     includeEndSessionEndpoint: Boolean = true,
+    autoLinkByEmail: Boolean = true,
     scenarioProvider: () -> MockIdpScenario = { MockIdpScenario() },
     expectedChallengeHolder: MutableMap<String, String> = mutableMapOf(),
 ): OidcTestHarness {
@@ -292,7 +305,7 @@ private fun createOidcHarness(
             groupsClaim = "groups",
             adminGroups = setOf("miru-admins"),
             userGroups = setOf("miru-users"),
-            autoLinkByEmail = true,
+            autoLinkByEmail = autoLinkByEmail,
             postLogoutRedirectUri = "http://localhost/login",
         )
     val authConfig =
@@ -367,6 +380,67 @@ private fun createOidcHarness(
         oidcAuthService = oidcAuthService,
         appConfig = appConfig,
     )
+}
+
+/** Runs the full authorization-code flow against the mock IdP and returns the new session cookie value. */
+private suspend fun HttpClient.signInWithOidc(
+    code: String,
+    expectedChallengeHolder: MutableMap<String, String>,
+): String {
+    val start = get("/api/v1/auth/oidc/login")
+    val location = Url(start.headers[HttpHeaders.Location].shouldNotBeNull())
+    val state = location.parameters["state"].shouldNotBeNull()
+    expectedChallengeHolder[code] = location.parameters["code_challenge"].shouldNotBeNull()
+    expectedChallengeHolder["nonce:$code"] = location.parameters["nonce"].shouldNotBeNull()
+    val txCookie =
+        extractCookieValue(start.headers.getAll(HttpHeaders.SetCookie).orEmpty(), "miru_oidc_tx").shouldNotBeNull()
+    val callback =
+        get("/api/v1/auth/oidc/callback?code=$code&state=$state") {
+            cookie("miru_oidc_tx", txCookie)
+        }
+    callback.status shouldBe HttpStatusCode.Found
+    return extractCookieValue(callback.headers.getAll(HttpHeaders.SetCookie).orEmpty(), SESSION_COOKIE_NAME).shouldNotBeNull()
+}
+
+private suspend fun HttpClient.linkedMediaUserIds(session: String): List<String> {
+    val me = get("/api/v1/auth/me") { cookie(SESSION_COOKIE_NAME, session) }
+    me.status shouldBe HttpStatusCode.OK
+    return MiruJson.decodeFromString<PrincipalResponse>(me.bodyAsText()).linkedMediaUserIds
+}
+
+private suspend fun OidcTestHarness.upsertMediaUser(
+    id: String,
+    externalUserId: String,
+    email: String?,
+) {
+    userRepo
+        .upsert(
+            UserRecord(
+                id = id,
+                serverId = "srv-1",
+                externalUserId = externalUserId,
+                username = id,
+                displayName = id,
+                email = email,
+                createdAtMs = 1_000L,
+                updatedAtMs = 1_000L,
+            ),
+        ).shouldBeRight()
+}
+
+private suspend fun OidcTestHarness.upsertPlexServer() {
+    serverRepo
+        .upsert(
+            MediaServerRecord(
+                id = "srv-1",
+                name = "Plex",
+                serverType = "PLEX",
+                machineId = "m1",
+                baseUrl = "http://plex.local:32400",
+                createdAtMs = 1_000L,
+                updatedAtMs = 1_000L,
+            ),
+        ).shouldBeRight()
 }
 
 private fun ApplicationTestBuilder.setupApp(harness: OidcTestHarness) {
@@ -749,6 +823,171 @@ class OidcAuthRoutesTest :
                         }
                     disabledHtml.status shouldBe HttpStatusCode.Found
                     disabledHtml.headers[HttpHeaders.Location] shouldBe "/login?error=disabled"
+                }
+            }
+        }
+        test("links media users only by a verified email, taking email_verified from userinfo when the ID token lacks it") {
+            var scenario = MockIdpScenario()
+            val expectedChallengeHolder = mutableMapOf<String, String>()
+
+            createOidcHarness(scenarioProvider = { scenario }, expectedChallengeHolder = expectedChallengeHolder).use { harness ->
+                harness.upsertPlexServer()
+                harness.upsertMediaUser(id = "mu-alice", externalUserId = "100", email = "alice@miru.local")
+
+                testApplication {
+                    setupApp(harness)
+                    val client = createClient { followRedirects = false }
+                    val alice =
+                        MockIdpScenario(subject = "sub-alice", preferredUsername = "alice", email = "ALICE@miru.local")
+
+                    // IdP says the email is unverified: no links.
+                    scenario = alice.copy(emailVerifiedInIdToken = false)
+                    client.linkedMediaUserIds(client.signInWithOidc("code-1", expectedChallengeHolder)).shouldBeEmpty()
+
+                    // ID token omits email_verified and userinfo omits it too: still no links.
+                    scenario = alice.copy(emailVerifiedInIdToken = null)
+                    client.linkedMediaUserIds(client.signInWithOidc("code-2", expectedChallengeHolder)).shouldBeEmpty()
+
+                    // userinfo marks the same address as verified: linked.
+                    scenario = alice.copy(emailVerifiedInIdToken = null, emailVerifiedInUserInfo = true)
+                    client.linkedMediaUserIds(client.signInWithOidc("code-3", expectedChallengeHolder)) shouldContainExactly
+                        listOf("mu-alice")
+
+                    // An unverified email later on leaves the existing links alone.
+                    scenario = alice.copy(emailVerifiedInIdToken = false)
+                    client.linkedMediaUserIds(client.signInWithOidc("code-4", expectedChallengeHolder)) shouldContainExactly
+                        listOf("mu-alice")
+                }
+            }
+        }
+
+        test("keeps email links in sync on every sign-in, stops after an admin edits them, and resumes when switched back to AUTO") {
+            var scenario = MockIdpScenario()
+            val expectedChallengeHolder = mutableMapOf<String, String>()
+
+            createOidcHarness(scenarioProvider = { scenario }, expectedChallengeHolder = expectedChallengeHolder).use { harness ->
+                harness.upsertPlexServer()
+                harness.upsertMediaUser(id = "mu-alice", externalUserId = "100", email = "alice@miru.local")
+                harness.upsertMediaUser(id = "mu-other", externalUserId = "200", email = "other@miru.local")
+
+                testApplication {
+                    setupApp(harness)
+                    val client = createClient { followRedirects = false }
+                    val alice = MockIdpScenario(subject = "sub-alice", preferredUsername = "alice", email = "alice@miru.local")
+                    val admin =
+                        MockIdpScenario(
+                            subject = "sub-admin",
+                            preferredUsername = "boss",
+                            email = "boss@miru.local",
+                            groupsInIdToken = listOf("miru-admins"),
+                        )
+
+                    scenario = alice
+                    client.linkedMediaUserIds(client.signInWithOidc("code-1", expectedChallengeHolder)) shouldContainExactly
+                        listOf("mu-alice")
+                    val aliceAccountId =
+                        harness.accountRepo.findByProviderAndSubject("OIDC", "sub-alice").shouldBeRight().shouldNotBeNull().id
+
+                    // A new Plex user with the same email is linked at the next sign-in.
+                    harness.upsertMediaUser(id = "mu-alice-2", externalUserId = "101", email = "Alice@Miru.local")
+                    client.linkedMediaUserIds(client.signInWithOidc("code-2", expectedChallengeHolder)) shouldContainExactly
+                        listOf("mu-alice", "mu-alice-2")
+
+                    // A Plex user whose email no longer matches is unlinked at the next sign-in.
+                    harness.upsertMediaUser(id = "mu-alice-2", externalUserId = "101", email = "someone-else@miru.local")
+                    val aliceSession = client.signInWithOidc("code-3", expectedChallengeHolder)
+                    client.linkedMediaUserIds(aliceSession) shouldContainExactly listOf("mu-alice")
+
+                    scenario = admin
+                    val adminSession = client.signInWithOidc("code-admin", expectedChallengeHolder)
+
+                    suspend fun putAsAdmin(
+                        path: String,
+                        body: String,
+                    ) = client.put(path) {
+                        cookie(SESSION_COOKIE_NAME, adminSession)
+                        contentType(ContentType.Application.Json)
+                        setBody(body)
+                    }
+
+                    // An admin edit makes the links manual; sign-in no longer changes them, even when emptied.
+                    val handPicked =
+                        putAsAdmin(
+                            "/api/v1/admin/accounts/$aliceAccountId/media-users",
+                            MiruJson.encodeToString(SetLinkedMediaUsersRequest(mediaUserIds = setOf("mu-other"))),
+                        )
+                    handPicked.status shouldBe HttpStatusCode.OK
+                    MiruJson.decodeFromString<AccountResponse>(handPicked.bodyAsText()).mediaUserLinkMode shouldBe
+                        MediaUserLinkMode.MANUAL
+                    scenario = alice
+                    client.linkedMediaUserIds(client.signInWithOidc("code-4", expectedChallengeHolder)) shouldContainExactly
+                        listOf("mu-other")
+
+                    putAsAdmin(
+                        "/api/v1/admin/accounts/$aliceAccountId/media-users",
+                        MiruJson.encodeToString(SetLinkedMediaUsersRequest(mediaUserIds = emptySet())),
+                    ).status shouldBe HttpStatusCode.OK
+                    client.linkedMediaUserIds(client.signInWithOidc("code-5", expectedChallengeHolder)).shouldBeEmpty()
+
+                    // Switching back to AUTO keeps the current links until the next sign-in relinks by email.
+                    val backToAuto =
+                        putAsAdmin(
+                            "/api/v1/admin/accounts/$aliceAccountId/media-user-link-mode",
+                            MiruJson.encodeToString(SetMediaUserLinkModeRequest(mode = MediaUserLinkMode.AUTO)),
+                        )
+                    backToAuto.status shouldBe HttpStatusCode.OK
+                    val autoAccount = MiruJson.decodeFromString<AccountResponse>(backToAuto.bodyAsText())
+                    autoAccount.mediaUserLinkMode shouldBe MediaUserLinkMode.AUTO
+                    autoAccount.linkedMediaUserIds.shouldBeEmpty()
+                    client.linkedMediaUserIds(client.signInWithOidc("code-6", expectedChallengeHolder)) shouldContainExactly
+                        listOf("mu-alice")
+
+                    // AUTO is refused for local accounts, which never sign in with SSO.
+                    val local =
+                        harness.authService
+                            .createAccount(username = "localviewer", password = "Some-password-123")
+                            .shouldBeRight()
+                    local.account.mediaUserLinkMode shouldBe "MANUAL"
+                    putAsAdmin(
+                        "/api/v1/admin/accounts/${local.account.id}/media-user-link-mode",
+                        MiruJson.encodeToString(SetMediaUserLinkModeRequest(mode = MediaUserLinkMode.AUTO)),
+                    ).status shouldBe HttpStatusCode.Conflict
+                    putAsAdmin(
+                        "/api/v1/admin/accounts/missing/media-user-link-mode",
+                        MiruJson.encodeToString(SetMediaUserLinkModeRequest(mode = MediaUserLinkMode.MANUAL)),
+                    ).status shouldBe HttpStatusCode.NotFound
+
+                    val accounts =
+                        client.get("/api/v1/admin/accounts") { cookie(SESSION_COOKIE_NAME, adminSession) }
+                    MiruJson
+                        .decodeFromString<AccountListResponse>(accounts.bodyAsText())
+                        .accounts
+                        .associate { it.username to it.mediaUserLinkMode } shouldBe
+                        mapOf(
+                            "alice" to MediaUserLinkMode.AUTO,
+                            "boss" to MediaUserLinkMode.AUTO,
+                            "localviewer" to MediaUserLinkMode.MANUAL,
+                        )
+                }
+            }
+        }
+
+        test("does not link by email when OIDC_AUTO_LINK_BY_EMAIL is false") {
+            val expectedChallengeHolder = mutableMapOf<String, String>()
+            createOidcHarness(
+                autoLinkByEmail = false,
+                scenarioProvider = {
+                    MockIdpScenario(subject = "sub-alice", preferredUsername = "alice", email = "alice@miru.local")
+                },
+                expectedChallengeHolder = expectedChallengeHolder,
+            ).use { harness ->
+                harness.upsertPlexServer()
+                harness.upsertMediaUser(id = "mu-alice", externalUserId = "100", email = "alice@miru.local")
+
+                testApplication {
+                    setupApp(harness)
+                    val client = createClient { followRedirects = false }
+                    client.linkedMediaUserIds(client.signInWithOidc("code-1", expectedChallengeHolder)).shouldBeEmpty()
                 }
             }
         }

@@ -7,6 +7,7 @@ import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldNotContain
 import org.testcontainers.postgresql.PostgreSQLContainer
+import java.sql.DriverManager
 
 class PostgresRepositoryIntegrationTest :
     FunSpec({
@@ -58,6 +59,21 @@ class PostgresRepositoryIntegrationTest :
                         ),
                     ).shouldBeLeft()
             failed.message shouldNotContain secretPassword
+        }
+
+        test("V8 marks existing SSO accounts AUTO only when their links are all email matches") {
+            val databaseName = "miru_link_mode_backfill"
+            DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { conn ->
+                conn.createStatement().use { it.executeUpdate("CREATE DATABASE $databaseName") }
+            }
+            assertMediaUserLinkModeBackfill(
+                DatabaseConfig.Postgres(
+                    url = container.jdbcUrl.replace("/${container.databaseName}", "/$databaseName"),
+                    user = container.username,
+                    password = container.password,
+                    maxPoolSize = 2,
+                ),
+            )
         }
 
         include(repositoryContractSpec { requireHandle() })

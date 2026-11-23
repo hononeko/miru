@@ -272,8 +272,31 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Replace linked media server user IDs for an account */
+        /**
+         * Replace linked media server user IDs for an account
+         * @description Replaces the account's links and sets its `mediaUserLinkMode` to `MANUAL`, so SSO sign-in no longer relinks it by email.
+         */
         put: operations["setLinkedMediaUsers"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/accounts/{id}/media-user-link-mode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set how an account's linked media users are maintained
+         * @description `AUTO` (SSO accounts only) makes every SSO sign-in replace the account's links with the media users that share its verified email; the current links stay until that next sign-in. `MANUAL` keeps the current links as they are.
+         */
+        put: operations["setMediaUserLinkMode"];
         post?: never;
         delete?: never;
         options?: never;
@@ -829,6 +852,11 @@ export interface components {
         };
         /** @enum {string} */
         MiruRole: "ADMIN" | "USER";
+        /**
+         * @description `AUTO`: every SSO sign-in replaces the account's links with the media users that share its verified email (when `OIDC_AUTO_LINK_BY_EMAIL` is on). `MANUAL`: the links are exactly what an admin set. Local accounts are always `MANUAL`.
+         * @enum {string}
+         */
+        MediaUserLinkMode: "AUTO" | "MANUAL";
         /** @enum {string} */
         AuthSource: "SESSION_COOKIE" | "API_KEY" | "DEV_BYPASS";
         AuthStatusResponse: {
@@ -914,6 +942,7 @@ export interface components {
             disabled: boolean;
             authProvider: string;
             linkedMediaUserIds: string[];
+            mediaUserLinkMode: components["schemas"]["MediaUserLinkMode"];
             /** Format: int64 */
             createdAtMs: number;
             /** Format: int64 */
@@ -935,6 +964,9 @@ export interface components {
         };
         SetLinkedMediaUsersRequest: {
             mediaUserIds: string[];
+        };
+        SetMediaUserLinkModeRequest: {
+            mode: components["schemas"]["MediaUserLinkMode"];
         };
         CreateApiKeyRequest: {
             accountId?: string | null;
@@ -2393,6 +2425,68 @@ export interface operations {
             };
             /** @description Account or media user not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    setMediaUserLinkMode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetMediaUserLinkModeRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated account */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountResponse"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Account not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description `AUTO` was requested for an account that does not sign in with SSO */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

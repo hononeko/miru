@@ -424,6 +424,26 @@
 		}
 	}
 
+	async function handleUseEmailLinking() {
+		if (!linkTarget) return;
+		linkSubmitting = true;
+		error = null;
+		try {
+			unwrap(
+				await api.PUT('/api/v1/admin/accounts/{id}/media-user-link-mode', {
+					params: { path: { id: linkTarget.id } },
+					body: { mode: 'AUTO' }
+				})
+			);
+			linkOpen = false;
+			await loadAll();
+		} catch (err) {
+			error = err instanceof MiruApiError ? err.detail : 'Failed to switch to email linking';
+		} finally {
+			linkSubmitting = false;
+		}
+	}
+
 	async function handleCreateKey(e: SubmitEvent) {
 		e.preventDefault();
 		createKeyError = null;
@@ -651,6 +671,11 @@
 							<Badge tone={acc.authProvider === 'OIDC' ? 'cyan' : 'neutral'} mono>
 								{acc.authProvider}
 							</Badge>
+							{#if acc.authProvider === 'OIDC' && acc.role !== 'ADMIN'}
+								<Badge tone="neutral" mono>
+									{acc.mediaUserLinkMode === 'AUTO' ? 'Linked by email' : 'Linked manually'}
+								</Badge>
+							{/if}
 							<Badge tone={acc.role === 'ADMIN' ? 'primary' : 'neutral'}>{acc.role}</Badge>
 							{#if acc.role === 'ADMIN'}
 								<Badge tone="cyan" mono>All Media Users</Badge>
@@ -1171,6 +1196,30 @@
 	description="Select which Plex users this account may view"
 >
 	<div class="flex flex-col gap-3">
+		{#if linkTarget?.authProvider === 'OIDC'}
+			{#if linkTarget.mediaUserLinkMode === 'AUTO'}
+				<p class="rounded-lg border border-border bg-elevated px-3 py-2.5 text-[11px] text-fg-secondary">
+					Linked by email: each SSO sign-in links this account to the Plex users with the same
+					verified email. Saving a selection here switches it to manual linking.
+				</p>
+			{:else}
+				<div class="flex flex-col gap-2 rounded-lg border border-border bg-elevated px-3 py-2.5">
+					<p class="text-[11px] text-fg-secondary">
+						Linked manually: SSO sign-in leaves these links as they are. Switching to email linking
+						takes effect at this account's next SSO sign-in.
+					</p>
+					<Button
+						variant="outline"
+						size="sm"
+						disabled={linkSubmitting}
+						onclick={handleUseEmailLinking}
+						class="self-start"
+					>
+						Link by email instead
+					</Button>
+				</div>
+			{/if}
+		{/if}
 		{#if mediaUsers.length === 0}
 			<p class="text-xs text-fg-muted">No Plex media users synced yet.</p>
 		{:else}

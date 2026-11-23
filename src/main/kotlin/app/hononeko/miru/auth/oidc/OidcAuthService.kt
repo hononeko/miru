@@ -1,6 +1,7 @@
 package app.hononeko.miru.auth.oidc
 
 import app.hononeko.miru.auth.AuthService
+import app.hononeko.miru.auth.MediaUserLinkMode
 import app.hononeko.miru.auth.MiruRole
 import app.hononeko.miru.auth.TokenCrypto
 import app.hononeko.miru.auth.oidc.OidcJwtVerifier.Companion.stringClaim
@@ -16,6 +17,8 @@ import io.ktor.http.URLBuilder
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import org.slf4j.LoggerFactory
 import java.security.MessageDigest
 import java.util.Base64
@@ -132,7 +135,7 @@ class OidcAuthService(
             val role = mapGroupsToRole(enriched.groups).bind()
 
             val account = upsertOidcAccount(enriched, role, now).bind()
-            val linkedMediaUserIds = autoLinkMediaUsersIfNeeded(account, now).bind()
+            val linkedMediaUserIds = syncEmailLinkedMediaUsers(account, enriched, now).bind()
             val loginResult = authService.issueSessionForAccount(account, linkedMediaUserIds).bind()
 
             OidcCallbackResult(
@@ -172,7 +175,10 @@ class OidcAuthService(
         accessToken: String?,
     ): Either<MiruError, OidcIdTokenClaims> =
         either {
-            if ((claims.groups.isNotEmpty() && !claims.email.isNullOrBlank()) || accessToken.isNullOrBlank()) {
+            // Email linking needs email_verified; IdPs that omit it from the ID token often return it from userinfo.
+            val needsEmailVerified = authConfig.oidc.autoLinkByEmail && claims.emailVerified == null
+            val hasAllClaims = claims.groups.isNotEmpty() && !claims.email.isNullOrBlank() && !needsEmailVerified
+            if (hasAllClaims || accessToken.isNullOrBlank()) {
                 return@either claims
             }
 
@@ -195,10 +201,21 @@ class OidcAuthService(
             val resolvedUsername =
                 claims.preferredUsername
                     ?: userInfo.stringClaim("preferred_username")?.trim()?.takeIf { it.isNotEmpty() }
+            val userInfoEmail = userInfo.stringClaim("email")?.trim()?.takeIf { it.isNotEmpty() }
+            val userInfoEmailVerified = (userInfo["email_verified"] as? JsonPrimitive)?.booleanOrNull
+            // email_verified only counts for the address it was issued with.
+            val (email, emailVerified) =
+                if (claims.email != null) {
+                    val sameAddress = claims.email.equals(userInfoEmail, ignoreCase = true)
+                    claims.email to (claims.emailVerified ?: userInfoEmailVerified.takeIf { sameAddress })
+                } else {
+                    userInfoEmail to userInfoEmailVerified
+                }
             claims.copy(
                 preferredUsername = resolvedUsername,
                 name = claims.name ?: userInfo.stringClaim("name")?.trim()?.takeIf { it.isNotEmpty() },
-                email = claims.email ?: userInfo.stringClaim("email")?.trim()?.takeIf { it.isNotEmpty() },
+                email = email,
+                emailVerified = emailVerified,
                 groups = claims.groups.ifEmpty { extraGroups },
             )
         }
@@ -252,6 +269,7 @@ class OidcAuthService(
                         disabled = false,
                         authProvider = PROVIDER_OIDC,
                         externalSubject = claims.subject,
+                        mediaUserLinkMode = MediaUserLinkMode.AUTO.name,
                         createdAtMs = nowMs,
                         updatedAtMs = nowMs,
                     )
@@ -259,25 +277,48 @@ class OidcAuthService(
             }
         }
 
-    private suspend fun autoLinkMediaUsersIfNeeded(
+    /**
+     * Keeps an [MediaUserLinkMode.AUTO] account's linked media users equal to the media users that share
+     * its verified email, adding new matches and dropping stale ones on every sign-in.
+     *
+     * Links are left untouched when OIDC_AUTO_LINK_BY_EMAIL is off, when an admin set the links by hand
+     * ([MediaUserLinkMode.MANUAL]), or when the IdP sent no email or did not mark it as verified.
+     */
+    private suspend fun syncEmailLinkedMediaUsers(
         account: AuthAccountRecord,
+        claims: OidcIdTokenClaims,
         nowMs: Long,
     ): Either<MiruError, Set<String>> =
         either {
             val currentLinks = accountRepository.findLinkedMediaUserIds(account.id).bind()
-            if (currentLinks.isNotEmpty() || !authConfig.oidc.autoLinkByEmail || account.email.isNullOrBlank()) {
+            val email = claims.email
+            val isAuto = MediaUserLinkMode.fromStored(account.mediaUserLinkMode) == MediaUserLinkMode.AUTO
+            if (!authConfig.oidc.autoLinkByEmail || !isAuto || email.isNullOrBlank()) {
+                return@either currentLinks
+            }
+            if (claims.emailVerified != true) {
+                logger.warn(
+                    "Not linking media users by email for SSO account '{}': the identity provider did not mark the email as verified",
+                    account.username,
+                )
                 return@either currentLinks
             }
 
-            val allUsers = userRepository.findAll().bind()
             val matchedIds =
-                allUsers
-                    .filter { it.email != null && it.email.equals(account.email, ignoreCase = true) }
+                userRepository
+                    .findAll()
+                    .bind()
+                    .filter { it.email != null && it.email.equals(email, ignoreCase = true) }
                     .map { it.id }
                     .toSet()
 
-            if (matchedIds.isNotEmpty()) {
+            if (matchedIds != currentLinks) {
                 accountRepository.replaceLinkedMediaUserIds(account.id, matchedIds, nowMs).bind()
+                logger.info(
+                    "Updated email-linked media users for SSO account '{}' ({} linked)",
+                    account.username,
+                    matchedIds.size,
+                )
             }
             matchedIds
         }

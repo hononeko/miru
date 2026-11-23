@@ -880,6 +880,62 @@ class SessionStateEngineTest :
             moreConverted(earlier = transcode, later = laterTranscode) shouldBe laterTranscode
         }
 
+        test("retains mid-session transcode conversion details in history even if playback later switches to direct play") {
+            runTest {
+                newEnv().use { env ->
+                    env.seedServer()
+                    val engine = env.createEngine(config = SessionConfig(minPlayDurationSeconds = 1))
+
+                    val transcodeSnapshot =
+                        sampleSnapshot(
+                            sessionKey = "mid-switch",
+                            ratingKey = "mov-mid",
+                            decision = StreamDecision.TRANSCODE,
+                            isHwTranscode = true,
+                        ).let {
+                            it.copy(
+                                technical =
+                                    it.technical.copy(
+                                        videoCodec = "hevc",
+                                        transcodeVideoCodec = "h264",
+                                        subtitleDecision = "burn",
+                                    ),
+                            )
+                        }
+                    env.nowMs = 1_000L
+                    engine.reconcile(listOf(transcodeSnapshot), ReconcileTrigger.NOTIFICATION).shouldBeRight()
+
+                    // Mid-session switch to direct play updates the live session...
+                    val directPlaySnapshot =
+                        sampleSnapshot(
+                            sessionKey = "mid-switch",
+                            ratingKey = "mov-mid",
+                            decision = StreamDecision.DIRECT_PLAY,
+                            viewOffsetMs = 120_000L,
+                        )
+                    env.nowMs = 60_000L
+                    val updated =
+                        engine
+                            .reconcile(listOf(directPlaySnapshot), ReconcileTrigger.NOTIFICATION)
+                            .shouldBeRight()
+                            .single()
+                            .shouldBeInstanceOf<SessionEvent.SessionUpdated>()
+                    updated.session.streamTech.streamDecision shouldBe "direct_play"
+                    updated.streamDecisionChanged shouldBe true
+
+                    // ...while final history preserves the more converted segment.
+                    env.nowMs = 120_000L
+                    engine
+                        .reconcile(listOf(directPlaySnapshot.copy(state = PlaybackState.STOPPED)), ReconcileTrigger.NOTIFICATION)
+                        .shouldBeRight()
+                    val recorded = env.history.query(HistoryFilter(serverId = DEFAULT_SERVER_ID)).shouldBeRight().items.single()
+                    recorded.streamTech.streamDecision shouldBe "transcode"
+                    recorded.streamTech.transcodeVideoCodec shouldBe "h264"
+                    recorded.streamTech.subtitleDecision shouldBe "burn"
+                }
+            }
+        }
+
         test("maintains live transcode technical metadata overlay across start, update, and stop") {
             runTest {
                 newEnv().use { env ->

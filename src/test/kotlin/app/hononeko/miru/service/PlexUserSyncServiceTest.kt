@@ -54,6 +54,9 @@ private class InMemorySyncUserRepository : UserRepository {
 
     override suspend fun findById(id: String): Either<MiruError.PersistenceError, UserRecord?> = byId[id].right()
 
+    override suspend fun findByIds(ids: Collection<String>): Either<MiruError.PersistenceError, List<UserRecord>> =
+        ids.distinct().mapNotNull { byId[it] }.right()
+
     override suspend fun findByExternalId(
         serverId: String,
         externalUserId: String,

@@ -19,7 +19,8 @@
 		formatDurationSec,
 		formatRelativeTime,
 		formatShortDateTime,
-		formatStatPercent
+		formatStatPercent,
+		statBarWidth
 	} from '$lib/utils';
 
 	type Props = {
@@ -177,8 +178,8 @@
 						<div class="flex h-2 w-full gap-1 overflow-hidden rounded-full bg-subtle">
 							{#each group.rows as seg}
 								<div
-									class={`h-full rounded-full ${seg.colorClass}`}
-									style:width={`${Math.max(2, seg.pct)}%`}
+									class={`h-full rounded-full ${seg.colorClass} ${seg.pct > 0 ? 'min-w-0.5' : ''}`}
+									style:width={statBarWidth(seg.pct)}
 									title={`${seg.name}: ${seg.count} (${formatStatPercent(seg.pct)})`}
 								></div>
 							{/each}

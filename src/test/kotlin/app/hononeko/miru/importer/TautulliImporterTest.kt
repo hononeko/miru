@@ -371,6 +371,64 @@ class TautulliImporterTest :
             }
         }
 
+        test("keeps transcode source codecs separate from output, ignores wildcard codecs, and merges grouped rows by conversion") {
+            createImporterHarness().use { harness ->
+                val dbFile = harness.tempDir.resolve("tautulli-conversion-edges.db")
+                DriverManager.getConnection("jdbc:sqlite:${dbFile.toAbsolutePath()}").use { conn ->
+                    conn.createStatement().use { stmt ->
+                        createRichTautulliSchema(stmt)
+                        stmt.executeUpdate(
+                            "ALTER TABLE session_history_media_info ADD COLUMN transcode_audio_codec TEXT",
+                        )
+                        stmt.executeUpdate(
+                            "INSERT INTO users VALUES (101, 'alice', 'Alice', 'alice@example.com', NULL, 1)",
+                        )
+                        // Group ref=900: segment 1 transcoded with null source codecs & wildcard transcode_*,
+                        // segment 2 resumed as direct play. Grouped record must keep the transcode segment.
+                        stmt.executeUpdate(
+                            "INSERT INTO session_history VALUES " +
+                                "(1, 900, 1700000000, 1700000600, 'rk-900', 101, 'alice', '10.0.0.1', 0, " +
+                                "'Chrome', 'Plex Web', 'Web', 'm1', 'lan', 'movie', 600000, '1')",
+                        )
+                        stmt.executeUpdate(
+                            "INSERT INTO session_history VALUES " +
+                                "(2, 900, 1700000700, 1700001200, 'rk-900', 101, 'alice', '10.0.0.1', 0, " +
+                                "'Chrome', 'Plex Web', 'Web', 'm1', 'lan', 'movie', 1200000, '1')",
+                        )
+                        stmt.executeUpdate(
+                            "INSERT INTO session_history_metadata VALUES " +
+                                "(1, 'rk-900', 'Edge Movie', 'Edge Movie', NULL, NULL, NULL, NULL, 2024, NULL, 1200000)",
+                        )
+                        stmt.executeUpdate(
+                            "INSERT INTO session_history_metadata VALUES " +
+                                "(2, 'rk-900', 'Edge Movie', 'Edge Movie', NULL, NULL, NULL, NULL, 2024, NULL, 1200000)",
+                        )
+                        stmt.executeUpdate(
+                            "INSERT INTO session_history_media_info VALUES " +
+                                "(1, 'transcode', 'transcode', 'transcode', 1, 0, NULL, NULL, '1080', '1080', 'h264', 'aac', " +
+                                "8000, 7000, 'mkv', 'mp4', 'burn', '*', '*', '*')",
+                        )
+                        stmt.executeUpdate(
+                            "INSERT INTO session_history_media_info VALUES " +
+                                "(2, 'direct play', 'direct play', 'direct play', 0, 0, 'hevc', 'truehd', '1080', NULL, NULL, NULL, " +
+                                "8000, 7000, 'mkv', 'mkv', NULL, NULL, NULL, NULL)",
+                        )
+                    }
+                }
+
+                harness.service.import(dbFile).shouldBeRight().historyImported shouldBe 1
+                val imported = harness.historyRepo.query(HistoryFilter()).shouldBeRight().items.single()
+                imported.streamTech.streamDecision shouldBe "transcode"
+                imported.streamTech.videoCodec shouldBe null
+                imported.streamTech.audioCodec shouldBe null
+                imported.streamTech.transcodeVideoCodec shouldBe "h264"
+                imported.streamTech.transcodeAudioCodec shouldBe "aac"
+                imported.streamTech.container shouldBe "mkv"
+                imported.streamTech.transcodeContainer shouldBe "mp4"
+                imported.streamTech.subtitleDecision shouldBe "burn"
+            }
+        }
+
         test("rejects missing file, non-SQLite file, missing Tautulli tables, and unknown serverId") {
             createImporterHarness().use { harness ->
                 val missing = harness.tempDir.resolve("missing.db")

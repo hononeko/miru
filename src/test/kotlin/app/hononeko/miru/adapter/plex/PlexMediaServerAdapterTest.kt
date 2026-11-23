@@ -161,12 +161,111 @@ class PlexMediaServerAdapterTest :
             adapter.fetchActiveSessions().shouldBeRight()
             metadataRequests() shouldBe 1
 
-            // After the retry delay it is looked up again; a successful result is then reused.
+            // After the retry delay it is looked up again; a successful result is then reused until TTL expires.
             metadataFails = false
             nowMs += 5L * 60L * 1000L
             adapter.fetchActiveSessions().shouldBeRight().single().technical.container shouldBe "mkv"
             adapter.fetchActiveSessions().shouldBeRight().single().technical.audioCodec shouldBe "eac3"
             metadataRequests() shouldBe 2
+
+            // After the 1-hour cache TTL elapses, metadata is refreshed so replaced files are picked up.
+            nowMs += 60L * 60L * 1000L
+            adapter.fetchActiveSessions().shouldBeRight().single().technical.container shouldBe "mkv"
+            metadataRequests() shouldBe 3
+        }
+
+        test("matches the playing Media version for multi-version items and skips lookup when source specs are already known") {
+            val multiVersionSessionJson =
+                """
+                {
+                  "MediaContainer": {
+                    "size": 2,
+                    "Metadata": [
+                      {
+                        "sessionKey": "20",
+                        "ratingKey": "9001",
+                        "type": "movie",
+                        "title": "Dune",
+                        "Media": [
+                          {
+                            "id": "200",
+                            "selected": true,
+                            "container": "mpegts",
+                            "videoCodec": "h264",
+                            "audioCodec": "aac",
+                            "Part": [{ "decision": "transcode" }]
+                          }
+                        ],
+                        "User": { "id": "2002", "title": "yuki" },
+                        "Player": { "machineIdentifier": "p1", "product": "Plex Web", "state": "playing" },
+                        "TranscodeSession": {
+                          "videoDecision": "transcode",
+                          "audioDecision": "transcode",
+                          "videoCodec": "h264",
+                          "audioCodec": "aac",
+                          "container": "mpegts"
+                        }
+                      },
+                      {
+                        "sessionKey": "21",
+                        "ratingKey": "9002",
+                        "type": "movie",
+                        "title": "Already Known",
+                        "Media": [
+                          {
+                            "id": "300",
+                            "selected": true,
+                            "container": "mkv",
+                            "videoCodec": "hevc",
+                            "audioCodec": "eac3",
+                            "Part": [{ "decision": "copy", "container": "mkv" }]
+                          }
+                        ],
+                        "User": { "id": "2002", "title": "yuki" },
+                        "Player": { "machineIdentifier": "p2", "product": "Plex Web", "state": "playing" }
+                      }
+                    ]
+                  }
+                }
+                """.trimIndent()
+            val multiVersionMetadataJson =
+                """
+                {
+                  "MediaContainer": {
+                    "size": 1,
+                    "Metadata": [
+                      {
+                        "ratingKey": "9001",
+                        "type": "movie",
+                        "title": "Dune",
+                        "Media": [
+                          { "id": "100", "container": "mkv", "videoCodec": "hevc", "audioCodec": "truehd" },
+                          { "id": "200", "container": "mp4", "videoCodec": "av1", "audioCodec": "dts" }
+                        ]
+                      }
+                    ]
+                  }
+                }
+                """.trimIndent()
+
+            val (adapter, requests) =
+                adapterWithMock { request ->
+                    when (request.url.encodedPath) {
+                        "/status/sessions" -> respondJson(multiVersionSessionJson)
+                        "/library/metadata/9001" -> respondJson(multiVersionMetadataJson)
+                        else -> error("Unexpected request ${request.url.encodedPath}")
+                    }
+                }
+
+            val sessions = adapter.fetchActiveSessions().shouldBeRight()
+            sessions shouldHaveSize 2
+            val multi = sessions.first { it.media.ratingKey == "9001" }
+            multi.technical.container shouldBe "mp4"
+            multi.technical.videoCodec shouldBe "av1"
+            multi.technical.audioCodec shouldBe "dts"
+
+            // Session 9002 was DIRECT_STREAM without a TranscodeSession and already had all source fields.
+            requests.count { it.url.encodedPath == "/library/metadata/9002" } shouldBe 0
         }
 
         test("normalizes local admin User.id == 1 consistently via /accounts and optional plex.tv") {

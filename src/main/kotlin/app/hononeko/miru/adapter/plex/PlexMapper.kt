@@ -205,6 +205,17 @@ object PlexMapper {
 
     fun mapMediaType(metadata: PlexMetadataDto): MediaType = mapPlexMediaType(metadata)
 
+    internal fun selectedMediaId(metadata: PlexMetadataDto): String? =
+        selectPrimaryMedia(metadata.media)?.id?.trim()?.takeIf { it.isNotEmpty() }
+
+    internal fun mapTechnicalSpecsByMediaId(metadata: PlexMetadataDto): List<Pair<String?, MediaTechnicalSpecs>> =
+        metadata.media
+            .orEmpty()
+            .mapNotNull { media ->
+                val specs = mapTechnicalSpecs(media, selectPrimaryPart(media.part)) ?: return@mapNotNull null
+                media.id?.trim()?.takeIf { it.isNotEmpty() } to specs
+            }
+
     fun mapMediaItemDetails(
         metadata: PlexMetadataDto,
         parentSeason: PlexMetadataDto? = null,

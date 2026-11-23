@@ -146,6 +146,8 @@ private data class MockIdpScenario(
     val groupsInIdToken: List<String>? = listOf("miru-users"),
     val groupsInUserInfo: List<String>? = null,
     val includeEndSessionEndpoint: Boolean = true,
+    val includeUserInfoEndpoint: Boolean = true,
+    val userInfoFails: Boolean = false,
 )
 
 private class OidcTestHarness(
@@ -189,7 +191,12 @@ private fun createMockIdpEngine(
                                 issuer = "https://idp.miru.test/o/miru",
                                 authorizationEndpoint = "https://idp.miru.test/o/miru/authorize",
                                 tokenEndpoint = "https://idp.miru.test/o/miru/token",
-                                userinfoEndpoint = "https://idp.miru.test/o/miru/userinfo",
+                                userinfoEndpoint =
+                                    if (scenarioProvider().includeUserInfoEndpoint) {
+                                        "https://idp.miru.test/o/miru/userinfo"
+                                    } else {
+                                        null
+                                    },
                                 jwksUri = "https://idp.miru.test/o/miru/jwks",
                                 endSessionEndpoint =
                                     if (includeEndSessionEndpoint) {
@@ -258,21 +265,25 @@ private fun createMockIdpEngine(
 
             "/o/miru/userinfo" -> {
                 val scenario = scenarioProvider()
-                val body =
-                    buildJsonObject {
-                        put("sub", scenario.subjectInUserInfo)
-                        scenario.emailInUserInfo?.let { put("email", it) }
-                        scenario.preferredUsernameInUserInfo?.let { put("preferred_username", it) }
-                        scenario.emailVerifiedInUserInfo?.let { put("email_verified", it) }
-                        scenario.groupsInUserInfo?.let { groups ->
-                            put("groups", buildJsonArray { groups.forEach { add(JsonPrimitive(it)) } })
+                if (scenario.userInfoFails) {
+                    respond("Upstream error", HttpStatusCode.BadGateway)
+                } else {
+                    val body =
+                        buildJsonObject {
+                            put("sub", scenario.subjectInUserInfo)
+                            scenario.emailInUserInfo?.let { put("email", it) }
+                            scenario.preferredUsernameInUserInfo?.let { put("preferred_username", it) }
+                            scenario.emailVerifiedInUserInfo?.let { put("email_verified", it) }
+                            scenario.groupsInUserInfo?.let { groups ->
+                                put("groups", buildJsonArray { groups.forEach { add(JsonPrimitive(it)) } })
+                            }
                         }
-                    }
-                respond(
-                    content = body.toString(),
-                    status = HttpStatusCode.OK,
-                    headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
-                )
+                    respond(
+                        content = body.toString(),
+                        status = HttpStatusCode.OK,
+                        headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+                    )
+                }
             }
 
             else -> respond("Not Found", HttpStatusCode.NotFound)
@@ -1097,6 +1108,70 @@ class OidcAuthRoutesTest :
                     val client = createClient { followRedirects = false }
                     client.linkedMediaUserIds(client.signInWithOidc("code-1", expectedChallengeHolder)).shouldBeEmpty()
                 }
+                // Leaving emailVerified unset while linking is off ensures enabling it later links on next sign-in.
+                val stored = harness.accountRepo.findByProviderAndSubject("OIDC", "sub-alice").shouldBeRight().shouldNotBeNull()
+                stored.emailVerified.shouldBeNull()
+            }
+        }
+
+        test("keeps a verified SSO account's links when userinfo fails transiently during sign-in") {
+            var scenario = MockIdpScenario()
+            val expectedChallengeHolder = mutableMapOf<String, String>()
+
+            createOidcHarness(scenarioProvider = { scenario }, expectedChallengeHolder = expectedChallengeHolder).use { harness ->
+                harness.upsertPlexServer()
+                harness.upsertMediaUser(id = "mu-alice", externalUserId = "100", email = "alice@miru.local")
+
+                testApplication {
+                    setupApp(harness)
+                    val client = createClient { followRedirects = false }
+                    val alice =
+                        MockIdpScenario(
+                            subject = "sub-alice",
+                            preferredUsername = "alice",
+                            email = "alice@miru.local",
+                            emailVerifiedInIdToken = null,
+                            emailVerifiedInUserInfo = true,
+                        )
+
+                    // Initial verified sign-in via userinfo links Alice.
+                    scenario = alice
+                    client.linkedMediaUserIds(client.signInWithOidc("code-1", expectedChallengeHolder)) shouldContainExactly
+                        listOf("mu-alice")
+
+                    // A transient 502 from userinfo must not mark the account unverified or wipe her links.
+                    scenario = alice.copy(userInfoFails = true)
+                    client.linkedMediaUserIds(client.signInWithOidc("code-2", expectedChallengeHolder)) shouldContainExactly
+                        listOf("mu-alice")
+                    val stored =
+                        harness.accountRepo.findByProviderAndSubject("OIDC", "sub-alice").shouldBeRight().shouldNotBeNull()
+                    stored.emailVerified shouldBe true
+                }
+            }
+        }
+
+        test("unlinks an AUTO account when the IdP publishes no userinfo endpoint and omits email_verified") {
+            val expectedChallengeHolder = mutableMapOf<String, String>()
+            val scenario =
+                MockIdpScenario(
+                    subject = "sub-noui",
+                    preferredUsername = "noui",
+                    email = "alice@miru.local",
+                    emailVerifiedInIdToken = null,
+                    includeUserInfoEndpoint = false,
+                )
+
+            createOidcHarness(scenarioProvider = { scenario }, expectedChallengeHolder = expectedChallengeHolder).use { harness ->
+                harness.upsertPlexServer()
+                harness.upsertMediaUser(id = "mu-alice", externalUserId = "100", email = "alice@miru.local")
+
+                testApplication {
+                    setupApp(harness)
+                    val client = createClient { followRedirects = false }
+                    client.linkedMediaUserIds(client.signInWithOidc("code-1", expectedChallengeHolder)).shouldBeEmpty()
+                }
+                val stored = harness.accountRepo.findByProviderAndSubject("OIDC", "sub-noui").shouldBeRight().shouldNotBeNull()
+                stored.emailVerified shouldBe false
             }
         }
     })

@@ -1036,4 +1036,88 @@ class HistoryStatsRoutesTest :
                 }
             }
         }
+
+        test("exposes stream conversion fields in history details and normalizes blank displayName to null") {
+            createHistoryHarness().use { harness ->
+                val adminLogin = harness.authService.setupInitialAdmin("admin", "Admin-strong-password-123").shouldBeRight()
+                seedUsersAndHistory(harness)
+                harness.userRepo
+                    .upsert(
+                        UserRecord(
+                            id = "u-blank",
+                            serverId = "srv-1",
+                            externalUserId = "300",
+                            username = "blankuser",
+                            displayName = "   ",
+                            createdAtMs = 1_000L,
+                            updatedAtMs = 1_000L,
+                        ),
+                    ).shouldBeRight()
+                harness.historyRepo
+                    .insert(
+                        historyMovieRecord(
+                            id = "hist-conv",
+                            userId = "u-blank",
+                            ratingKey = "77001",
+                            title = "Resonance",
+                            year = 2014,
+                            thumbPath = "/library/metadata/77000/thumb/1700000200",
+                            watchedDurationSec = 200,
+                            pausedDurationSec = 0,
+                            completionPercent = 95.0,
+                            streamTech =
+                                StreamTechRecord(
+                                    streamDecision = "transcode",
+                                    videoDecision = "transcode",
+                                    audioDecision = "transcode",
+                                    hwTranscode = true,
+                                    videoCodec = "hevc",
+                                    audioCodec = "truehd",
+                                    transcodeVideoCodec = "h264",
+                                    transcodeAudioCodec = "aac",
+                                    container = "mkv",
+                                    transcodeContainer = "mpegts",
+                                    subtitleDecision = "burn",
+                                    videoResolution = "4k",
+                                    bandwidthKbps = 15_000,
+                                ),
+                            player = PlayerRecord(playerProduct = "Plex Web"),
+                            startedAt = "2026-04-14T20:00:00Z",
+                            stoppedAt = "2026-04-14T20:05:00Z",
+                        ),
+                    ).shouldBeRight()
+
+                testApplication {
+                    setupApp(harness)
+                    val detailResp =
+                        client.get("/api/v1/history/hist-conv") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                        }
+                    detailResp.status shouldBe HttpStatusCode.OK
+                    val detail = MiruJson.decodeFromString<HistoryDetailResponse>(detailResp.bodyAsText())
+                    detail.username shouldBe "blankuser"
+                    detail.displayName.shouldBeNull()
+                    detail.media.thumbUrl shouldBe "/api/v1/media/77000/thumb"
+                    detail.streamTech.transcodeVideoCodec shouldBe "h264"
+                    detail.streamTech.transcodeAudioCodec shouldBe "aac"
+                    detail.streamTech.container shouldBe "mkv"
+                    detail.streamTech.transcodeContainer shouldBe "mpegts"
+                    detail.streamTech.subtitleDecision shouldBe "burn"
+
+                    val userStatsResp =
+                        client.get("/api/v1/users/u-blank/stats?range=30d") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                        }
+                    userStatsResp.status shouldBe HttpStatusCode.OK
+                    MiruJson.decodeFromString<UserStatsResponse>(userStatsResp.bodyAsText()).displayName.shouldBeNull()
+
+                    val wrappedResp =
+                        client.get("/api/v1/stats/wrapped/2026?userId=u-blank") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                        }
+                    wrappedResp.status shouldBe HttpStatusCode.OK
+                    MiruJson.decodeFromString<WrappedStatsResponse>(wrappedResp.bodyAsText()).displayName.shouldBeNull()
+                }
+            }
+        }
     })

@@ -115,6 +115,7 @@ fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
         historyAndStatsServiceTests { ctx }
         advancedAnalyticsServiceTests { ctx }
         streamConversionTests { ctx }
+        tinyPositivePercentTests { ctx }
         tautulliBatchAndImporterTests { ctx }
         userLibraryAccessTests { ctx }
     }
@@ -288,6 +289,12 @@ private fun FunSpecRootScope.userTests(ctxProvider: () -> ContractContext) {
             ctx.users.upsert(anotherAlice).shouldBeRight()
 
             ctx.users.findAll().shouldBeRight().map { it.id } shouldContainExactly listOf("user-0", "user-1", "user-2")
+            ctx.users.findByIds(emptyList()).shouldBeRight().shouldBeEmpty()
+            ctx.users
+                .findByIds(listOf("user-2", "user-1", "user-2", "missing"))
+                .shouldBeRight()
+                .map { it.id }
+                .sorted() shouldContainExactly listOf("user-1", "user-2")
         }
     }
 }
@@ -1596,7 +1603,8 @@ private fun FunSpecRootScope.streamConversionTests(ctxProvider: () -> ContractCo
                         transcodeVideoCodec = "*",
                     ),
                 ),
-                // Burning subtitles forces the re-encode, so it is not counted a second time as one.
+                // Burning subtitles forces the re-encode, so it is not counted a second time as one,
+                // including when the source video codec is unknown.
                 play(
                     "burn-same-codec",
                     StreamTechRecord(
@@ -1607,16 +1615,36 @@ private fun FunSpecRootScope.streamConversionTests(ctxProvider: () -> ContractCo
                         subtitleDecision = "burn",
                     ),
                 ),
+                play(
+                    "burn-unknown-source",
+                    StreamTechRecord(
+                        streamDecision = "transcode",
+                        videoDecision = "transcode",
+                        videoCodec = null,
+                        transcodeVideoCodec = "h264",
+                        subtitleDecision = "burn",
+                    ),
+                ),
+                play(
+                    "subtitle-transcode",
+                    StreamTechRecord(
+                        streamDecision = "transcode",
+                        videoDecision = "copy",
+                        audioDecision = "copy",
+                        subtitleDecision = "transcode",
+                    ),
+                ),
                 play("direct", StreamTechRecord(streamDecision = "direct_play", subtitleDecision = "burn")),
             ).forEach { ctx.history.insert(it).shouldBeRight() }
 
             ctx.history.findById("full").shouldBeRight().shouldNotBeNull().streamTech shouldBe fullTranscode
 
             val clients = service.getClientStats(admin, "30d").shouldBeRight()
-            clients.transcodeOrRemuxPlays shouldBe 9L
+            clients.transcodeOrRemuxPlays shouldBe 11L
             clients.transcodeReasons.associate { it.name to it.playCount } shouldBe
                 mapOf(
-                    "Subtitle Burn-in" to 2L,
+                    "Subtitle Burn-in" to 3L,
+                    "Subtitle Transcode" to 1L,
                     "Video HEVC → H.264" to 1L,
                     "Audio TRUEHD → AAC" to 1L,
                     "Video Re-encode (H.264)" to 1L,
@@ -1625,8 +1653,35 @@ private fun FunSpecRootScope.streamConversionTests(ctxProvider: () -> ContractCo
                     "Container Remux" to 1L,
                     "Video Transcode" to 3L,
                 )
-            // Shares are of the 9 non-Direct-Play sessions; one session can count toward several changes.
-            clients.transcodeReasons.single { it.name == "Video Transcode" }.percent shouldBe 33.33
+            // Shares are of the 11 non-Direct-Play sessions; one session can count toward several changes.
+            clients.transcodeReasons.single { it.name == "Video Transcode" }.percent shouldBe 27.27
+        }
+    }
+}
+
+private fun FunSpecRootScope.tinyPositivePercentTests(ctxProvider: () -> ContractContext) {
+    context("Statistic percentage rounding") {
+        test("never rounds a strictly positive stat share down to 0.0%") {
+            val ctx = ctxProvider()
+            val nowMs = Instant.parse("2026-04-10T12:00:00Z").toEpochMilli()
+            val admin = MiruPrincipal(accountId = "acc-admin", username = "admin", role = MiruRole.ADMIN)
+            val service = HistoryAndStatsService(playbackHistoryRepository = ctx.history, userRepository = ctx.users, clock = { nowMs })
+            ctx.servers.upsert(sampleServer(id = "srv-tiny")).shouldBeRight()
+            ctx.users.upsert(sampleUser(id = "u-tiny", serverId = "srv-tiny", externalUserId = "1", username = "alice")).shouldBeRight()
+
+            val stoppedAt = Instant.parse("2026-04-09T22:00:00Z").toEpochMilli()
+            val longPlay =
+                sampleHistory(id = "long-play", serverId = "srv-tiny", userId = "u-tiny", ratingKey = "rk-long", stoppedAtMs = stoppedAt)
+                    .copy(watchedDurationSec = 100_000, player = PlayerRecord(playerProduct = "Apple TV"))
+            val tinyPlay =
+                sampleHistory(id = "tiny-play", serverId = "srv-tiny", userId = "u-tiny", ratingKey = "rk-tiny", stoppedAtMs = stoppedAt)
+                    .copy(watchedDurationSec = 1, player = PlayerRecord(playerProduct = "Plexamp"))
+            ctx.history.insert(longPlay).shouldBeRight()
+            ctx.history.insert(tinyPlay).shouldBeRight()
+
+            val clients = service.getClientStats(admin, "30d", metricRaw = "duration").shouldBeRight()
+            // 1 / 100_001 = 0.000999% -> clamped to 0.01% instead of 0.0% so UI renders "<1%" with a hairline bar.
+            clients.players.single { it.name == "Plexamp" }.percent shouldBe 0.01
         }
     }
 }

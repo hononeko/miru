@@ -10,6 +10,7 @@ import app.hononeko.miru.persistence.model.UserRecord
 import app.hononeko.miru.persistence.repository.MediaServerRepository
 import app.hononeko.miru.persistence.repository.PlaybackHistoryRepository
 import app.hononeko.miru.persistence.repository.UserRepository
+import app.hononeko.miru.session.moreConverted
 import arrow.core.Either
 import arrow.core.raise.Raise
 import arrow.core.raise.either
@@ -365,10 +366,7 @@ class TautulliImporterService(
             val isWatched = completionPercent >= watchedThresholdPercent.toDouble()
 
             val raw = latest.row
-            val videoDecision = normalizeDecisionOrNull(raw.videoDecision)
-            val audioDecision = normalizeDecisionOrNull(raw.audioDecision)
-            val streamDecision = resolveStreamDecision(raw.transcodeDecision, videoDecision, audioDecision)
-            val hwTranscode = raw.transcodeHwDecoding == 1 || raw.transcodeHwEncoding == 1
+            val streamTech = group.map { mapStreamTech(it.row) }.reduce(::moreConverted)
             val miruUserId = userIdByExternalId.getValue(latest.externalUserId)
 
             PlaybackHistoryRecord(
@@ -395,27 +393,7 @@ class TautulliImporterService(
                 pausedDurationSec = pausedDurationSec,
                 completionPercent = completionPercent,
                 isWatched = isWatched,
-                streamTech =
-                    StreamTechRecord(
-                        streamDecision = streamDecision,
-                        videoDecision = videoDecision,
-                        audioDecision = audioDecision,
-                        hwTranscode = hwTranscode,
-                        videoCodec = raw.videoCodec ?: raw.streamVideoCodec,
-                        audioCodec = raw.audioCodec ?: raw.streamAudioCodec,
-                        videoResolution = raw.videoResolution ?: raw.streamVideoResolution,
-                        bandwidthKbps = raw.bandwidth ?: raw.bitrate,
-                        // Tautulli's transcode_* columns mirror Plex's transcode session; stream_* describe what
-                        // reached the player and fill in for databases without them.
-                        transcodeVideoCodec =
-                            (raw.transcodeVideoCodec ?: raw.streamVideoCodec)?.takeIf { videoDecision == "transcode" },
-                        transcodeAudioCodec =
-                            (raw.transcodeAudioCodec ?: raw.streamAudioCodec)?.takeIf { audioDecision == "transcode" },
-                        container = raw.container,
-                        transcodeContainer =
-                            (raw.transcodeContainer ?: raw.streamContainer)?.takeIf { streamDecision != "direct_play" },
-                        subtitleDecision = raw.streamSubtitleDecision?.lowercase(),
-                    ),
+                streamTech = streamTech,
                 player =
                     PlayerRecord(
                         playerName = raw.player,
@@ -430,6 +408,36 @@ class TautulliImporterService(
             )
         }
     }
+
+    private fun mapStreamTech(raw: TautulliHistoryRow): StreamTechRecord {
+        val videoDecision = normalizeDecisionOrNull(raw.videoDecision)
+        val audioDecision = normalizeDecisionOrNull(raw.audioDecision)
+        val streamDecision = resolveStreamDecision(raw.transcodeDecision, videoDecision, audioDecision)
+        val hwTranscode = raw.transcodeHwDecoding == 1 || raw.transcodeHwEncoding == 1
+        return StreamTechRecord(
+            streamDecision = streamDecision,
+            videoDecision = videoDecision,
+            audioDecision = audioDecision,
+            hwTranscode = hwTranscode,
+            // Do not fall back to the output stream codec for a stream that was transcoded.
+            videoCodec = knownCodec(raw.videoCodec) ?: knownCodec(raw.streamVideoCodec)?.takeIf { videoDecision != "transcode" },
+            audioCodec = knownCodec(raw.audioCodec) ?: knownCodec(raw.streamAudioCodec)?.takeIf { audioDecision != "transcode" },
+            videoResolution = raw.videoResolution ?: raw.streamVideoResolution,
+            bandwidthKbps = raw.bandwidth ?: raw.bitrate,
+            // Tautulli's transcode_* columns mirror Plex's transcode session; stream_* describe what
+            // reached the player and fill in for databases without them.
+            transcodeVideoCodec =
+                (knownCodec(raw.transcodeVideoCodec) ?: knownCodec(raw.streamVideoCodec))?.takeIf { videoDecision == "transcode" },
+            transcodeAudioCodec =
+                (knownCodec(raw.transcodeAudioCodec) ?: knownCodec(raw.streamAudioCodec))?.takeIf { audioDecision == "transcode" },
+            container = knownCodec(raw.container),
+            transcodeContainer =
+                (knownCodec(raw.transcodeContainer) ?: knownCodec(raw.streamContainer))?.takeIf { streamDecision != "direct_play" },
+            subtitleDecision = raw.streamSubtitleDecision?.trim()?.lowercase()?.takeIf { it.isNotEmpty() },
+        )
+    }
+
+    private fun knownCodec(raw: String?): String? = raw?.trim()?.takeIf { it.isNotEmpty() && it != "*" }
 
     private suspend fun processBatches(
         dryRun: Boolean,

@@ -1284,6 +1284,11 @@ export interface components {
             audioCodec?: string | null;
             videoResolution?: string | null;
             bandwidthKbps?: number | null;
+            transcodeVideoCodec?: string | null;
+            transcodeAudioCodec?: string | null;
+            container?: string | null;
+            transcodeContainer?: string | null;
+            subtitleDecision?: string | null;
         };
         HistoryPlayerDto: {
             playerName?: string | null;
@@ -1445,7 +1450,7 @@ export interface components {
             platforms: components["schemas"]["ClientBreakdownItemDto"][];
             videoCodecs: components["schemas"]["ClientBreakdownItemDto"][];
             audioCodecs: components["schemas"]["ClientBreakdownItemDto"][];
-            /** @description What non-Direct-Play sessions changed, for example `Subtitle Burn-in`, `Video HEVC → H.264`, `Audio TRUEHD → AAC` or `Container MKV → MPEGTS`. A session that changes several things counts toward each, so `percent` is the share of non-Direct-Play sessions with that change and the list can add up to more than 100%. Sessions recorded before conversion details were stored appear as `Video Transcode`, `Audio Transcode` or `Container Remux`. */
+            /** @description What non-Direct-Play sessions changed, for example `Subtitle Burn-in`, `Subtitle Transcode`, `Video HEVC → H.264`, `Audio TRUEHD → AAC` or `Container MKV → MPEGTS`. A session that changes several things counts toward each, so `percent` is the share of non-Direct-Play sessions with that change and the list can add up to more than 100%. Sessions recorded before conversion details were stored appear as `Video Transcode`, `Audio Transcode` or `Container Remux`. */
             transcodeReasons: components["schemas"]["ClientBreakdownItemDto"][];
         };
         WrappedMonthStatDto: {

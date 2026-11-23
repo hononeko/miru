@@ -78,6 +78,7 @@
 	let linkOpen = $state(false);
 	let selectedMediaUserIds = $state<string[]>([]);
 	let linkSubmitting = $state(false);
+	let linkError = $state<string | null>(null);
 
 	// Create API Key Sheet
 	let createKeyOpen = $state(false);
@@ -396,6 +397,7 @@
 	function openLinkSheet(account: AccountResponse) {
 		linkTarget = account;
 		selectedMediaUserIds = [...account.linkedMediaUserIds];
+		linkError = null;
 		linkOpen = true;
 	}
 
@@ -410,7 +412,7 @@
 	async function handleSaveLinks() {
 		if (!linkTarget) return;
 		linkSubmitting = true;
-		error = null;
+		linkError = null;
 		try {
 			unwrap(
 				await api.PUT('/api/v1/admin/accounts/{id}/media-users', {
@@ -421,7 +423,7 @@
 			linkOpen = false;
 			await loadAll();
 		} catch (err) {
-			error = err instanceof MiruApiError ? err.detail : 'Failed to update linked media users';
+			linkError = err instanceof MiruApiError ? err.detail : 'Failed to update linked media users';
 		} finally {
 			linkSubmitting = false;
 		}
@@ -430,7 +432,7 @@
 	async function handleUseEmailLinking() {
 		if (!linkTarget) return;
 		linkSubmitting = true;
-		error = null;
+		linkError = null;
 		try {
 			unwrap(
 				await api.PUT('/api/v1/admin/accounts/{id}/media-user-link-mode', {
@@ -441,7 +443,7 @@
 			linkOpen = false;
 			await loadAll();
 		} catch (err) {
-			error = err instanceof MiruApiError ? err.detail : 'Failed to switch to email linking';
+			linkError = err instanceof MiruApiError ? err.detail : 'Failed to switch to email linking';
 		} finally {
 			linkSubmitting = false;
 		}
@@ -1198,16 +1200,23 @@
 <!-- Link Media Users Sheet -->
 <Sheet
 	bind:open={linkOpen}
-	onOpenChange={(v) => (linkOpen = v)}
+	onOpenChange={(v) => {
+		linkOpen = v;
+		if (!v) linkError = null;
+	}}
 	title={`Link Media Users · ${linkTarget?.username ?? ''}`}
 	description="Select which Plex users this account may view"
 >
 	<div class="flex flex-col gap-3">
-		{#if linkTarget?.authProvider === 'OIDC'}
+		{#if linkError}
+			<div role="alert" class="rounded-lg border border-danger/50 bg-danger-soft px-3 py-2 text-xs text-danger">
+				{linkError}
+			</div>
+		{/if}
+		{#if linkTarget?.authProvider === 'OIDC' && linkTarget.role !== 'ADMIN'}
 			{#if !emailLinkingEnabled}
 				<p class="rounded-lg border border-border bg-elevated px-3 py-2.5 text-[11px] text-fg-secondary">
-					Email linking is off (OIDC_AUTO_LINK_BY_EMAIL=false), so SSO sign-in never changes these
-					links.
+					Automatic email linking is currently disabled, so SSO sign-in never changes these links.
 				</p>
 			{:else if linkTarget.mediaUserLinkMode === 'AUTO'}
 				<p class="rounded-lg border border-border bg-elevated px-3 py-2.5 text-[11px] text-fg-secondary">
@@ -1226,6 +1235,10 @@
 						Linked manually: Miru leaves these links as they are. Switching to email linking relinks
 						the account right away if its email was checked at its last SSO sign-in, otherwise at its
 						next one.
+						{#if linkTarget.emailVerified === false}
+							Its identity provider has not marked the email as verified, so switching will clear
+							its current links.
+						{/if}
 					</p>
 					<Button
 						variant="outline"

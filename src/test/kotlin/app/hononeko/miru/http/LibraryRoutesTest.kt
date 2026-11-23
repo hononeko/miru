@@ -25,6 +25,8 @@ import app.hononeko.miru.persistence.model.LibrarySnapshotRecord
 import app.hononeko.miru.persistence.model.MediaItemCacheRecord
 import app.hononeko.miru.persistence.model.MediaItemTechRecord
 import app.hononeko.miru.persistence.model.MediaServerRecord
+import app.hononeko.miru.persistence.model.UserLibraryAccessRecord
+import app.hononeko.miru.persistence.model.UserRecord
 import app.hononeko.miru.persistence.repository.ExposedApiKeyRepository
 import app.hononeko.miru.persistence.repository.ExposedAuthAccountRepository
 import app.hononeko.miru.persistence.repository.ExposedAuthSessionRepository
@@ -38,6 +40,7 @@ import arrow.core.left
 import arrow.core.right
 import io.kotest.assertions.arrow.core.shouldBeRight
 import io.kotest.core.spec.style.FunSpec
+import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.maps.shouldContainExactly
@@ -65,6 +68,7 @@ private class LibraryRouteHarness(
     val appConfig: AppConfig,
     val authService: AuthService,
     val serverRepo: ExposedMediaServerRepository,
+    val userRepo: ExposedUserRepository,
     val libraryRepo: ExposedLibraryRepository,
     val queryService: LibraryQueryService,
 ) : AutoCloseable {
@@ -83,12 +87,13 @@ private fun createLibraryRouteHarness(): LibraryRouteHarness {
             mode = AuthMode.LOCAL,
             sessionSecret = "super-secret-session-signing-key-32-chars",
         )
+    val userRepo = ExposedUserRepository(handle)
     val authService =
         AuthService(
             accountRepository = ExposedAuthAccountRepository(handle),
             sessionRepository = ExposedAuthSessionRepository(handle),
             apiKeyRepository = ExposedApiKeyRepository(handle),
-            userRepository = ExposedUserRepository(handle),
+            userRepository = userRepo,
             passwordHasher = Argon2idPasswordHasher(Argon2Params(memoryKb = 1024, iterations = 1, parallelism = 1)),
             authConfig = authConfig,
         )
@@ -107,6 +112,7 @@ private fun createLibraryRouteHarness(): LibraryRouteHarness {
         appConfig = appConfig,
         authService = authService,
         serverRepo = ExposedMediaServerRepository(handle),
+        userRepo = userRepo,
         libraryRepo = libraryRepo,
         queryService = LibraryQueryService(libraryRepo),
     )
@@ -287,13 +293,31 @@ class LibraryRoutesTest :
 
                     // Unauthenticated rejected
                     client.get("/api/v1/libraries").status shouldBe HttpStatusCode.Unauthorized
+                    client.get("/api/v1/libraries/1").status shouldBe HttpStatusCode.Unauthorized
                     client.get("/api/v1/libraries/1/stats").status shouldBe HttpStatusCode.Unauthorized
                     client.get("/api/v1/libraries/1/recent").status shouldBe HttpStatusCode.Unauthorized
 
-                    // USER can read libraries
-                    val listResp =
+                    // Unlinked USER sees empty library list and receives 403 on detail/stats/recent
+                    val unlinkedListResp =
                         client.get("/api/v1/libraries") {
                             cookie(SESSION_COOKIE_NAME, userLogin.signedToken)
+                        }
+                    unlinkedListResp.status shouldBe HttpStatusCode.OK
+                    MiruJson.decodeFromString<LibraryListResponse>(unlinkedListResp.bodyAsText()).libraries.shouldBeEmpty()
+                    client
+                        .get("/api/v1/libraries/1") { cookie(SESSION_COOKIE_NAME, userLogin.signedToken) }
+                        .status shouldBe HttpStatusCode.Forbidden
+                    client
+                        .get("/api/v1/libraries/1/stats") { cookie(SESSION_COOKIE_NAME, userLogin.signedToken) }
+                        .status shouldBe HttpStatusCode.Forbidden
+                    client
+                        .get("/api/v1/libraries/1/recent") { cookie(SESSION_COOKIE_NAME, userLogin.signedToken) }
+                        .status shouldBe HttpStatusCode.Forbidden
+
+                    // ADMIN reads full libraries list and single section without exposing secrets
+                    val listResp =
+                        client.get("/api/v1/libraries") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
                         }
                     listResp.status shouldBe HttpStatusCode.OK
                     val listBody = listResp.bodyAsText()
@@ -303,6 +327,13 @@ class LibraryRoutesTest :
                     libraries shouldHaveSize 2
                     libraries.map { it.sectionKey } shouldContainExactly listOf("1", "2")
                     libraries.first().totalSizeBytes shouldBe 1_200_000_000_000L
+
+                    val sectionResp =
+                        client.get("/api/v1/libraries/1") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                        }
+                    sectionResp.status shouldBe HttpStatusCode.OK
+                    MiruJson.decodeFromString<LibrarySectionResponse>(sectionResp.bodyAsText()).title shouldBe "Movies"
 
                     // Stats endpoint returns section, aggregates from latest snapshot, and snapshot history
                     val statsResp =
@@ -320,7 +351,7 @@ class LibraryRoutesTest :
                     // Filtered snapshot window preserves latest breakdown
                     val windowResp =
                         client.get("/api/v1/libraries/1/stats?from=5000&to=20000&limit=10") {
-                            cookie(SESSION_COOKIE_NAME, userLogin.signedToken)
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
                         }
                     windowResp.status shouldBe HttpStatusCode.OK
                     val windowStats = MiruJson.decodeFromString<LibraryStatsResponse>(windowResp.bodyAsText())
@@ -330,7 +361,7 @@ class LibraryRoutesTest :
                     // Recent endpoint maps thumbPath to artwork proxy URL and omits internal Plex paths/tokens
                     val recentResp =
                         client.get("/api/v1/libraries/1/recent?limit=10") {
-                            cookie(SESSION_COOKIE_NAME, userLogin.signedToken)
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
                         }
                     recentResp.status shouldBe HttpStatusCode.OK
                     val recentText = recentResp.bodyAsText()
@@ -345,40 +376,47 @@ class LibraryRoutesTest :
                             "rk-1" to "/api/v1/media/rk-1/thumb",
                         )
 
-                    // 404 on unknown section
+                    // 404 on unknown section for ADMIN
+                    val missingSection =
+                        client.get("/api/v1/libraries/999") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                        }
+                    missingSection.status shouldBe HttpStatusCode.NotFound
+                    missingSection.contentType()?.withoutParameters() shouldBe ContentType.Application.ProblemJson
+
                     val missingStats =
                         client.get("/api/v1/libraries/999/stats") {
-                            cookie(SESSION_COOKIE_NAME, userLogin.signedToken)
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
                         }
                     missingStats.status shouldBe HttpStatusCode.NotFound
                     missingStats.contentType()?.withoutParameters() shouldBe ContentType.Application.ProblemJson
 
                     val missingRecent =
                         client.get("/api/v1/libraries/999/recent") {
-                            cookie(SESSION_COOKIE_NAME, userLogin.signedToken)
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
                         }
                     missingRecent.status shouldBe HttpStatusCode.NotFound
 
                     // 400 on invalid query parameters
                     client
                         .get("/api/v1/libraries/1/stats?limit=0") {
-                            cookie(SESSION_COOKIE_NAME, userLogin.signedToken)
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
                         }.status shouldBe HttpStatusCode.BadRequest
                     client
                         .get("/api/v1/libraries/1/stats?limit=abc") {
-                            cookie(SESSION_COOKIE_NAME, userLogin.signedToken)
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
                         }.status shouldBe HttpStatusCode.BadRequest
                     client
                         .get("/api/v1/libraries/1/stats?from=200&to=100") {
-                            cookie(SESSION_COOKIE_NAME, userLogin.signedToken)
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
                         }.status shouldBe HttpStatusCode.BadRequest
                     client
                         .get("/api/v1/libraries/1/stats?from=-1&to=100") {
-                            cookie(SESSION_COOKIE_NAME, userLogin.signedToken)
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
                         }.status shouldBe HttpStatusCode.BadRequest
                     client
                         .get("/api/v1/libraries/1/recent?limit=101") {
-                            cookie(SESSION_COOKIE_NAME, userLogin.signedToken)
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
                         }.status shouldBe HttpStatusCode.BadRequest
                 }
             }
@@ -387,9 +425,7 @@ class LibraryRoutesTest :
         test("supports serverId filtering, 409 on ambiguous sectionKey, and malformed snapshot JSON fallback") {
             createLibraryRouteHarness().use { harness ->
                 seedSampleLibraryData(harness)
-                harness.authService.setupInitialAdmin("admin", "Admin-password-123").shouldBeRight()
-                harness.authService.createAccount("viewer", "Viewer-password-123", role = MiruRole.USER).shouldBeRight()
-                val userLogin = harness.authService.login("viewer", "Viewer-password-123").shouldBeRight()
+                val adminLogin = harness.authService.setupInitialAdmin("admin", "Admin-password-123").shouldBeRight()
 
                 harness.serverRepo
                     .upsert(
@@ -437,7 +473,7 @@ class LibraryRoutesTest :
 
                     val filteredResp =
                         client.get("/api/v1/libraries?serverId=srv-2") {
-                            cookie(SESSION_COOKIE_NAME, userLogin.signedToken)
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
                         }
                     filteredResp.status shouldBe HttpStatusCode.OK
                     MiruJson.decodeFromString<LibraryListResponse>(filteredResp.bodyAsText()).libraries.single().title shouldBe
@@ -445,20 +481,212 @@ class LibraryRoutesTest :
 
                     client
                         .get("/api/v1/libraries/1/stats") {
-                            cookie(SESSION_COOKIE_NAME, userLogin.signedToken)
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
                         }.status shouldBe HttpStatusCode.Conflict
 
                     val disambiguatedStats =
                         client.get("/api/v1/libraries/1/stats?serverId=srv-2") {
-                            cookie(SESSION_COOKIE_NAME, userLogin.signedToken)
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
                         }
                     disambiguatedStats.status shouldBe HttpStatusCode.OK
                     MiruJson.decodeFromString<LibraryStatsResponse>(disambiguatedStats.bodyAsText()).byResolution shouldBe emptyMap()
 
                     client
                         .get("/api/v1/libraries/999/recent?serverId=srv-2") {
-                            cookie(SESSION_COOKIE_NAME, userLogin.signedToken)
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
                         }.status shouldBe HttpStatusCode.NotFound
+                }
+            }
+        }
+
+        test("enforces per-user Plex shared-library RBAC across list, detail, stats, recent, multi-server, and revocation") {
+            createLibraryRouteHarness().use { harness ->
+                seedSampleLibraryData(harness)
+                harness.authService.setupInitialAdmin("admin", "Admin-password-123").shouldBeRight()
+
+                harness.serverRepo
+                    .upsert(
+                        MediaServerRecord(
+                            id = "srv-2",
+                            name = "Backup Plex",
+                            serverType = "plex",
+                            machineId = "mach-2",
+                            baseUrl = "http://backup-plex.lan:32400",
+                            createdAtMs = 2_000L,
+                            updatedAtMs = 2_000L,
+                        ),
+                    ).shouldBeRight()
+                harness.libraryRepo
+                    .upsertSection(
+                        LibrarySectionRecord(
+                            serverId = "srv-2",
+                            sectionKey = "1",
+                            title = "Movies Backup",
+                            sectionType = "movie",
+                            itemCount = 10,
+                            childCount = 0,
+                            leafCount = 10,
+                            updatedAtMs = 60_000L,
+                        ),
+                    ).shouldBeRight()
+
+                harness.userRepo
+                    .upsert(
+                        UserRecord(
+                            id = "mu-owner",
+                            serverId = "srv-1",
+                            externalUserId = "1",
+                            username = "owner",
+                            isAdmin = true,
+                            createdAtMs = 1_000L,
+                            updatedAtMs = 1_000L,
+                        ),
+                    ).shouldBeRight()
+                harness.userRepo
+                    .upsert(
+                        UserRecord(
+                            id = "mu-bob",
+                            serverId = "srv-1",
+                            externalUserId = "2002",
+                            username = "bob",
+                            createdAtMs = 1_000L,
+                            updatedAtMs = 1_000L,
+                        ),
+                    ).shouldBeRight()
+                harness.userRepo
+                    .upsert(
+                        UserRecord(
+                            id = "mu-carol",
+                            serverId = "srv-1",
+                            externalUserId = "3003",
+                            username = "carol",
+                            createdAtMs = 1_000L,
+                            updatedAtMs = 1_000L,
+                        ),
+                    ).shouldBeRight()
+                harness.userRepo
+                    .upsert(
+                        UserRecord(
+                            id = "mu-dave",
+                            serverId = "srv-2",
+                            externalUserId = "4004",
+                            username = "dave",
+                            createdAtMs = 1_000L,
+                            updatedAtMs = 1_000L,
+                        ),
+                    ).shouldBeRight()
+
+                harness.libraryRepo
+                    .replaceUserLibraryAccess(
+                        serverId = "srv-1",
+                        records =
+                            listOf(
+                                UserLibraryAccessRecord(
+                                    serverId = "srv-1",
+                                    externalUserId = "2002",
+                                    allLibraries = false,
+                                    sectionKeys = setOf("1"),
+                                    updatedAtMs = 5_000L,
+                                ),
+                                UserLibraryAccessRecord(
+                                    serverId = "srv-1",
+                                    externalUserId = "3003",
+                                    allLibraries = true,
+                                    sectionKeys = emptySet(),
+                                    updatedAtMs = 5_000L,
+                                ),
+                            ),
+                    ).shouldBeRight()
+                harness.libraryRepo
+                    .replaceUserLibraryAccess(
+                        serverId = "srv-2",
+                        records =
+                            listOf(
+                                UserLibraryAccessRecord(
+                                    serverId = "srv-2",
+                                    externalUserId = "4004",
+                                    allLibraries = false,
+                                    sectionKeys = setOf("1"),
+                                    updatedAtMs = 5_000L,
+                                ),
+                            ),
+                    ).shouldBeRight()
+
+                harness.authService
+                    .createAccount("bob", "Bob-password-123", role = MiruRole.USER, linkedMediaUserIds = setOf("mu-bob"))
+                    .shouldBeRight()
+                val bobLogin = harness.authService.login("bob", "Bob-password-123").shouldBeRight()
+
+                harness.authService
+                    .createAccount("carol", "Carol-password-123", role = MiruRole.USER, linkedMediaUserIds = setOf("mu-carol"))
+                    .shouldBeRight()
+                val carolLogin = harness.authService.login("carol", "Carol-password-123").shouldBeRight()
+
+                harness.authService
+                    .createAccount("owner", "Owner-password-123", role = MiruRole.USER, linkedMediaUserIds = setOf("mu-owner"))
+                    .shouldBeRight()
+                val ownerLogin = harness.authService.login("owner", "Owner-password-123").shouldBeRight()
+
+                harness.authService
+                    .createAccount("dave", "Dave-password-123", role = MiruRole.USER, linkedMediaUserIds = setOf("mu-dave"))
+                    .shouldBeRight()
+                val daveLogin = harness.authService.login("dave", "Dave-password-123").shouldBeRight()
+
+                testApplication {
+                    setupLibraryApp(harness)
+
+                    // Bob sees only section "1" (Movies), gets 403 for section "2" and unknown sections
+                    val bobLibs = MiruJson.decodeFromString<LibraryListResponse>(
+                        client.get("/api/v1/libraries") { cookie(SESSION_COOKIE_NAME, bobLogin.signedToken) }.bodyAsText(),
+                    )
+                    bobLibs.libraries.map { it.title } shouldContainExactly listOf("Movies")
+
+                    client.get("/api/v1/libraries/1") { cookie(SESSION_COOKIE_NAME, bobLogin.signedToken) }.status shouldBe
+                        HttpStatusCode.OK
+                    client.get("/api/v1/libraries/1/stats") { cookie(SESSION_COOKIE_NAME, bobLogin.signedToken) }.status shouldBe
+                        HttpStatusCode.OK
+                    client.get("/api/v1/libraries/1/recent") { cookie(SESSION_COOKIE_NAME, bobLogin.signedToken) }.status shouldBe
+                        HttpStatusCode.OK
+                    client.get("/api/v1/libraries/2") { cookie(SESSION_COOKIE_NAME, bobLogin.signedToken) }.status shouldBe
+                        HttpStatusCode.Forbidden
+                    client.get("/api/v1/libraries/2/stats") { cookie(SESSION_COOKIE_NAME, bobLogin.signedToken) }.status shouldBe
+                        HttpStatusCode.Forbidden
+                    client.get("/api/v1/libraries/2/recent") { cookie(SESSION_COOKIE_NAME, bobLogin.signedToken) }.status shouldBe
+                        HttpStatusCode.Forbidden
+                    client.get("/api/v1/libraries/999/stats") { cookie(SESSION_COOKIE_NAME, bobLogin.signedToken) }.status shouldBe
+                        HttpStatusCode.Forbidden
+
+                    // Carol (allLibraries = true) sees both Movies and TV Shows on srv-1
+                    val carolLibs = MiruJson.decodeFromString<LibraryListResponse>(
+                        client.get("/api/v1/libraries") { cookie(SESSION_COOKIE_NAME, carolLogin.signedToken) }.bodyAsText(),
+                    )
+                    carolLibs.libraries.map { it.title } shouldContainExactly listOf("Movies", "TV Shows")
+
+                    // Owner USER sees all sections on srv-1 even without user_library_access row
+                    val ownerLibs = MiruJson.decodeFromString<LibraryListResponse>(
+                        client.get("/api/v1/libraries") { cookie(SESSION_COOKIE_NAME, ownerLogin.signedToken) }.bodyAsText(),
+                    )
+                    ownerLibs.libraries.map { it.title } shouldContainExactly listOf("Movies", "TV Shows")
+
+                    // Dave only has access to srv-2 section "1", so GET /api/v1/libraries/1/stats resolves srv-2 without 409 leak
+                    val daveStats =
+                        client.get("/api/v1/libraries/1/stats") {
+                            cookie(SESSION_COOKIE_NAME, daveLogin.signedToken)
+                        }
+                    daveStats.status shouldBe HttpStatusCode.OK
+                    MiruJson.decodeFromString<LibraryStatsResponse>(daveStats.bodyAsText()).section.serverId shouldBe "srv-2"
+                    client
+                        .get("/api/v1/libraries/1/stats?serverId=srv-1") {
+                            cookie(SESSION_COOKIE_NAME, daveLogin.signedToken)
+                        }.status shouldBe HttpStatusCode.Forbidden
+
+                    // Revoking Bob's access hides all sections and returns 403 on detail
+                    harness.libraryRepo.replaceUserLibraryAccess("srv-1", emptyList()).shouldBeRight()
+                    MiruJson.decodeFromString<LibraryListResponse>(
+                        client.get("/api/v1/libraries") { cookie(SESSION_COOKIE_NAME, bobLogin.signedToken) }.bodyAsText(),
+                    ).libraries.shouldBeEmpty()
+                    client.get("/api/v1/libraries/1/stats") { cookie(SESSION_COOKIE_NAME, bobLogin.signedToken) }.status shouldBe
+                        HttpStatusCode.Forbidden
                 }
             }
         }

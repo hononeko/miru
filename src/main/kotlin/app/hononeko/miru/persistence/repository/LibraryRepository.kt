@@ -1,15 +1,21 @@
 package app.hononeko.miru.persistence.repository
 
+import app.hononeko.miru.MiruJson
 import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.persistence.DatabaseHandle
 import app.hononeko.miru.persistence.exposedQuery
 import app.hononeko.miru.persistence.model.LibrarySectionRecord
 import app.hononeko.miru.persistence.model.LibrarySnapshotRecord
 import app.hononeko.miru.persistence.model.MediaItemCacheRecord
+import app.hononeko.miru.persistence.model.ResolvedLibraryAccess
+import app.hononeko.miru.persistence.model.UserLibraryAccessRecord
 import app.hononeko.miru.persistence.table.LibrarySectionsTable
 import app.hononeko.miru.persistence.table.LibrarySnapshotsTable
 import app.hononeko.miru.persistence.table.MediaItemsCacheTable
+import app.hononeko.miru.persistence.table.UserLibraryAccessTable
+import app.hononeko.miru.persistence.table.UsersTable
 import arrow.core.Either
+import kotlinx.serialization.encodeToString
 import org.jetbrains.exposed.v1.core.Op
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
@@ -62,6 +68,19 @@ interface LibraryRepository {
         sectionKey: String,
         activeRatingKeys: Set<String>,
     ): Either<MiruError.PersistenceError, Int>
+
+    suspend fun replaceUserLibraryAccess(
+        serverId: String,
+        records: List<UserLibraryAccessRecord>,
+    ): Either<MiruError.PersistenceError, Unit>
+
+    suspend fun findUserLibraryAccessByServer(
+        serverId: String,
+    ): Either<MiruError.PersistenceError, List<UserLibraryAccessRecord>>
+
+    suspend fun findAccessibleLibrariesForMediaUsers(
+        mediaUserIds: Set<String>,
+    ): Either<MiruError.PersistenceError, ResolvedLibraryAccess>
 }
 
 class ExposedLibraryRepository(
@@ -262,6 +281,143 @@ class ExposedLibraryRepository(
             }
             deletedCount
         }
+
+    override suspend fun replaceUserLibraryAccess(
+        serverId: String,
+        records: List<UserLibraryAccessRecord>,
+    ): Either<MiruError.PersistenceError, Unit> =
+        database.exposedQuery("library_replace_user_access") {
+            UserLibraryAccessTable.deleteWhere { UserLibraryAccessTable.serverId eq serverId }
+
+            val deduplicated = linkedMapOf<String, UserLibraryAccessRecord>()
+            for (record in records) {
+                val externalId = record.externalUserId.trim()
+                if (externalId.isEmpty()) continue
+                val existing = deduplicated[externalId]
+                deduplicated[externalId] =
+                    if (existing == null) {
+                        record.copy(
+                            serverId = serverId,
+                            externalUserId = externalId,
+                            sectionKeys =
+                                if (record.allLibraries) {
+                                    emptySet()
+                                } else {
+                                    record.sectionKeys.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+                                },
+                        )
+                    } else {
+                        val combinedAll = existing.allLibraries || record.allLibraries
+                        val combinedKeys =
+                            if (combinedAll) {
+                                emptySet()
+                            } else {
+                                existing.sectionKeys + record.sectionKeys.map { it.trim() }.filter { it.isNotEmpty() }
+                            }
+                        existing.copy(
+                            allLibraries = combinedAll,
+                            sectionKeys = combinedKeys,
+                            updatedAtMs = maxOf(existing.updatedAtMs, record.updatedAtMs),
+                        )
+                    }
+            }
+
+            for (record in deduplicated.values) {
+                val encodedKeys =
+                    if (record.allLibraries) {
+                        "[]"
+                    } else {
+                        MiruJson.encodeToString(record.sectionKeys.sorted())
+                    }
+                UserLibraryAccessTable.insert {
+                    it[UserLibraryAccessTable.serverId] = serverId
+                    it[externalUserId] = record.externalUserId
+                    it[allLibraries] = record.allLibraries
+                    it[sectionKeysJson] = encodedKeys
+                    it[updatedAtMs] = record.updatedAtMs
+                }
+            }
+        }
+
+    override suspend fun findUserLibraryAccessByServer(
+        serverId: String,
+    ): Either<MiruError.PersistenceError, List<UserLibraryAccessRecord>> =
+        database.exposedQuery("library_find_user_access_by_server") {
+            UserLibraryAccessTable
+                .selectAll()
+                .where { UserLibraryAccessTable.serverId eq serverId }
+                .orderBy(UserLibraryAccessTable.externalUserId to SortOrder.ASC)
+                .map { it.toUserLibraryAccessRecord() }
+        }
+
+    override suspend fun findAccessibleLibrariesForMediaUsers(
+        mediaUserIds: Set<String>,
+    ): Either<MiruError.PersistenceError, ResolvedLibraryAccess> {
+        if (mediaUserIds.isEmpty()) {
+            return Either.Right(ResolvedLibraryAccess.EMPTY)
+        }
+        return database.exposedQuery("library_find_accessible_for_users") {
+            val userRows =
+                UsersTable
+                    .select(
+                        UsersTable.id,
+                        UsersTable.serverId,
+                        UsersTable.externalUserId,
+                        UsersTable.isAdmin,
+                    ).where { UsersTable.id inList mediaUserIds }
+                    .toList()
+
+            if (userRows.isEmpty()) {
+                return@exposedQuery ResolvedLibraryAccess.EMPTY
+            }
+
+            val allLibrariesServerIds = linkedSetOf<String>()
+            val pendingUserPairs = linkedSetOf<Pair<String, String>>()
+            for (row in userRows) {
+                val serverId = row[UsersTable.serverId]
+                if (row[UsersTable.isAdmin]) {
+                    allLibrariesServerIds += serverId
+                } else {
+                    pendingUserPairs += serverId to row[UsersTable.externalUserId]
+                }
+            }
+
+            val filteredPending = pendingUserPairs.filter { (serverId, _) -> serverId !in allLibrariesServerIds }
+            if (filteredPending.isEmpty()) {
+                return@exposedQuery ResolvedLibraryAccess(
+                    allLibrariesServerIds = allLibrariesServerIds,
+                    allowedSections = emptySet(),
+                )
+            }
+
+            val pendingByServer = filteredPending.groupBy({ it.first }, { it.second })
+            val allowedSections = linkedSetOf<Pair<String, String>>()
+
+            val accessRows =
+                UserLibraryAccessTable
+                    .selectAll()
+                    .where { UserLibraryAccessTable.serverId inList pendingByServer.keys }
+                    .map { it.toUserLibraryAccessRecord() }
+
+            for (record in accessRows) {
+                val targetExternalIds = pendingByServer[record.serverId].orEmpty()
+                if (record.externalUserId !in targetExternalIds) continue
+
+                if (record.allLibraries) {
+                    allLibrariesServerIds += record.serverId
+                } else {
+                    for (sectionKey in record.sectionKeys) {
+                        allowedSections += record.serverId to sectionKey
+                    }
+                }
+            }
+
+            ResolvedLibraryAccess(
+                allLibrariesServerIds = allLibrariesServerIds,
+                allowedSections = allowedSections,
+            )
+        }
+    }
 
     private companion object {
         const val BATCH_SIZE = 500

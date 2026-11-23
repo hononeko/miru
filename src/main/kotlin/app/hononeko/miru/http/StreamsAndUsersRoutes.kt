@@ -3,6 +3,7 @@ package app.hononeko.miru.http
 import app.hononeko.miru.MiruJson
 import app.hononeko.miru.auth.AuthService
 import app.hononeko.miru.auth.MiruPrincipal
+import app.hononeko.miru.auth.MiruRole
 import app.hononeko.miru.auth.authenticated
 import app.hononeko.miru.auth.requireMiruPrincipal
 import app.hononeko.miru.config.AuthMode
@@ -69,21 +70,25 @@ fun Route.streamsAndUsersRoutes(
         }
 
         route("/api/v1/users") {
-            get {
-                val result =
-                    either {
-                        val principal = call.requireMiruPrincipal().bind()
-                        streamsAndUsersService.listUsers(principal).bind()
-                    }
-                call.respondEither(result)
-            }
-
             get("/{id}") {
                 val userId = call.parameters["id"].orEmpty()
                 val result =
                     either {
                         val principal = call.requireMiruPrincipal().bind()
                         streamsAndUsersService.getUserDetail(principal, userId).bind()
+                    }
+                call.respondEither(result)
+            }
+        }
+    }
+
+    authenticated(authService = authService, authMode = authMode, requiredRole = MiruRole.ADMIN) {
+        route("/api/v1/users") {
+            get {
+                val result =
+                    either {
+                        val principal = call.requireMiruPrincipal().bind()
+                        streamsAndUsersService.listUsers(principal).bind()
                     }
                 call.respondEither(result)
             }

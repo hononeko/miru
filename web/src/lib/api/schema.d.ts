@@ -533,7 +533,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List media users with live streaming status and aggregate playback stats */
+        /** List all media users with live streaming status and aggregate playback stats (admin only) */
         get: operations["listUsers"];
         put?: never;
         post?: never;
@@ -635,8 +635,28 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List library sections with item counts, storage totals, and sync timestamps */
+        /**
+         * List library sections accessible to the authenticated principal
+         * @description Returns all synced library sections for ADMIN principals, or only the union of library sections shared on Plex with the linked media user(s) for USER principals (empty for unlinked users).
+         */
         get: operations["listLibraries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/libraries/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get metadata for a single accessible library section */
+        get: operations["getLibrarySection"];
         put?: never;
         post?: never;
         delete?: never;
@@ -688,7 +708,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Trigger an immediate fast or deep library sync (admin only) */
+        /** Trigger an immediate fast or deep library sync and reconcile shared-library permissions (admin only) */
         post: operations["triggerLibrarySync"];
         delete?: never;
         options?: never;
@@ -3059,7 +3079,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description List of media users visible to the authenticated principal */
+            /** @description List of media users */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -3070,6 +3090,15 @@ export interface operations {
             };
             /** @description Authentication required */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrator role required */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3350,7 +3379,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description List of library sections */
+            /** @description List of accessible library sections */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -3361,6 +3390,75 @@ export interface operations {
             };
             /** @description Authentication required */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    getLibrarySection: {
+        parameters: {
+            query?: {
+                serverId?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Library section metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibrarySectionResponse"];
+                };
+            };
+            /** @description Invalid library section identifier */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Access to the requested library section is forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Library section not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Ambiguous section key across multiple servers */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3406,6 +3504,15 @@ export interface operations {
             };
             /** @description Authentication required */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Access to the requested library section is forbidden */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3467,6 +3574,15 @@ export interface operations {
             };
             /** @description Authentication required */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Access to the requested library section is forbidden */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

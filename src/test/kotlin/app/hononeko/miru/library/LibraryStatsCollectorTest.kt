@@ -14,6 +14,7 @@ import app.hononeko.miru.adapter.MediaServerAdapter
 import app.hononeko.miru.adapter.MediaServerEvent
 import app.hononeko.miru.adapter.MediaType
 import app.hononeko.miru.adapter.MediaUser
+import app.hononeko.miru.adapter.MediaUserLibraryAccess
 import app.hononeko.miru.adapter.ServerIdentity
 import app.hononeko.miru.config.DatabaseConfig
 import app.hononeko.miru.domain.error.MiruError
@@ -23,8 +24,12 @@ import app.hononeko.miru.persistence.model.LibrarySectionRecord
 import app.hononeko.miru.persistence.model.LibrarySnapshotRecord
 import app.hononeko.miru.persistence.model.MediaItemCacheRecord
 import app.hononeko.miru.persistence.model.MediaServerRecord
+import app.hononeko.miru.persistence.model.ResolvedLibraryAccess
+import app.hononeko.miru.persistence.model.UserLibraryAccessRecord
+import app.hononeko.miru.persistence.model.UserRecord
 import app.hononeko.miru.persistence.repository.ExposedLibraryRepository
 import app.hononeko.miru.persistence.repository.ExposedMediaServerRepository
+import app.hononeko.miru.persistence.repository.ExposedUserRepository
 import app.hononeko.miru.persistence.repository.LibraryRepository
 import arrow.core.Either
 import arrow.core.left
@@ -95,6 +100,7 @@ private suspend fun createCollectorHarness(): CollectorHarness {
 
 private class FakeMediaServerAdapter(
     var sectionsResult: Either<MiruError, List<LibrarySectionInfo>> = emptyList<LibrarySectionInfo>().right(),
+    var libraryAccessResult: Either<MiruError, List<MediaUserLibraryAccess>> = emptyList<MediaUserLibraryAccess>().right(),
     var countHandler: suspend (sectionKey: String, mediaTypeCode: Int?) -> Either<MiruError, Int> = { _, _ -> 0.right() },
     var itemsHandler: suspend (
         sectionKey: String,
@@ -112,6 +118,8 @@ private class FakeMediaServerAdapter(
     val itemsCalls = mutableListOf<Triple<String, Int, Int?>>()
 
     override suspend fun fetchLibrarySections(): Either<MiruError, List<LibrarySectionInfo>> = sectionsResult
+
+    override suspend fun fetchUserLibraryAccess(): Either<MiruError, List<MediaUserLibraryAccess>> = libraryAccessResult
 
     override suspend fun fetchLibraryCount(
         sectionKey: String,
@@ -152,6 +160,7 @@ private class InMemoryLibraryRepository : LibraryRepository {
     private val sections = linkedMapOf<Pair<String, String>, LibrarySectionRecord>()
     private val snapshots = mutableListOf<LibrarySnapshotRecord>()
     private val items = linkedMapOf<Pair<String, String>, MediaItemCacheRecord>()
+    private val userAccess = linkedMapOf<Pair<String, String>, UserLibraryAccessRecord>()
 
     override suspend fun upsertSection(section: LibrarySectionRecord): Either<MiruError.PersistenceError, Unit> {
         sections[section.serverId to section.sectionKey] = section
@@ -222,6 +231,24 @@ private class InMemoryLibraryRepository : LibraryRepository {
         toRemove.forEach { items.remove(it) }
         return toRemove.size.right()
     }
+
+    override suspend fun replaceUserLibraryAccess(
+        serverId: String,
+        records: List<UserLibraryAccessRecord>,
+    ): Either<MiruError.PersistenceError, Unit> {
+        userAccess.keys.filter { it.first == serverId }.forEach { userAccess.remove(it) }
+        records.forEach { userAccess[serverId to it.externalUserId] = it }
+        return Unit.right()
+    }
+
+    override suspend fun findUserLibraryAccessByServer(
+        serverId: String,
+    ): Either<MiruError.PersistenceError, List<UserLibraryAccessRecord>> =
+        userAccess.values.filter { it.serverId == serverId }.right()
+
+    override suspend fun findAccessibleLibrariesForMediaUsers(
+        mediaUserIds: Set<String>,
+    ): Either<MiruError.PersistenceError, ResolvedLibraryAccess> = ResolvedLibraryAccess.EMPTY.right()
 }
 
 private fun movieItem(
@@ -674,6 +701,94 @@ class LibraryStatsCollectorTest :
 
                 collector.stop()
                 scope.isActive shouldBe true
+            }
+        }
+
+        test("syncLibraryAccess persists shared-library permissions, replaces revocations, and preserves existing rows on failure") {
+            runTest {
+                createCollectorHarness().use { harness ->
+                    val userRepo = ExposedUserRepository(harness.dbHandle)
+                    userRepo
+                        .upsert(
+                            UserRecord(
+                                id = "mu-bob",
+                                serverId = harness.serverId,
+                                externalUserId = "2002",
+                                username = "bob",
+                                createdAtMs = 1_000L,
+                                updatedAtMs = 1_000L,
+                            ),
+                        ).shouldBeRight()
+                    userRepo
+                        .upsert(
+                            UserRecord(
+                                id = "mu-carol",
+                                serverId = harness.serverId,
+                                externalUserId = "3003",
+                                username = "carol",
+                                createdAtMs = 1_000L,
+                                updatedAtMs = 1_000L,
+                            ),
+                        ).shouldBeRight()
+
+                    val adapter =
+                        FakeMediaServerAdapter(
+                            libraryAccessResult =
+                                listOf(
+                                    MediaUserLibraryAccess(
+                                        externalUserId = "2002",
+                                        allLibraries = false,
+                                        sectionKeys = setOf("1", "3"),
+                                    ),
+                                    MediaUserLibraryAccess(
+                                        externalUserId = "3003",
+                                        allLibraries = true,
+                                    ),
+                                ).right(),
+                        )
+                    val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+                    val collector =
+                        LibraryStatsCollector(
+                            adapter = adapter,
+                            serverIdProvider = { harness.serverId.right() },
+                            libraryRepository = harness.libraryRepository,
+                            scope = scope,
+                            clock = { harness.clockMs.get() },
+                        )
+
+                    collector.syncLibraryAccess().shouldBeRight()
+                    val bobAccess =
+                        harness.libraryRepository.findAccessibleLibrariesForMediaUsers(setOf("mu-bob")).shouldBeRight()
+                    bobAccess.canAccess(harness.serverId, "1") shouldBe true
+                    bobAccess.canAccess(harness.serverId, "2") shouldBe false
+                    bobAccess.canAccess(harness.serverId, "3") shouldBe true
+
+                    val carolAccess =
+                        harness.libraryRepository.findAccessibleLibrariesForMediaUsers(setOf("mu-carol")).shouldBeRight()
+                    carolAccess.canAccess(harness.serverId, "2") shouldBe true
+
+                    // Transient upstream failure preserves previously persisted rows
+                    adapter.libraryAccessResult = MiruError.UpstreamUnavailable("plex", "plex.tv down").left()
+                    collector.syncLibraryAccess().shouldBeLeft()
+                    harness.libraryRepository.findAccessibleLibrariesForMediaUsers(setOf("mu-bob")).shouldBeRight()
+                        .canAccess(harness.serverId, "1") shouldBe true
+
+                    // Subsequent successful sync revokes Carol cleanly
+                    adapter.libraryAccessResult =
+                        listOf(
+                            MediaUserLibraryAccess(
+                                externalUserId = "2002",
+                                allLibraries = false,
+                                sectionKeys = setOf("1"),
+                            ),
+                        ).right()
+                    harness.clockMs.set(2_000_000L)
+                    collector.syncLibraryAccess().shouldBeRight()
+                    harness.libraryRepository.findAccessibleLibrariesForMediaUsers(setOf("mu-carol")).shouldBeRight()
+                        .canAccess(harness.serverId, "2") shouldBe false
+                    harness.libraryRepository.findAccessibleLibrariesForMediaUsers(setOf("mu-bob")).shouldBeRight()
+                        .canAccess(harness.serverId, "3") shouldBe false
+                }
             }
         }
     })

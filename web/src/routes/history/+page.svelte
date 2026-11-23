@@ -8,6 +8,8 @@
 	import Button from '$components/ui/Button.svelte';
 	import Sheet from '$components/ui/Sheet.svelte';
 	import PlayDetailContent from '$components/miru/PlayDetailContent.svelte';
+	import UnlinkedUserEmptyState from '$components/miru/UnlinkedUserEmptyState.svelte';
+	import { authStore } from '$stores/auth.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
 	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
 	import {
@@ -69,6 +71,10 @@
 	}
 
 	async function loadUsers() {
+		if (!authStore.isAdmin) {
+			users = [];
+			return;
+		}
 		try {
 			const res = unwrap(await api.GET('/api/v1/users'));
 			users = res.users;
@@ -78,6 +84,14 @@
 	}
 
 	async function loadHistory() {
+		if (authStore.isUnlinkedUser) {
+			items = [];
+			totalCount = 0;
+			totalPages = 0;
+			error = null;
+			loading = false;
+			return;
+		}
 		loading = true;
 		error = null;
 		try {
@@ -86,7 +100,7 @@
 					params: {
 						query: {
 							q: q || undefined,
-							userId: userId || undefined,
+							userId: authStore.isAdmin ? userId || undefined : undefined,
 							mediaType: mediaType || undefined,
 							decision: decision || undefined,
 							sortBy,
@@ -145,6 +159,7 @@
 
 	$effect(() => {
 		// Re-run whenever query inputs change
+		void authStore.isUnlinkedUser;
 		void q;
 		void userId;
 		void mediaType;
@@ -171,12 +186,17 @@
 				Playback History
 			</h1>
 			<p class="mt-0.5 text-xs text-fg-secondary sm:text-sm">
-				Searchable, filterable playback log across all users & devices
+				{authStore.isAdmin
+					? 'Searchable, filterable playback log across all users & devices'
+					: 'Your scoped playback history across linked media profiles and devices'}
 			</p>
 		</div>
 		<Badge tone="cyan" mono>{totalCount.toLocaleString()} PLAYS</Badge>
 	</div>
 
+	{#if authStore.isUnlinkedUser}
+		<UnlinkedUserEmptyState context="playback history" />
+	{:else}
 	<!-- Filter Toolbar -->
 	<div class="flex flex-col gap-2.5 lg:flex-row lg:items-center">
 		<div class="relative flex-1">
@@ -192,17 +212,19 @@
 		</div>
 
 		<div class="flex flex-wrap items-center gap-2">
-			<select
-				bind:value={userId}
-				onchange={() => (pageNum = 1)}
-				aria-label="Filter by user"
-				class="rounded-lg border border-border bg-surface px-2.5 py-2 text-xs font-medium text-fg-primary focus:border-cyan focus:outline-none"
-			>
-				<option value="">All Users</option>
-				{#each users as u}
-					<option value={u.id}>{u.displayName || u.username}</option>
-				{/each}
-			</select>
+			{#if authStore.isAdmin}
+				<select
+					bind:value={userId}
+					onchange={() => (pageNum = 1)}
+					aria-label="Filter by user"
+					class="rounded-lg border border-border bg-surface px-2.5 py-2 text-xs font-medium text-fg-primary focus:border-cyan focus:outline-none"
+				>
+					<option value="">All Users</option>
+					{#each users as u}
+						<option value={u.id}>{u.displayName || u.username}</option>
+					{/each}
+				</select>
+			{/if}
 
 			<select
 				bind:value={mediaType}
@@ -449,6 +471,7 @@
 				</Button>
 			</div>
 		</div>
+	{/if}
 	{/if}
 </div>
 

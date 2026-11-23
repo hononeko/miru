@@ -114,6 +114,12 @@ data class MediaUser(
     val isAdmin: Boolean = false,
 )
 
+data class MediaUserLibraryAccess(
+    val externalUserId: String,
+    val allLibraries: Boolean,
+    val sectionKeys: Set<String> = emptySet(),
+)
+
 data class LibrarySectionInfo(
     val sectionKey: String,
     val title: String,

@@ -45,6 +45,9 @@ class StreamsAndUsersService(
     suspend fun listActiveStreams(principal: MiruPrincipal): Either<MiruError, ActiveStreamsResponse> =
         either {
             val serverName = serverNameProvider()?.trim()?.takeIf { it.isNotEmpty() }
+            if (!principal.isAdmin() && principal.linkedMediaUserIds.isEmpty()) {
+                return@either ActiveStreamsResponse(streams = emptyList(), totalCount = 0, serverName = serverName)
+            }
             val sessions =
                 activeSessionRepository
                     .findAll()
@@ -151,11 +154,9 @@ class StreamsAndUsersService(
 
     suspend fun listUsers(principal: MiruPrincipal): Either<MiruError, UsersListResponse> =
         either {
-            val users =
-                userRepository
-                    .findAll()
-                    .bind()
-                    .filter { principal.canAccessMediaUser(it.id) }
+            principal.requireAdmin().bind()
+
+            val users = userRepository.findAll().bind()
 
             if (users.isEmpty()) {
                 return@either UsersListResponse(users = emptyList())
@@ -188,18 +189,25 @@ class StreamsAndUsersService(
         userId: String,
     ): Either<MiruError, UserDetailResponse> =
         either {
-            principal.requireMediaUserAccess(userId).bind()
+            val trimmedUserId = userId.trim()
+            ensure(trimmedUserId.isNotEmpty()) {
+                MiruError.ValidationError(
+                    message = "Invalid user id",
+                    fieldErrors = mapOf("id" to "must not be blank"),
+                )
+            }
+            principal.requireMediaUserAccess(trimmedUserId).bind()
 
-            val user = userRepository.findById(userId).bind()
+            val user = userRepository.findById(trimmedUserId).bind()
             ensure(user != null) {
-                MiruError.NotFound(resource = "User", id = userId)
+                MiruError.NotFound(resource = "User", id = trimmedUserId)
             }
 
             val userSessions =
                 activeSessionRepository
                     .findAll()
                     .bind()
-                    .filter { it.userId == userId }
+                    .filter { it.userId == trimmedUserId }
             val liveTechByKey = if (userSessions.isEmpty()) emptyMap() else liveTechnicalProvider()
             val activeStreams =
                 userSessions.map { session ->
@@ -210,7 +218,7 @@ class StreamsAndUsersService(
                     )
                 }
 
-            val history = playbackHistoryRepository.listByUser(userId).bind()
+            val history = playbackHistoryRepository.listByUser(trimmedUserId).bind()
             val totalPlays = history.size.toLong()
             val totalWatchDurationSec = history.sumOf { it.watchedDurationSec.toLong() }
 

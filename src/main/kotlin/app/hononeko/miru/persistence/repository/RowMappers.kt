@@ -1,5 +1,6 @@
 package app.hononeko.miru.persistence.repository
 
+import app.hononeko.miru.MiruJson
 import app.hononeko.miru.persistence.model.ActiveSessionRecord
 import app.hononeko.miru.persistence.model.LibrarySectionRecord
 import app.hononeko.miru.persistence.model.LibrarySnapshotRecord
@@ -11,6 +12,7 @@ import app.hononeko.miru.persistence.model.PlaybackHistoryRecord
 import app.hononeko.miru.persistence.model.PlaybackHistoryStatsRow
 import app.hononeko.miru.persistence.model.PlayerRecord
 import app.hononeko.miru.persistence.model.StreamTechRecord
+import app.hononeko.miru.persistence.model.UserLibraryAccessRecord
 import app.hononeko.miru.persistence.model.UserRecord
 import app.hononeko.miru.persistence.table.ActiveSessionsTable
 import app.hononeko.miru.persistence.table.LibrarySectionsTable
@@ -18,8 +20,13 @@ import app.hononeko.miru.persistence.table.LibrarySnapshotsTable
 import app.hononeko.miru.persistence.table.MediaItemsCacheTable
 import app.hononeko.miru.persistence.table.MediaServersTable
 import app.hononeko.miru.persistence.table.PlaybackHistoryTable
+import app.hononeko.miru.persistence.table.UserLibraryAccessTable
 import app.hononeko.miru.persistence.table.UsersTable
+import kotlinx.serialization.SerializationException
 import org.jetbrains.exposed.v1.core.ResultRow
+import org.slf4j.LoggerFactory
+
+private val rowMapperLogger = LoggerFactory.getLogger("app.hononeko.miru.persistence.repository.RowMappers")
 
 internal fun ResultRow.toMediaServerRecord(): MediaServerRecord =
     MediaServerRecord(
@@ -215,3 +222,45 @@ internal fun ResultRow.toMediaItemCacheRecord(): MediaItemCacheRecord =
         addedAtMs = this[MediaItemsCacheTable.addedAtMs],
         updatedAtMs = this[MediaItemsCacheTable.updatedAtMs],
     )
+
+internal fun ResultRow.toUserLibraryAccessRecord(): UserLibraryAccessRecord {
+    val serverId = this[UserLibraryAccessTable.serverId]
+    val externalUserId = this[UserLibraryAccessTable.externalUserId]
+    val rawJson = this[UserLibraryAccessTable.sectionKeysJson]
+    val sectionKeys =
+        if (rawJson.isBlank()) {
+            emptySet()
+        } else {
+            try {
+                MiruJson
+                    .decodeFromString<List<String>>(rawJson)
+                    .asSequence()
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
+                    .toSet()
+            } catch (e: SerializationException) {
+                rowMapperLogger.warn(
+                    "Malformed section_keys_json for server '{}' user '{}': {}",
+                    serverId,
+                    externalUserId,
+                    e.message,
+                )
+                emptySet()
+            } catch (e: IllegalArgumentException) {
+                rowMapperLogger.warn(
+                    "Invalid section_keys_json for server '{}' user '{}': {}",
+                    serverId,
+                    externalUserId,
+                    e.message,
+                )
+                emptySet()
+            }
+        }
+    return UserLibraryAccessRecord(
+        serverId = serverId,
+        externalUserId = externalUserId,
+        allLibraries = this[UserLibraryAccessTable.allLibraries],
+        sectionKeys = sectionKeys,
+        updatedAtMs = this[UserLibraryAccessTable.updatedAtMs],
+    )
+}

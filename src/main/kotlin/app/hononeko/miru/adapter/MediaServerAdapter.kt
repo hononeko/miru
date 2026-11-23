@@ -19,6 +19,9 @@ interface MediaServerAdapter {
 
     suspend fun fetchUsers(): Either<MiruError, List<MediaUser>>
 
+    suspend fun fetchUserLibraryAccess(): Either<MiruError, List<MediaUserLibraryAccess>> =
+        Either.Right(emptyList())
+
     suspend fun fetchLibrarySections(): Either<MiruError, List<LibrarySectionInfo>>
 
     suspend fun fetchLibraryCount(

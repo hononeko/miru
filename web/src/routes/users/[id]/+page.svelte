@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 	import { ArrowLeft } from 'lucide-svelte';
 	import { api, MiruApiError, unwrap } from '$api/client';
 	import type { StatsRange, UserDetailResponse, UserStatsResponse } from '$api/types';
@@ -8,6 +9,7 @@
 	import KpiCard from '$components/miru/KpiCard.svelte';
 	import BarChart, { type BarPoint } from '$components/miru/BarChart.svelte';
 	import ProxiedImage from '$components/miru/ProxiedImage.svelte';
+	import { authStore } from '$stores/auth.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
 	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
 	import {
@@ -37,6 +39,10 @@
 
 	async function loadProfile(id: string, selectedRange: StatsRange) {
 		if (!id) return;
+		if (!authStore.isAdmin) {
+			loading = false;
+			return;
+		}
 		loading = true;
 		error = null;
 		try {
@@ -54,6 +60,10 @@
 	}
 
 	$effect(() => {
+		if (!authStore.loading && !authStore.isAdmin) {
+			void goto('/');
+			return;
+		}
 		void loadProfile(userId, range);
 	});
 
@@ -78,7 +88,11 @@
 </svelte:head>
 
 <div class="flex flex-col gap-5">
-	{#if error}
+	{#if !authStore.isAdmin}
+		<div role="alert" class="rounded-xl border border-danger/50 bg-danger-soft px-4 py-3 text-xs text-danger">
+			Administrator role is required to view user profiles.
+		</div>
+	{:else if error}
 		<div class="flex flex-col gap-3">
 			<a href="/users" class="inline-flex items-center gap-1.5 font-mono text-xs text-cyan-hi hover:underline">
 				<ArrowLeft class="h-3.5 w-3.5" /> Back to Users

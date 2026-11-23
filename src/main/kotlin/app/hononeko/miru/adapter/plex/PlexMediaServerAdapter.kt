@@ -10,6 +10,7 @@ import app.hononeko.miru.adapter.MediaServerAdapter
 import app.hononeko.miru.adapter.MediaServerEvent
 import app.hononeko.miru.adapter.MediaType
 import app.hononeko.miru.adapter.MediaUser
+import app.hononeko.miru.adapter.MediaUserLibraryAccess
 import app.hononeko.miru.adapter.ServerIdentity
 import app.hononeko.miru.config.PlexConfig
 import app.hononeko.miru.domain.error.MiruError
@@ -80,9 +81,13 @@ class PlexMediaServerAdapter(
         plexTvBaseUrl?.trim()?.trimEnd('/')?.takeIf { it.isNotEmpty() }
 
     private val ownerMutex = Mutex()
+    private val machineIdMutex = Mutex()
 
     @Volatile
     private var cachedOwner: MediaUser? = null
+
+    @Volatile
+    private var cachedMachineId: String? = null
 
     override suspend fun checkHealth(): Either<MiruError, ServerIdentity> =
         executeJsonGet<PlexServerInfoResponse>(
@@ -90,7 +95,12 @@ class PlexMediaServerAdapter(
             operation = "check server health",
             notFoundResource = "Plex server root",
         ).map { response ->
-            PlexMapper.mapServerIdentity(response.mediaContainer)
+            PlexMapper.mapServerIdentity(response.mediaContainer).also { identity ->
+                val machineId = identity.machineIdentifier.trim()
+                if (machineId.isNotEmpty() && machineId != "unknown") {
+                    cachedMachineId = machineId
+                }
+            }
         }
 
     override suspend fun fetchActiveSessions(): Either<MiruError, List<ActiveStreamSnapshot>> =
@@ -135,6 +145,94 @@ class PlexMediaServerAdapter(
                 plexTvFriends = plexTvFriends,
             )
         }
+
+    override suspend fun fetchUserLibraryAccess(): Either<MiruError, List<MediaUserLibraryAccess>> =
+        either {
+            val accessByUserId = linkedMapOf<String, MediaUserLibraryAccess>()
+            val owner = resolveOwnerBestEffort()
+            val ownerId = owner?.externalId?.trim()?.takeIf { it.isNotEmpty() }
+            if (ownerId != null) {
+                accessByUserId[ownerId] =
+                    MediaUserLibraryAccess(
+                        externalUserId = ownerId,
+                        allLibraries = true,
+                        sectionKeys = emptySet(),
+                    )
+            }
+
+            val tvBase = normalizedPlexTvBaseUrl ?: return@either accessByUserId.values.toList()
+            val machineId = resolveMachineIdentifier().bind()
+            ensure(MACHINE_ID_REGEX.matches(machineId)) {
+                MiruError.UpstreamUnavailable(
+                    provider = PROVIDER_NAME,
+                    message = "Plex server returned an invalid machine identifier",
+                )
+            }
+
+            val response =
+                executeRequest(
+                    url = "$tvBase/api/servers/$machineId/shared_servers",
+                    acceptHeader = ContentType.Application.Xml.toString(),
+                    operation = "fetch shared library permissions",
+                    notFoundResource = "Plex shared servers",
+                    notFoundId = machineId,
+                ) {
+                    applyPlexTvHeaders()
+                }.bind()
+
+            val bodyText =
+                try {
+                    response.bodyAsText()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    raise(
+                        MiruError.UpstreamUnavailable(
+                            provider = PROVIDER_NAME,
+                            message = "Failed reading Plex.tv shared servers response: ${sanitizeMessage(e.message)}",
+                            cause = e,
+                        ),
+                    )
+                }
+
+            val parsedShares =
+                try {
+                    PlexTvSharedServersXmlParser.parse(bodyText)
+                } catch (e: IllegalArgumentException) {
+                    raise(
+                        MiruError.UpstreamUnavailable(
+                            provider = PROVIDER_NAME,
+                            message = "Malformed Plex.tv shared servers XML payload: ${sanitizeMessage(e.message)}",
+                            cause = e,
+                        ),
+                    )
+                }
+
+            for (entry in parsedShares) {
+                val existing = accessByUserId[entry.externalUserId]
+                accessByUserId[entry.externalUserId] =
+                    if (existing == null) {
+                        entry
+                    } else {
+                        val combinedAll = existing.allLibraries || entry.allLibraries
+                        MediaUserLibraryAccess(
+                            externalUserId = entry.externalUserId,
+                            allLibraries = combinedAll,
+                            sectionKeys = if (combinedAll) emptySet() else existing.sectionKeys + entry.sectionKeys,
+                        )
+                    }
+            }
+
+            accessByUserId.values.toList()
+        }
+
+    private suspend fun resolveMachineIdentifier(): Either<MiruError, String> {
+        cachedMachineId?.let { return it.right() }
+        return machineIdMutex.withLock {
+            cachedMachineId?.let { return@withLock it.right() }
+            checkHealth().map { identity -> identity.machineIdentifier.trim() }
+        }
+    }
 
     override suspend fun fetchLibrarySections(): Either<MiruError, List<LibrarySectionInfo>> =
         executeJsonGet<PlexLibrarySectionsResponse>(
@@ -630,5 +728,6 @@ class PlexMediaServerAdapter(
         private const val ASCII_SPACE = 0x20
         private const val ASCII_DEL = 0x7F
         private val SECTION_KEY_REGEX = Regex("^[A-Za-z0-9_-]+$")
+        private val MACHINE_ID_REGEX = Regex("^[A-Za-z0-9._-]+$")
     }
 }

@@ -1303,20 +1303,26 @@ paths:
     get:
       tags: [Users]
       operationId: listUsers
-      summary: List media users with live streaming status and aggregate playback stats
+      summary: List all media users with live streaming status and aggregate playback stats (admin only)
       security:
         - CookieAuth: []
         - ApiKeyAuth: []
         - BearerAuth: []
       responses:
         '200':
-          description: List of media users visible to the authenticated principal
+          description: List of media users
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/UsersListResponse'
         '401':
           description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
           content:
             application/problem+json:
               schema:
@@ -1606,7 +1612,10 @@ paths:
     get:
       tags: [Libraries]
       operationId: listLibraries
-      summary: List library sections with item counts, storage totals, and sync timestamps
+      summary: List library sections accessible to the authenticated principal
+      description: >-
+        Returns all synced library sections for ADMIN principals, or only the union of library
+        sections shared on Plex with the linked media user(s) for USER principals (empty for unlinked users).
       security:
         - CookieAuth: []
         - ApiKeyAuth: []
@@ -1619,13 +1628,71 @@ paths:
             type: string
       responses:
         '200':
-          description: List of library sections
+          description: List of accessible library sections
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/LibraryListResponse'
         '401':
           description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/libraries/{id}:
+    get:
+      tags: [Libraries]
+      operationId: getLibrarySection
+      summary: Get metadata for a single accessible library section
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: serverId
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Library section metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LibrarySectionResponse'
+        '400':
+          description: Invalid library section identifier
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Access to the requested library section is forbidden
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Library section not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Ambiguous section key across multiple servers
           content:
             application/problem+json:
               schema:
@@ -1692,6 +1759,12 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Access to the requested library section is forbidden
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
         '404':
           description: Library section not found
           content:
@@ -1752,6 +1825,12 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Access to the requested library section is forbidden
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
         '404':
           description: Library section not found
           content:
@@ -1769,7 +1848,7 @@ paths:
     post:
       tags: [Libraries]
       operationId: triggerLibrarySync
-      summary: Trigger an immediate fast or deep library sync (admin only)
+      summary: Trigger an immediate fast or deep library sync and reconcile shared-library permissions (admin only)
       security:
         - CookieAuth: []
         - ApiKeyAuth: []

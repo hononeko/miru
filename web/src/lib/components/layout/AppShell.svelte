@@ -32,10 +32,12 @@
 	const navItems = $derived.by(() => {
 		const items = [
 			{ href: '/', label: 'Live', icon: Radio, badge: streamsStore.totalCount > 0 ? String(streamsStore.totalCount) : null },
-			{ href: '/history', label: 'History', icon: History, badge: null },
-			{ href: '/users', label: 'Users', icon: Users, badge: null },
-			{ href: '/libraries', label: 'Libraries', icon: Library, badge: null }
+			{ href: '/history', label: 'History', icon: History, badge: null }
 		];
+		if (authStore.isAdmin) {
+			items.push({ href: '/users', label: 'Users', icon: Users, badge: null });
+		}
+		items.push({ href: '/libraries', label: 'Libraries', icon: Library, badge: null });
 		if (authStore.isAdmin) {
 			items.push({ href: '/admin', label: 'Admin', icon: ShieldCheck, badge: null });
 		}

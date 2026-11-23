@@ -5,6 +5,7 @@
 	import RangeTabs from '$components/ui/RangeTabs.svelte';
 	import KpiCard from '$components/miru/KpiCard.svelte';
 	import StreamCard from '$components/miru/StreamCard.svelte';
+	import UnlinkedUserEmptyState from '$components/miru/UnlinkedUserEmptyState.svelte';
 	import BarChart, { type BarPoint } from '$components/miru/BarChart.svelte';
 	import { authStore } from '$stores/auth.svelte';
 	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
@@ -37,6 +38,12 @@
 	});
 
 	async function loadOverview(selectedRange: StatsRange) {
+		if (authStore.isUnlinkedUser) {
+			overview = null;
+			statsError = null;
+			loadingStats = false;
+			return;
+		}
 		loadingStats = true;
 		statsError = null;
 		try {
@@ -53,6 +60,7 @@
 	}
 
 	$effect(() => {
+		void authStore.isUnlinkedUser;
 		void loadOverview(range);
 	});
 
@@ -152,12 +160,17 @@
 			>
 				SSE {streamsStore.status}
 			</Badge>
-			<RangeTabs value={range} onchange={(r) => (range = r)} />
+			{#if !authStore.isUnlinkedUser}
+				<RangeTabs value={range} onchange={(r) => (range = r)} />
+			{/if}
 		</div>
 	</div>
 
-	<!-- KPI Strip -->
-	{#if authStore.isAdmin && plexStatus?.credentialSource === 'NOT_CONFIGURED'}
+	{#if authStore.isUnlinkedUser}
+		<UnlinkedUserEmptyState context="live streams and playback telemetry" />
+	{:else}
+		<!-- KPI Strip -->
+		{#if authStore.isAdmin && plexStatus?.credentialSource === 'NOT_CONFIGURED'}
 		<div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-cyan/40 bg-cyan-soft/50 px-4 py-3 text-xs">
 			<div class="flex items-center gap-2.5">
 				<Server class="h-4 w-4 shrink-0 text-cyan-hi" />
@@ -354,5 +367,6 @@
 				{/if}
 			</div>
 		</section>
+	{/if}
 	{/if}
 </div>

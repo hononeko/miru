@@ -61,4 +61,39 @@ describe('AppShell user avatars', () => {
 			expect(el.textContent?.trim()).toBe('A');
 		}
 	});
+
+	it('hides Users and Admin navigation links for USER role while showing them for ADMIN', () => {
+		authStore.principal = {
+			accountId: 'acc-user',
+			username: 'viewer',
+			email: null,
+			role: 'USER',
+			linkedMediaUserIds: ['u-2'],
+			authSource: 'SESSION_COOKIE',
+			avatarUrl: null
+		};
+
+		render(AppShell);
+		expect(screen.queryByRole('link', { name: 'Users' })).toBeNull();
+		expect(screen.queryByRole('link', { name: 'Admin' })).toBeNull();
+		expect(screen.getAllByRole('link', { name: 'Live' }).length).toBeGreaterThan(0);
+		expect(screen.getAllByRole('link', { name: 'History' }).length).toBeGreaterThan(0);
+		expect(screen.getAllByRole('link', { name: 'Libraries' }).length).toBeGreaterThan(0);
+
+		cleanup();
+
+		authStore.principal = {
+			accountId: 'acc-admin',
+			username: 'sergiu',
+			email: 'sergiu@miru.local',
+			role: 'ADMIN',
+			linkedMediaUserIds: ['u-1'],
+			authSource: 'SESSION_COOKIE',
+			avatarUrl: null
+		};
+
+		render(AppShell);
+		expect(screen.getAllByRole('link', { name: 'Users' }).length).toBeGreaterThan(0);
+		expect(screen.getAllByRole('link', { name: 'Admin' }).length).toBeGreaterThan(0);
+	});
 });

@@ -51,6 +51,12 @@ export interface MockPlexOptions {
 	autoAuthorizeAfterPolls?: number;
 }
 
+export interface MockSharedServer {
+	userId: string;
+	allLibraries: boolean;
+	sharedSectionKeys?: string[];
+}
+
 export interface MockPlexServer {
 	readonly port: number;
 	readonly baseUrl: string;
@@ -58,6 +64,7 @@ export interface MockPlexServer {
 	readonly serverName: string;
 	readonly machineId: string;
 	setActiveSessions(sessions: MockPlexSession[]): void;
+	setSharedServers(shares: MockSharedServer[]): void;
 	pushPlayingNotification(
 		sessionKey: string,
 		ratingKey: string,
@@ -528,8 +535,16 @@ export async function startMockPlexServer(options: MockPlexOptions = {}): Promis
 	const serverName = options.serverName ?? 'Miru Lab Plex';
 	const machineId = options.machineId ?? 'miru-e2e-machine-001';
 	const catalog = buildCatalog();
+	const mockSections = [
+		{ key: '1', title: 'Movies', type: 'movie', uuid: 'sec-movies-1', count: catalog.movies.length },
+		{ key: '2', title: 'TV Shows', type: 'show', uuid: 'sec-shows-2', count: catalog.shows.length }
+	];
 
 	let activeSessions: MockPlexSession[] = [];
+	let sharedServers: MockSharedServer[] = [
+		{ userId: '1002', allLibraries: false, sharedSectionKeys: ['1'] },
+		{ userId: '1003', allLibraries: true }
+	];
 	const wsClients = new Set<WebSocket>();
 	const wsWaiters: Array<() => void> = [];
 
@@ -666,6 +681,29 @@ export async function startMockPlexServer(options: MockPlexOptions = {}): Promis
 			return;
 		}
 
+		if (pathname === `/api/servers/${machineId}/shared_servers`) {
+			const sharedXml = sharedServers
+				.map((s) => {
+					const sectionsXml = s.allLibraries
+						? ''
+						: mockSections
+								.map((sec) => {
+									const isShared = s.sharedSectionKeys?.includes(sec.key) ? '1' : '0';
+									return `<Section id="${sec.key}" key="${sec.key}" title="${sec.title}" type="${sec.type}" shared="${isShared}"/>`;
+								})
+								.join('');
+					return `<SharedServer userID="${s.userId}" allLibraries="${s.allLibraries ? '1' : '0'}" shared="1">${sectionsXml}</SharedServer>`;
+				})
+				.join('');
+			const xmlPayload = `<?xml version="1.0" encoding="UTF-8"?><MediaContainer size="${sharedServers.length}">${sharedXml}</MediaContainer>`;
+			res.writeHead(200, {
+				'Content-Type': 'application/xml; charset=utf-8',
+				'Content-Length': Buffer.byteLength(xmlPayload)
+			});
+			res.end(xmlPayload);
+			return;
+		}
+
 		// PMS root identity
 		if (pathname === '/') {
 			sendJson(res, 200, {
@@ -708,11 +746,8 @@ export async function startMockPlexServer(options: MockPlexOptions = {}): Promis
 		if (pathname === '/library/sections') {
 			sendJson(res, 200, {
 				MediaContainer: {
-					size: 2,
-					Directory: [
-						{ key: '1', title: 'Movies', type: 'movie', uuid: 'sec-movies-1', count: catalog.movies.length },
-						{ key: '2', title: 'TV Shows', type: 'show', uuid: 'sec-shows-2', count: catalog.shows.length }
-					]
+					size: mockSections.length,
+					Directory: mockSections
 				}
 			});
 			return;
@@ -852,6 +887,12 @@ export async function startMockPlexServer(options: MockPlexOptions = {}): Promis
 		machineId,
 		setActiveSessions(sessions: MockPlexSession[]) {
 			activeSessions = [...sessions];
+		},
+		setSharedServers(shares: MockSharedServer[]) {
+			sharedServers = shares.map((s) => ({
+				...s,
+				sharedSectionKeys: s.sharedSectionKeys ? [...s.sharedSectionKeys] : undefined
+			}));
 		},
 		pushPlayingNotification(
 			sessionKey: string,

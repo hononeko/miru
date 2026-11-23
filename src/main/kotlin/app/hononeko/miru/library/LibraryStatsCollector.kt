@@ -12,6 +12,7 @@ import app.hononeko.miru.persistence.model.LibrarySectionRecord
 import app.hononeko.miru.persistence.model.LibrarySnapshotRecord
 import app.hononeko.miru.persistence.model.MediaItemCacheRecord
 import app.hononeko.miru.persistence.model.MediaItemTechRecord
+import app.hononeko.miru.persistence.model.UserLibraryAccessRecord
 import app.hononeko.miru.persistence.repository.LibraryRepository
 import app.hononeko.miru.service.LibrarySyncTrigger
 import arrow.core.Either
@@ -39,6 +40,7 @@ import org.slf4j.LoggerFactory
 import java.util.UUID
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 class LibraryStatsCollector(
@@ -47,6 +49,7 @@ class LibraryStatsCollector(
     private val libraryRepository: LibraryRepository,
     private val scope: CoroutineScope,
     private val deepScanInterval: Duration = DEFAULT_DEEP_SCAN_INTERVAL,
+    private val accessSyncInterval: Duration = DEFAULT_ACCESS_SYNC_INTERVAL,
     private val pageSize: Int = DEFAULT_PAGE_SIZE,
     private val timelineDebounceWindow: Duration = DEFAULT_TIMELINE_DEBOUNCE_WINDOW,
     private val timelineMaxWait: Duration = DEFAULT_TIMELINE_MAX_WAIT,
@@ -56,6 +59,7 @@ class LibraryStatsCollector(
     LibrarySyncTrigger {
     init {
         require(deepScanInterval.isPositive()) { "deepScanInterval must be positive" }
+        require(accessSyncInterval.isPositive()) { "accessSyncInterval must be positive" }
         require(pageSize > 0) { "pageSize must be positive" }
         require(timelineDebounceWindow.isPositive()) { "timelineDebounceWindow must be positive" }
         require(timelineMaxWait >= timelineDebounceWindow) { "timelineMaxWait must be >= timelineDebounceWindow" }
@@ -112,6 +116,71 @@ class LibraryStatsCollector(
             syncDeepLocked(sectionKeyFilter)
         }
 
+    suspend fun syncLibraryAccess(): Either<MiruError, Int> =
+        syncMutex.withLock {
+            syncLibraryAccessLocked()
+        }
+
+    private suspend fun syncLibraryAccessLocked(): Either<MiruError, Int> =
+        either {
+            val serverId = serverIdProvider().bind()
+            val entries = adapter.fetchUserLibraryAccess().bind()
+            val nowMs = clock()
+            val records =
+                entries.mapNotNull { entry ->
+                    val externalUserId = entry.externalUserId.trim()
+                    if (externalUserId.isEmpty()) {
+                        null
+                    } else {
+                        UserLibraryAccessRecord(
+                            serverId = serverId,
+                            externalUserId = externalUserId,
+                            allLibraries = entry.allLibraries,
+                            sectionKeys = if (entry.allLibraries) emptySet() else entry.sectionKeys,
+                            updatedAtMs = nowMs,
+                        )
+                    }
+                }
+            libraryRepository.replaceUserLibraryAccess(serverId, records).bind()
+            records.size
+        }
+
+    private suspend fun syncLibraryAccessBestEffort(serverId: String) {
+        try {
+            val entries =
+                adapter.fetchUserLibraryAccess().fold(
+                    ifLeft = { error ->
+                        logger.warn("Shared library access sync failed: {}", error.message)
+                        return
+                    },
+                    ifRight = { it },
+                )
+            val nowMs = clock()
+            val records =
+                entries.mapNotNull { entry ->
+                    val externalUserId = entry.externalUserId.trim()
+                    if (externalUserId.isEmpty()) {
+                        null
+                    } else {
+                        UserLibraryAccessRecord(
+                            serverId = serverId,
+                            externalUserId = externalUserId,
+                            allLibraries = entry.allLibraries,
+                            sectionKeys = if (entry.allLibraries) emptySet() else entry.sectionKeys,
+                            updatedAtMs = nowMs,
+                        )
+                    }
+                }
+            libraryRepository.replaceUserLibraryAccess(serverId, records).onLeft { error ->
+                logger.warn("Failed to persist shared library access: {}", error.message)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger.warn("Unexpected error during shared library access sync: {}", e.message)
+        }
+    }
+
     private suspend fun syncFastCountsLocked(sectionKeyFilter: String?): Either<MiruError, LibrarySyncSummary> =
         either {
             val serverId = serverIdProvider().bind()
@@ -160,6 +229,8 @@ class LibraryStatsCollector(
                 raise(firstError)
             }
 
+            syncLibraryAccessBestEffort(serverId)
+
             LibrarySyncSummary(
                 mode = LibrarySyncMode.FAST,
                 syncedSections = syncedSections,
@@ -207,6 +278,8 @@ class LibraryStatsCollector(
             if (firstError != null) {
                 raise(firstError)
             }
+
+            syncLibraryAccessBestEffort(serverId)
 
             LibrarySyncSummary(
                 mode = LibrarySyncMode.DEEP,
@@ -443,6 +516,7 @@ class LibraryStatsCollector(
             val dirtySections = Channel<String?>(Channel.UNLIMITED)
             val timelineSignals = Channel<Unit>(Channel.CONFLATED)
             val deepScanSignals = Channel<Unit>(Channel.CONFLATED)
+            val accessSyncSignals = Channel<Unit>(Channel.CONFLATED)
 
             launch(CoroutineName("library-timeline-events")) {
                 adapter
@@ -465,12 +539,22 @@ class LibraryStatsCollector(
                 }
             }
 
+            launch(CoroutineName("library-periodic-access-sync")) {
+                while (true) {
+                    delay(accessSyncInterval)
+                    accessSyncSignals.send(Unit)
+                }
+            }
+
             launch(CoroutineName("library-sync-actor")) {
                 runSafeSync("initial fast count sync") { syncFastCounts(sectionKeyFilter = null) }
                 while (true) {
                     select {
                         deepScanSignals.onReceive {
                             runSafeSync("periodic deep scan") { syncDeep(sectionKeyFilter = null) }
+                        }
+                        accessSyncSignals.onReceive {
+                            runSafeAccessSync("periodic library access sync") { syncLibraryAccess() }
                         }
                         timelineSignals.onReceive {
                             val (allSections, sections) = drainPendingSections()
@@ -552,8 +636,29 @@ class LibraryStatsCollector(
         }
     }
 
+    private suspend fun runSafeAccessSync(
+        label: String,
+        block: suspend () -> Either<MiruError, Int>,
+    ) {
+        try {
+            block().fold(
+                ifLeft = { error ->
+                    logger.warn("Library {} failed: {}", label, error.message)
+                },
+                ifRight = { count ->
+                    logger.debug("Library {} completed {}", label, kv("users", count))
+                },
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger.error("Unexpected error during {}", label, e)
+        }
+    }
+
     companion object {
         val DEFAULT_DEEP_SCAN_INTERVAL: Duration = 6.hours
+        val DEFAULT_ACCESS_SYNC_INTERVAL: Duration = 15.minutes
         const val DEFAULT_PAGE_SIZE = 200
         val DEFAULT_TIMELINE_DEBOUNCE_WINDOW: Duration = 10.seconds
         val DEFAULT_TIMELINE_MAX_WAIT: Duration = 60.seconds

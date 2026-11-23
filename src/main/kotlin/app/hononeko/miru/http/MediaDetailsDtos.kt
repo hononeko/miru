@@ -9,13 +9,20 @@ import kotlinx.serialization.Serializable
 
 private const val MILLIS_PER_SECOND = 1_000L
 
+private val LIBRARY_ART_PATH = Regex("^/library/metadata/([A-Za-z0-9_-]+)/art(?:/\\d+)?/?$")
+
+/**
+ * Proxy URL for an item's background art. Plex points an episode's or season's `art` at its show's artwork
+ * (`/library/metadata/<showKey>/art/<timestamp>`), so the rating key comes from the art path when it names one.
+ */
 internal fun buildArtUrl(
     ratingKey: String,
     artPath: String?,
-): String? =
-    artPath
-        ?.takeIf { it.isNotBlank() }
-        ?.let { "/api/v1/media/$ratingKey/art" }
+): String? {
+    val path = artPath?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    val artRatingKey = LIBRARY_ART_PATH.matchEntire(path)?.groupValues?.get(1) ?: ratingKey
+    return "/api/v1/media/$artRatingKey/art"
+}
 
 @Serializable
 data class MediaTechnicalSpecsDto(

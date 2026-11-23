@@ -30,7 +30,8 @@
 	const titleId = 'media-details-modal-title';
 
 	let dialogEl: HTMLDialogElement | undefined = $state();
-	let artLoadFailedSrc = $state<string | null>(null);
+	// Backdrop candidates that failed to load, so the hero falls back to the next one.
+	let failedBackdrops = $state<string[]>([]);
 
 	const data = $derived(mediaDetailsModal.data);
 
@@ -45,8 +46,8 @@
 	});
 
 	$effect(() => {
-		void data?.artUrl;
-		artLoadFailedSrc = null;
+		void data?.ratingKey;
+		failedBackdrops = [];
 	});
 
 	onMount(() => {
@@ -88,13 +89,20 @@
 		}
 	}
 
-	const heroBackdropSrc = $derived.by(() => {
+	// First backdrop that has not failed: the item's art, then its poster, then the series poster.
+	const heroBackdrop = $derived.by(() => {
 		if (!data) return null;
-		const candidate = data.artUrl ?? data.thumbUrl ?? data.series?.thumbUrl ?? null;
-		if (!candidate || candidate === artLoadFailedSrc) return null;
-		if (!candidate.startsWith('/api/v1/')) return null;
-		return candidate.includes('?') ? candidate : `${candidate}?w=960`;
+		return (
+			[data.artUrl, data.thumbUrl, data.series?.thumbUrl].find(
+				(candidate): candidate is string =>
+					!!candidate && candidate.startsWith('/api/v1/') && !failedBackdrops.includes(candidate)
+			) ?? null
+		);
 	});
+
+	const heroBackdropSrc = $derived(
+		heroBackdrop ? (heroBackdrop.includes('?') ? heroBackdrop : `${heroBackdrop}?w=960`) : null
+	);
 
 	const heroPosterSrc = $derived.by(() => {
 		if (!data) return null;
@@ -242,7 +250,7 @@
 						alt=""
 						aria-hidden="true"
 						onerror={() => {
-							artLoadFailedSrc = heroBackdropSrc;
+							if (heroBackdrop) failedBackdrops = [...failedBackdrops, heroBackdrop];
 						}}
 						class="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-25 blur-[1px]"
 					/>

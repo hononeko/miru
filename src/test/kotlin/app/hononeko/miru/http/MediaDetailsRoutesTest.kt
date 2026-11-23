@@ -375,7 +375,8 @@ class MediaDetailsRoutesTest :
                     episode.ratingKey shouldBe "54321"
                     episode.mediaType shouldBe "episode"
                     episode.thumbUrl shouldBe "/api/v1/media/54321/thumb"
-                    episode.artUrl shouldBe "/api/v1/media/54321/art"
+                    // An episode's art is its show's (/library/metadata/54000/art/...), so the URL names the show.
+                    episode.artUrl shouldBe "/api/v1/media/54000/art"
                     episode.series.shouldNotBeNull().let { s ->
                         s.ratingKey shouldBe "54000"
                         s.title shouldBe "Breaking Bad"

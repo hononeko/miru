@@ -11,10 +11,11 @@ group = "app.hononeko.miru"
 version = "0.1.0"
 
 repositories {
-    mavenCentral()
-    // Google's mirror of Maven Central, asked only when Central answers "not found": Central sometimes answers
-    // that for artifacts it has, failing CI builds
+    // Google's mirror of Maven Central first: Central rate-limits CI runners (HTTP 429), and Gradle moves to the next
+    // repository only when one answers "not found", never on an error. Releases the mirror has not copied yet answer
+    // "not found" there and come from Central.
     maven("https://maven-central.storage-download.googleapis.com/maven2/") { name = "MavenCentralMirror" }
+    mavenCentral()
 }
 
 dependencies {
@@ -99,6 +100,27 @@ tasks.shadowJar {
     duplicatesStrategy = DuplicatesStrategy.INCLUDE
     mergeServiceFiles()
     exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA")
+}
+
+// Everything `shadowJar` resolves: the libraries, plus the Kotlin compiler and its serialization plugin.
+val shadowJarBuildClasspaths =
+    setOf(
+        "compileClasspath",
+        "runtimeClasspath",
+        "annotationProcessor",
+        "kotlinCompilerClasspath",
+        "kotlinCompilerPluginClasspathMain",
+        "kotlinBuildToolsApiClasspath",
+    )
+
+// The Docker build runs this with only the build scripts copied in, so the downloaded jars live in a layer that only
+// changes with the build scripts, and a source-only change builds the image without downloading anything.
+tasks.register("downloadDependencies") {
+    description = "Downloads every dependency shadowJar needs, without compiling anything."
+    val classpaths = files(configurations.matching { it.name in shadowJarBuildClasspaths })
+    doLast {
+        logger.lifecycle("Downloaded {} dependency files", classpaths.files.size)
+    }
 }
 
 detekt {

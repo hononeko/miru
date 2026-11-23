@@ -14,10 +14,12 @@ RUN bun run build
 FROM --platform=$BUILDPLATFORM eclipse-temurin:25.0.5_8-jdk-noble AS build
 WORKDIR /src
 
-# Copy build scripts and version catalog first so dependency resolution caches cleanly
+# Copy only the build scripts and version catalog, then download every jar the build needs. This layer changes only
+# with the build scripts, so a source-only change reuses it from the layer cache and builds without downloading
+# anything (Maven Central rate-limits CI runners that download on every build).
 COPY gradlew settings.gradle.kts build.gradle.kts gradle.properties .java-version ./
 COPY gradle/ gradle/
-RUN ./gradlew --no-daemon --quiet dependencies --configuration runtimeClasspath > /dev/null
+RUN ./gradlew --no-daemon --quiet downloadDependencies
 
 # Only main sources: test and detekt config changes keep this layer and the build cached
 COPY src/main/ src/main/

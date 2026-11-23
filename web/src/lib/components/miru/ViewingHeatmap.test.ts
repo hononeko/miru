@@ -66,4 +66,18 @@ describe('ViewingHeatmap', () => {
 		await fireEvent.click(range365Btn);
 		expect(onchangeRange).toHaveBeenCalledWith('365d');
 	});
+
+	it('renders duration-based intensity subtitle when metric is duration', () => {
+		render(ViewingHeatmap, {
+			props: {
+				heatmap: buildSampleHeatmap(),
+				range: '90d',
+				metric: 'duration',
+				loading: false,
+				onchangeRange: vi.fn()
+			}
+		});
+
+		expect(screen.getByText(/intensity by playback duration/i)).toBeTruthy();
+	});
 });

@@ -1027,6 +1027,7 @@ class AuthRoutesTest :
                                         dateFormat = "mdy",
                                         defaultStatsRange = "7d",
                                         relativeTimestamps = false,
+                                        analyticsMetric = "duration",
                                     ),
                                 ),
                             )
@@ -1039,6 +1040,7 @@ class AuthRoutesTest :
                             dateFormat = "mdy",
                             defaultStatsRange = "7d",
                             relativeTimestamps = false,
+                            analyticsMetric = "duration",
                             updatedAtMs = 1_010_000L,
                         )
                     MiruJson.decodeFromString<UserPreferencesResponse>(updateViewer.bodyAsText()) shouldBe expectedViewer
@@ -1064,6 +1066,7 @@ class AuthRoutesTest :
                             dateFormat = "iso",
                             defaultStatsRange = "30d",
                             relativeTimestamps = true,
+                            analyticsMetric = "plays",
                             updatedAtMs = null,
                         )
 
@@ -1080,6 +1083,7 @@ class AuthRoutesTest :
                                         dateFormat = "ymd",
                                         defaultStatsRange = "1y",
                                         relativeTimestamps = true,
+                                        analyticsMetric = "bytes",
                                     ),
                                 ),
                             )
@@ -1088,7 +1092,8 @@ class AuthRoutesTest :
                     val problem = MiruJson.decodeFromString<ProblemDetails>(invalidResp.bodyAsText())
                     problem.status shouldBe 400
                     val fieldErrors = problem.errors.shouldNotBeNull()
-                    fieldErrors.keys shouldContainExactly setOf("theme", "timeFormat", "dateFormat", "defaultStatsRange")
+                    fieldErrors.keys shouldContainExactly
+                        setOf("theme", "timeFormat", "dateFormat", "defaultStatsRange", "analyticsMetric")
                 }
             }
         }

@@ -58,5 +58,6 @@ data class UserPreferencesRecord(
     val dateFormat: String = "iso",
     val defaultStatsRange: String = "30d",
     val relativeTimestamps: Boolean = true,
+    val analyticsMetric: String = "plays",
     val updatedAtMs: Long,
 )

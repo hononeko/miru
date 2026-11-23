@@ -39,5 +39,31 @@ describe('ClientsCodecsPanel', () => {
 		expect(screen.getByText('Audio · EAC3')).toBeTruthy();
 		expect(screen.getByText('Video Transcode')).toBeTruthy();
 		expect(screen.getByText('Container Remux')).toBeTruthy();
+		expect(screen.getAllByText('12 · 60.0%').length).toBeGreaterThan(0);
+	});
+
+	it('formats item values as playback duration when metric is duration', () => {
+		const clientStats: ClientStatsResponse = {
+			range: '30d',
+			fromMs: 1_700_000_000_000,
+			totalPlays: 20,
+			totalWatchDurationSec: 54_000,
+			transcodeOrRemuxPlays: 8,
+			players: [{ name: 'Plex for Apple TV', playCount: 12, watchDurationSec: 36_000, percent: 66.7 }],
+			platforms: [],
+			videoCodecs: [],
+			audioCodecs: [],
+			transcodeReasons: []
+		};
+
+		render(ClientsCodecsPanel, {
+			props: {
+				clientStats,
+				metric: 'duration',
+				loading: false
+			}
+		});
+
+		expect(screen.getByText('10h 0m · 66.7%')).toBeTruthy();
 	});
 });

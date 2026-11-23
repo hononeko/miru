@@ -882,6 +882,11 @@ export interface components {
             /** @enum {string} */
             defaultStatsRange: "7d" | "30d" | "90d" | "all";
             relativeTimestamps: boolean;
+            /**
+             * @default plays
+             * @enum {string}
+             */
+            analyticsMetric: "plays" | "duration";
             /** Format: int64 */
             updatedAtMs?: number | null;
         };
@@ -895,6 +900,11 @@ export interface components {
             /** @enum {string} */
             defaultStatsRange: "7d" | "30d" | "90d" | "all";
             relativeTimestamps: boolean;
+            /**
+             * @default plays
+             * @enum {string}
+             */
+            analyticsMetric: "plays" | "duration";
         };
         AccountResponse: {
             id: string;
@@ -3479,6 +3489,8 @@ export interface operations {
         parameters: {
             query?: {
                 range?: "7d" | "30d" | "90d" | "365d" | "all";
+                /** @description Whether breakdowns and rankings are calculated by number of plays or playback duration */
+                metric?: "plays" | "duration";
             };
             header?: never;
             path?: never;
@@ -3520,6 +3532,8 @@ export interface operations {
             query?: {
                 range?: "7d" | "30d" | "90d" | "365d" | "all";
                 userId?: string;
+                /** @description Whether peak activity is ranked by number of plays or playback duration */
+                metric?: "plays" | "duration";
             };
             header?: never;
             path?: never;
@@ -3570,6 +3584,8 @@ export interface operations {
             query?: {
                 range?: "7d" | "30d" | "90d" | "365d" | "all";
                 userId?: string;
+                /** @description Whether client, codec, and transcode percentages and ordering are calculated by plays or duration */
+                metric?: "plays" | "duration";
             };
             header?: never;
             path?: never;
@@ -3619,6 +3635,8 @@ export interface operations {
         parameters: {
             query?: {
                 userId?: string;
+                /** @description Whether annual rankings, peak periods, and percentages are calculated by plays or duration */
+                metric?: "plays" | "duration";
             };
             header?: never;
             path: {
@@ -3679,6 +3697,8 @@ export interface operations {
         parameters: {
             query?: {
                 range?: "7d" | "30d" | "90d" | "365d" | "all";
+                /** @description Whether user stats rankings and percentages are calculated by plays or duration */
+                metric?: "plays" | "duration";
             };
             header?: never;
             path: {

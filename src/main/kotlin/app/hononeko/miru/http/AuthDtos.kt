@@ -137,6 +137,7 @@ data class UserPreferencesResponse(
     val dateFormat: String,
     val defaultStatsRange: String,
     val relativeTimestamps: Boolean,
+    val analyticsMetric: String = "plays",
     val updatedAtMs: Long? = null,
 )
 
@@ -147,6 +148,7 @@ data class UpdateUserPreferencesRequest(
     val dateFormat: String = "iso",
     val defaultStatsRange: String = "30d",
     val relativeTimestamps: Boolean = true,
+    val analyticsMetric: String = "plays",
 )
 
 internal fun MiruPrincipal.toResponse(avatarUrl: String? = null): PrincipalResponse =
@@ -204,5 +206,6 @@ internal fun UserPreferencesRecord.toResponse(): UserPreferencesResponse =
         dateFormat = dateFormat,
         defaultStatsRange = defaultStatsRange,
         relativeTimestamps = relativeTimestamps,
+        analyticsMetric = analyticsMetric,
         updatedAtMs = updatedAtMs,
     )

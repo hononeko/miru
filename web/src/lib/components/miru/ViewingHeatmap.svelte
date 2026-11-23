@@ -1,16 +1,22 @@
 <script lang="ts">
-	import type { HeatmapCellDto, HeatmapRange, HeatmapStatsResponse } from '$api/types';
+	import type {
+		AnalyticsMetricPreference,
+		HeatmapCellDto,
+		HeatmapRange,
+		HeatmapStatsResponse
+	} from '$api/types';
 	import Badge from '$components/ui/Badge.svelte';
 	import { cn, formatDurationSec } from '$lib/utils';
 
 	type Props = {
 		heatmap: HeatmapStatsResponse | null;
 		range: HeatmapRange;
+		metric?: AnalyticsMetricPreference;
 		loading?: boolean;
 		onchangeRange: (range: HeatmapRange) => void;
 	};
 
-	let { heatmap, range, loading = false, onchangeRange }: Props = $props();
+	let { heatmap, range, metric = 'plays', loading = false, onchangeRange }: Props = $props();
 
 	const RANGE_OPTIONS: ReadonlyArray<{ value: HeatmapRange; label: string }> = [
 		{ value: '30d', label: '30d' },
@@ -51,11 +57,16 @@
 		return `${h}:00–${h}:59 UTC`;
 	}
 
-	function cellIntensityClass(playCount: number, maxPlays: number): string {
-		if (playCount <= 0 || maxPlays <= 0) {
+	function cellIntensityClass(cell: HeatmapCellDto): string {
+		const val = metric === 'duration' ? cell.watchDurationSec : cell.playCount;
+		const maxVal =
+			metric === 'duration'
+				? (heatmap?.maxCellWatchDurationSec ?? 0)
+				: (heatmap?.maxCellPlays ?? 0);
+		if (val <= 0 || maxVal <= 0) {
 			return 'bg-subtle/60 border-transparent hover:border-border-strong';
 		}
-		const ratio = playCount / maxPlays;
+		const ratio = val / maxVal;
 		if (ratio > 0.75) {
 			return 'bg-primary border-primary-hover text-white';
 		}
@@ -83,7 +94,7 @@
 				{/if}
 			</div>
 			<p class="mt-0.5 text-[11px] text-fg-muted">
-				7 × 24 UTC playback intensity grid · Hover or tap any cell for play count & watch duration
+				7 × 24 UTC intensity by {metric === 'duration' ? 'playback duration' : 'play count'} · Hover or tap any cell for details
 			</p>
 		</div>
 
@@ -143,7 +154,7 @@
 							onclick={() => (activeCell = cell)}
 							class={cn(
 								'h-4 w-full rounded-[3px] border transition-transform sm:h-5 sm:rounded-xs cursor-pointer focus-visible:outline-1 focus-visible:outline-cyan',
-								cellIntensityClass(cell.playCount, heatmap?.maxCellPlays ?? 0),
+								cellIntensityClass(cell),
 								isSelected && 'ring-1 ring-fg-primary scale-105'
 							)}
 						></button>

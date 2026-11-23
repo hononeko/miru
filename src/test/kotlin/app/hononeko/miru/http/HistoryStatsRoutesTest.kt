@@ -842,6 +842,11 @@ class HistoryStatsRoutesTest :
                     badWrappedYear.status shouldBe HttpStatusCode.BadRequest
                     MiruJson.decodeFromString<ProblemDetails>(badWrappedYear.bodyAsText()).errors.shouldNotBeNull() shouldContainKey
                         "year"
+
+                    val badMetric = client.get("/api/v1/stats/clients?metric=invalid")
+                    badMetric.status shouldBe HttpStatusCode.BadRequest
+                    MiruJson.decodeFromString<ProblemDetails>(badMetric.bodyAsText()).errors.shouldNotBeNull() shouldContainKey
+                        "metric"
                 }
             }
         }
@@ -959,6 +964,17 @@ class HistoryStatsRoutesTest :
                     clients.audioCodecs.map { it.name }.toSet() shouldBe setOf("AAC", "FLAC", "Unknown")
                     clients.transcodeReasons.map { it.name to it.playCount } shouldContainExactly
                         listOf("Audio Transcode" to 1L, "Video Transcode" to 1L)
+
+                    val clientsDuration =
+                        MiruJson.decodeFromString<ClientStatsResponse>(
+                            client
+                                .get("/api/v1/stats/clients?range=90d&metric=duration") {
+                                    cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                                }.bodyAsText(),
+                        )
+                    clientsDuration.players.first().name shouldBe "Plex for Apple TV"
+                    clientsDuration.players.first().watchDurationSec shouldBe 14_700L
+                    clientsDuration.players.first().percent shouldBe 68.53
 
                     client
                         .get("/api/v1/stats/clients?userId=u-bob") {

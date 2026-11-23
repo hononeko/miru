@@ -1323,6 +1323,7 @@ private fun FunSpecRootScope.userPreferencesTests(ctxProvider: () -> ContractCon
                     dateFormat = "mdy",
                     defaultStatsRange = "7d",
                     relativeTimestamps = false,
+                    analyticsMetric = "duration",
                     updatedAtMs = 2_000L,
                 )
             ctx.userPreferences.upsert(initial).shouldBeRight() shouldBe initial
@@ -1335,6 +1336,7 @@ private fun FunSpecRootScope.userPreferencesTests(ctxProvider: () -> ContractCon
                     dateFormat = "dmy",
                     defaultStatsRange = "all",
                     relativeTimestamps = true,
+                    analyticsMetric = "plays",
                     updatedAtMs = 5_000L,
                 )
             ctx.userPreferences.upsert(updated).shouldBeRight() shouldBe updated
@@ -1522,19 +1524,25 @@ private fun FunSpecRootScope.advancedAnalyticsServiceTests(ctxProvider: () -> Co
             heatmap.maxCellPlays shouldBe 1L
             heatmap.peakHour shouldBe 22
 
-            // Client & codec breakdown stats
+            // Client & codec breakdown stats (plays vs duration metric)
             val clients = service.getClientStats(admin, "90d").shouldBeRight()
             clients.totalPlays shouldBe 4L
             clients.transcodeOrRemuxPlays shouldBe 3L
             clients.players.first().name shouldBe "Plex for Apple TV"
             clients.players.first().playCount shouldBe 2L
+            clients.players.first().percent shouldBe 50.0
             clients.platforms.first().name shouldBe "Apple TV"
             clients.videoCodecs.any { it.name == "HEVC" } shouldBe true
             clients.transcodeReasons.map { it.name }.toSet() shouldBe
                 setOf("Video Transcode", "Audio Transcode", "Container Remux")
 
+            val clientsByDuration = service.getClientStats(admin, "90d", metricRaw = "duration").shouldBeRight()
+            clientsByDuration.players.first().name shouldBe "Plex for Apple TV"
+            clientsByDuration.players.first().watchDurationSec shouldBe 9_000L
+            clientsByDuration.players.first().percent shouldBe 73.77
+
             // Wrapped annual summary
-            val wrapped2026 = service.getWrappedStats(userAlice, "2026", userId = "u-alice").shouldBeRight()
+            val wrapped2026 = service.getWrappedStats(userAlice, "2026", userId = "u-alice", metricRaw = "duration").shouldBeRight()
             wrapped2026.year shouldBe 2026
             wrapped2026.userId shouldBe "u-alice"
             wrapped2026.totalPlays shouldBe 3L

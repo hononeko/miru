@@ -73,6 +73,7 @@ object UserPreferencesTable : Table("user_preferences") {
     val dateFormat = text("date_format").default("iso")
     val defaultStatsRange = text("default_stats_range").default("30d")
     val relativeTimestamps = bool("relative_timestamps").default(true)
+    val analyticsMetric = text("analytics_metric").default("plays")
     val updatedAtMs = long("updated_at_ms")
 
     override val primaryKey = PrimaryKey(accountId)

@@ -48,7 +48,8 @@ describe('PreferencesStore', () => {
 			timeFormat: '99h' as never,
 			dateFormat: 'ymd' as never,
 			defaultStatsRange: '1y' as never,
-			relativeTimestamps: 'yes' as never
+			relativeTimestamps: 'yes' as never,
+			analyticsMetric: 'bandwidth' as never
 		});
 		expect(normalized).toEqual(DEFAULT_USER_PREFERENCES);
 	});
@@ -60,6 +61,7 @@ describe('PreferencesStore', () => {
 			dateFormat: 'mdy',
 			defaultStatsRange: '7d',
 			relativeTimestamps: false,
+			analyticsMetric: 'duration',
 			updatedAtMs: 1234
 		};
 		localStorage.setItem('miru-user-preferences', JSON.stringify(cached));
@@ -81,6 +83,7 @@ describe('PreferencesStore', () => {
 			dateFormat: 'dmy',
 			defaultStatsRange: '90d',
 			relativeTimestamps: false,
+			analyticsMetric: 'duration',
 			updatedAtMs: 5_000
 		};
 		const getSpy = vi.spyOn(api, 'GET').mockResolvedValueOnce({
@@ -101,6 +104,7 @@ describe('PreferencesStore', () => {
 			dateFormat: 'iso',
 			defaultStatsRange: 'all',
 			relativeTimestamps: true,
+			analyticsMetric: 'plays',
 			updatedAtMs: 9_000
 		};
 		const putSpy = vi.spyOn(api, 'PUT').mockResolvedValueOnce({
@@ -113,7 +117,8 @@ describe('PreferencesStore', () => {
 			timeFormat: '24h',
 			dateFormat: 'iso',
 			defaultStatsRange: 'all',
-			relativeTimestamps: true
+			relativeTimestamps: true,
+			analyticsMetric: 'plays'
 		});
 		expect(putSpy).toHaveBeenCalledWith('/api/v1/auth/me/preferences', {
 			body: {
@@ -121,7 +126,8 @@ describe('PreferencesStore', () => {
 				timeFormat: '24h',
 				dateFormat: 'iso',
 				defaultStatsRange: 'all',
-				relativeTimestamps: true
+				relativeTimestamps: true,
+				analyticsMetric: 'plays'
 			}
 		});
 		expect(result).toEqual(savedPrefs);
@@ -148,7 +154,8 @@ describe('PreferencesStore', () => {
 				timeFormat: '24h',
 				dateFormat: 'iso',
 				defaultStatsRange: '30d',
-				relativeTimestamps: true
+				relativeTimestamps: true,
+				analyticsMetric: 'plays'
 			})
 		).rejects.toBeInstanceOf(MiruApiError);
 

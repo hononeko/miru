@@ -1,5 +1,6 @@
 import { api, MiruApiError, unwrap } from '$api/client';
 import type {
+	AnalyticsMetricPreference,
 	DateFormatPreference,
 	StatsRange,
 	ThemePreference,
@@ -15,6 +16,7 @@ const ALLOWED_THEMES = new Set<ThemePreference>(['system', 'dark', 'light']);
 const ALLOWED_TIME_FORMATS = new Set<TimeFormatPreference>(['24h', '12h']);
 const ALLOWED_DATE_FORMATS = new Set<DateFormatPreference>(['iso', 'mdy', 'dmy']);
 const ALLOWED_STATS_RANGES = new Set<StatsRange>(['7d', '30d', '90d', 'all']);
+const ALLOWED_ANALYTICS_METRICS = new Set<AnalyticsMetricPreference>(['plays', 'duration']);
 
 export const DEFAULT_USER_PREFERENCES: UserPreferencesResponse = {
 	theme: 'system',
@@ -22,6 +24,7 @@ export const DEFAULT_USER_PREFERENCES: UserPreferencesResponse = {
 	dateFormat: 'iso',
 	defaultStatsRange: '30d',
 	relativeTimestamps: true,
+	analyticsMetric: 'plays',
 	updatedAtMs: null
 };
 
@@ -44,6 +47,10 @@ export function normalizePreferences(raw: Partial<UserPreferencesResponse> | nul
 			typeof raw?.relativeTimestamps === 'boolean'
 				? raw.relativeTimestamps
 				: DEFAULT_USER_PREFERENCES.relativeTimestamps,
+		analyticsMetric:
+			raw?.analyticsMetric && ALLOWED_ANALYTICS_METRICS.has(raw.analyticsMetric)
+				? raw.analyticsMetric
+				: DEFAULT_USER_PREFERENCES.analyticsMetric,
 		updatedAtMs: typeof raw?.updatedAtMs === 'number' ? raw.updatedAtMs : null
 	};
 }
@@ -138,7 +145,8 @@ export class PreferencesStore {
 				timeFormat: input.timeFormat,
 				dateFormat: input.dateFormat,
 				defaultStatsRange: input.defaultStatsRange,
-				relativeTimestamps: input.relativeTimestamps
+				relativeTimestamps: input.relativeTimestamps,
+				analyticsMetric: input.analyticsMetric
 			};
 			const res = unwrap(
 				await api.PUT('/api/v1/auth/me/preferences', {

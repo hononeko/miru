@@ -53,6 +53,13 @@ private val MONTH_NAMES = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul"
 private val VALID_MEDIA_TYPES = setOf("movie", "episode", "track", "clip", "live_tv")
 private val VALID_DECISIONS = setOf("direct_play", "direct_stream", "transcode")
 
+enum class AnalyticsMetric(
+    val code: String,
+) {
+    PLAYS("plays"),
+    DURATION("duration"),
+}
+
 data class HistoryQueryParams(
     val userId: String? = null,
     val mediaType: String? = null,
@@ -181,12 +188,14 @@ class HistoryAndStatsService(
     suspend fun getOverviewStats(
         principal: MiruPrincipal,
         rangeRaw: String?,
+        metricRaw: String? = null,
     ): Either<MiruError, OverviewStatsResponse> =
         either {
             val range = parseRange(rangeRaw).bind()
+            val metric = parseMetric(metricRaw).bind()
             val scopedUserIds = if (principal.isAdmin()) null else principal.linkedMediaUserIds
             val rows = playbackHistoryRepository.listForStats(userIds = scopedUserIds, fromMs = range.fromMs).bind()
-            val common = aggregateCommonStats(rows)
+            val common = aggregateCommonStats(rows, metric)
 
             OverviewStatsResponse(
                 range = range.label,
@@ -205,6 +214,7 @@ class HistoryAndStatsService(
         principal: MiruPrincipal,
         userId: String,
         rangeRaw: String?,
+        metricRaw: String? = null,
     ): Either<MiruError, UserStatsResponse> =
         either {
             val trimmedUserId = userId.trim()
@@ -218,8 +228,9 @@ class HistoryAndStatsService(
                     ?: raise(MiruError.NotFound(resource = "User", id = trimmedUserId))
 
             val range = parseRange(rangeRaw).bind()
+            val metric = parseMetric(metricRaw).bind()
             val rows = playbackHistoryRepository.listForStats(userIds = setOf(trimmedUserId), fromMs = range.fromMs).bind()
-            val common = aggregateCommonStats(rows)
+            val common = aggregateCommonStats(rows, metric)
             val avgCompletion = computeAverageCompletionPercent(rows)
             val completedPlays = rows.count { it.isWatched }.toLong()
             val longestStreak = computeLongestBingeStreakDays(rows)
@@ -240,10 +251,10 @@ class HistoryAndStatsService(
                 playsPerDay = common.playsPerDay,
                 topMovies = common.topMovies,
                 topShows = common.topShows,
-                mostRewatched = aggregateMostRewatched(rows),
+                mostRewatched = aggregateMostRewatched(rows, metric),
                 decisionBreakdown = common.decisionBreakdown,
-                topPlatforms = aggregatePlatforms(rows, common.totalPlays),
-                libraryBreakdown = aggregateLibraries(rows, common.totalPlays),
+                topPlatforms = aggregatePlatforms(rows, common.totalPlays, common.totalWatchDurationSec, metric),
+                libraryBreakdown = aggregateLibraries(rows, common.totalPlays, common.totalWatchDurationSec, metric),
             )
         }
 
@@ -251,9 +262,11 @@ class HistoryAndStatsService(
         principal: MiruPrincipal,
         rangeRaw: String?,
         userId: String? = null,
+        metricRaw: String? = null,
     ): Either<MiruError, HeatmapStatsResponse> =
         either {
             val range = parseRange(rangeRaw, defaultRange = "90d").bind()
+            val metric = parseMetric(metricRaw).bind()
             val scopedUserIds = resolveScopedStatsUserIds(principal, userId).bind()
             val rows = playbackHistoryRepository.listForStats(userIds = scopedUserIds, fromMs = range.fromMs).bind()
 
@@ -296,7 +309,7 @@ class HistoryAndStatsService(
                     if (cellDuration > maxCellWatchDurationSec) {
                         maxCellWatchDurationSec = cellDuration
                     }
-                    if (isHigherHeatmapPeak(cell, peakCell)) {
+                    if (isHigherHeatmapPeak(cell, peakCell, metric)) {
                         peakCell = cell
                     }
                 }
@@ -319,30 +332,32 @@ class HistoryAndStatsService(
         principal: MiruPrincipal,
         rangeRaw: String?,
         userId: String? = null,
+        metricRaw: String? = null,
     ): Either<MiruError, ClientStatsResponse> =
         either {
             val range = parseRange(rangeRaw, defaultRange = "30d").bind()
+            val metric = parseMetric(metricRaw).bind()
             val scopedUserIds = resolveScopedStatsUserIds(principal, userId).bind()
             val rows = playbackHistoryRepository.listForStats(userIds = scopedUserIds, fromMs = range.fromMs).bind()
             val totalPlays = rows.size.toLong()
             val totalWatchDurationSec = rows.sumOf { it.watchedDurationSec.toLong() }
 
             val players =
-                aggregateClientBreakdown(rows, totalPlays) { row ->
+                aggregateClientBreakdown(rows, totalPlays, totalWatchDurationSec, metric) { row ->
                     row.playerProduct?.takeIf { it.isNotBlank() }
                         ?: row.playerName?.takeIf { it.isNotBlank() }
                         ?: "Unknown"
                 }
             val platforms =
-                aggregateClientBreakdown(rows, totalPlays) { row ->
+                aggregateClientBreakdown(rows, totalPlays, totalWatchDurationSec, metric) { row ->
                     row.playerPlatform?.takeIf { it.isNotBlank() } ?: "Unknown"
                 }
             val videoCodecs =
-                aggregateClientBreakdown(rows, totalPlays) { row ->
+                aggregateClientBreakdown(rows, totalPlays, totalWatchDurationSec, metric) { row ->
                     LibraryNormalizer.normalizeCodec(row.videoCodec)
                 }
             val audioCodecs =
-                aggregateClientBreakdown(rows, totalPlays) { row ->
+                aggregateClientBreakdown(rows, totalPlays, totalWatchDurationSec, metric) { row ->
                     LibraryNormalizer.normalizeCodec(row.audioCodec)
                 }
 
@@ -350,30 +365,34 @@ class HistoryAndStatsService(
                 rows.mapNotNull { row ->
                     classifyTranscodeReason(row)?.let { reason -> reason to row }
                 }
-            val nonDirectTotal = nonDirectRows.size.toLong()
+            val nonDirectTotalPlays = nonDirectRows.size.toLong()
+            val nonDirectTotalDuration = nonDirectRows.sumOf { it.second.watchedDurationSec.toLong() }
             val transcodeReasons =
                 nonDirectRows
                     .groupBy({ it.first }, { it.second })
                     .map { (reason, group) ->
                         val count = group.size.toLong()
+                        val duration = group.sumOf { it.watchedDurationSec.toLong() }
+                        val pct =
+                            when (metric) {
+                                AnalyticsMetric.PLAYS -> toPercent(count, nonDirectTotalPlays)
+                                AnalyticsMetric.DURATION -> toPercent(duration, nonDirectTotalDuration)
+                            }
                         ClientBreakdownItemDto(
                             name = reason,
                             playCount = count,
-                            watchDurationSec = group.sumOf { it.watchedDurationSec.toLong() },
-                            percent = toPercent(count, nonDirectTotal),
+                            watchDurationSec = duration,
+                            percent = pct,
                         )
-                    }.sortedWith(
-                        compareByDescending<ClientBreakdownItemDto> { it.playCount }
-                            .thenByDescending { it.watchDurationSec }
-                            .thenBy { it.name.lowercase() },
-                    ).take(TOP_MEDIA_LIMIT)
+                    }.sortedWith(clientBreakdownComparator(metric))
+                    .take(TOP_MEDIA_LIMIT)
 
             ClientStatsResponse(
                 range = range.label,
                 fromMs = range.fromMs,
                 totalPlays = totalPlays,
                 totalWatchDurationSec = totalWatchDurationSec,
-                transcodeOrRemuxPlays = nonDirectTotal,
+                transcodeOrRemuxPlays = nonDirectTotalPlays,
                 players = players,
                 platforms = platforms,
                 videoCodecs = videoCodecs,
@@ -386,6 +405,7 @@ class HistoryAndStatsService(
         principal: MiruPrincipal,
         yearRaw: String?,
         userId: String? = null,
+        metricRaw: String? = null,
     ): Either<MiruError, WrappedStatsResponse> =
         either {
             val year =
@@ -396,6 +416,7 @@ class HistoryAndStatsService(
                             fieldErrors = mapOf("year" to "Must be a valid year between $MIN_WRAPPED_YEAR and $MAX_WRAPPED_YEAR"),
                         ),
                     )
+            val metric = parseMetric(metricRaw).bind()
             val trimmedUserId = userId?.trim()?.takeIf { it.isNotEmpty() }
             val resolvedUser =
                 if (trimmedUserId != null) {
@@ -422,14 +443,19 @@ class HistoryAndStatsService(
                         toMs = toMs,
                     ).bind()
 
-            val common = aggregateCommonStats(rows)
+            val common = aggregateCommonStats(rows, metric)
             val playsByMonth = aggregatePlaysByMonth(rows)
+            val peakMonthComparator =
+                when (metric) {
+                    AnalyticsMetric.PLAYS -> compareBy<WrappedMonthStatDto> { it.playCount }.thenBy { it.watchDurationSec }
+                    AnalyticsMetric.DURATION -> compareBy<WrappedMonthStatDto> { it.watchDurationSec }.thenBy { it.playCount }
+                }
             val peakMonth =
                 playsByMonth
                     .filter { it.playCount > 0L }
-                    .maxWithOrNull(compareBy<WrappedMonthStatDto> { it.playCount }.thenBy { it.watchDurationSec })
+                    .maxWithOrNull(peakMonthComparator)
                     ?.monthName
-            val peakDayOfWeek = computePeakDayOfWeek(rows)
+            val peakDayOfWeek = computePeakDayOfWeek(rows, metric)
             val uniqueMoviesCount =
                 rows
                     .asSequence()
@@ -462,10 +488,10 @@ class HistoryAndStatsService(
                 peakDayOfWeek = peakDayOfWeek,
                 topMovies = common.topMovies,
                 topShows = common.topShows,
-                mostRewatched = aggregateMostRewatched(rows),
-                topPlatforms = aggregatePlatforms(rows, common.totalPlays),
+                mostRewatched = aggregateMostRewatched(rows, metric),
+                topPlatforms = aggregatePlatforms(rows, common.totalPlays, common.totalWatchDurationSec, metric),
                 topClients =
-                    aggregateClientBreakdown(rows, common.totalPlays) { row ->
+                    aggregateClientBreakdown(rows, common.totalPlays, common.totalWatchDurationSec, metric) { row ->
                         row.playerProduct?.takeIf { it.isNotBlank() }
                             ?: row.playerName?.takeIf { it.isNotBlank() }
                             ?: "Unknown"
@@ -612,6 +638,22 @@ class HistoryAndStatsService(
             StatsRange(label = normalized, fromMs = fromMs)
         }
 
+    private fun parseMetric(metricRaw: String?): Either<MiruError.ValidationError, AnalyticsMetric> =
+        either {
+            val normalized = metricRaw?.trim()?.takeIf { it.isNotEmpty() }?.lowercase() ?: AnalyticsMetric.PLAYS.code
+            when (normalized) {
+                AnalyticsMetric.PLAYS.code -> AnalyticsMetric.PLAYS
+                AnalyticsMetric.DURATION.code -> AnalyticsMetric.DURATION
+                else ->
+                    raise(
+                        MiruError.ValidationError(
+                            message = "Invalid analytics metric",
+                            fieldErrors = mapOf("metric" to "Must be one of: plays, duration"),
+                        ),
+                    )
+            }
+        }
+
     private fun parsePositiveInt(
         raw: String?,
         fallback: Int,
@@ -656,7 +698,10 @@ class HistoryAndStatsService(
             else -> null
         }
 
-    private fun aggregateCommonStats(rows: List<PlaybackHistoryStatsRow>): CommonStats {
+    private fun aggregateCommonStats(
+        rows: List<PlaybackHistoryStatsRow>,
+        metric: AnalyticsMetric = AnalyticsMetric.PLAYS,
+    ): CommonStats {
         val totalPlays = rows.size.toLong()
         var totalWatchDurationSec = 0L
         val activeUserIds = hashSetOf<String>()
@@ -665,22 +710,37 @@ class HistoryAndStatsService(
         var directStream = 0L
         var transcode = 0L
         var hwTranscode = 0L
+        var directPlayDurationSec = 0L
+        var directStreamDurationSec = 0L
+        var transcodeDurationSec = 0L
+        var hwTranscodeDurationSec = 0L
 
         for (row in rows) {
-            totalWatchDurationSec += row.watchedDurationSec.toLong()
+            val duration = row.watchedDurationSec.toLong()
+            totalWatchDurationSec += duration
             activeUserIds += row.userId
 
             val day = Instant.ofEpochMilli(row.stoppedAtMs).atZone(ZoneOffset.UTC).toLocalDate().toString()
             val prev = dailyAgg[day] ?: (0L to 0L)
-            dailyAgg[day] = (prev.first + 1L) to (prev.second + row.watchedDurationSec.toLong())
+            dailyAgg[day] = (prev.first + 1L) to (prev.second + duration)
 
             when (row.streamDecision.lowercase()) {
-                "direct_play" -> directPlay++
-                "direct_stream" -> directStream++
-                "transcode" -> transcode++
+                "direct_play" -> {
+                    directPlay++
+                    directPlayDurationSec += duration
+                }
+                "direct_stream" -> {
+                    directStream++
+                    directStreamDurationSec += duration
+                }
+                "transcode" -> {
+                    transcode++
+                    transcodeDurationSec += duration
+                }
             }
             if (row.hwTranscode) {
                 hwTranscode++
+                hwTranscodeDurationSec += duration
             }
         }
 
@@ -696,29 +756,70 @@ class HistoryAndStatsService(
                 }
 
         val decisionBreakdown =
-            DecisionBreakdownStatDto(
-                directPlay = directPlay,
-                directStream = directStream,
-                transcode = transcode,
-                hwTranscode = hwTranscode,
-                directPlayPercent = toPercent(directPlay, totalPlays),
-                directStreamPercent = toPercent(directStream, totalPlays),
-                transcodePercent = toPercent(transcode, totalPlays),
-                hwTranscodePercent = toPercent(hwTranscode, totalPlays),
-            )
+            when (metric) {
+                AnalyticsMetric.PLAYS ->
+                    DecisionBreakdownStatDto(
+                        directPlay = directPlay,
+                        directStream = directStream,
+                        transcode = transcode,
+                        hwTranscode = hwTranscode,
+                        directPlayPercent = toPercent(directPlay, totalPlays),
+                        directStreamPercent = toPercent(directStream, totalPlays),
+                        transcodePercent = toPercent(transcode, totalPlays),
+                        hwTranscodePercent = toPercent(hwTranscode, totalPlays),
+                    )
+                AnalyticsMetric.DURATION ->
+                    DecisionBreakdownStatDto(
+                        directPlay = directPlay,
+                        directStream = directStream,
+                        transcode = transcode,
+                        hwTranscode = hwTranscode,
+                        directPlayPercent = toPercent(directPlayDurationSec, totalWatchDurationSec),
+                        directStreamPercent = toPercent(directStreamDurationSec, totalWatchDurationSec),
+                        transcodePercent = toPercent(transcodeDurationSec, totalWatchDurationSec),
+                        hwTranscodePercent = toPercent(hwTranscodeDurationSec, totalWatchDurationSec),
+                    )
+            }
 
         return CommonStats(
             totalPlays = totalPlays,
             totalWatchDurationSec = totalWatchDurationSec,
             activeUsers = activeUserIds.size,
             playsPerDay = playsPerDay,
-            topMovies = aggregateTopMovies(rows),
-            topShows = aggregateTopShows(rows),
+            topMovies = aggregateTopMovies(rows, metric),
+            topShows = aggregateTopShows(rows, metric),
             decisionBreakdown = decisionBreakdown,
         )
     }
 
-    private fun aggregateTopMovies(rows: List<PlaybackHistoryStatsRow>): List<TopMediaStatDto> =
+    private fun topMediaComparator(metric: AnalyticsMetric): Comparator<TopMediaStatDto> =
+        when (metric) {
+            AnalyticsMetric.PLAYS ->
+                compareByDescending<TopMediaStatDto> { it.playCount }
+                    .thenByDescending { it.watchDurationSec }
+                    .thenBy { it.title.lowercase() }
+            AnalyticsMetric.DURATION ->
+                compareByDescending<TopMediaStatDto> { it.watchDurationSec }
+                    .thenByDescending { it.playCount }
+                    .thenBy { it.title.lowercase() }
+        }
+
+    private fun clientBreakdownComparator(metric: AnalyticsMetric): Comparator<ClientBreakdownItemDto> =
+        when (metric) {
+            AnalyticsMetric.PLAYS ->
+                compareByDescending<ClientBreakdownItemDto> { it.playCount }
+                    .thenByDescending { it.watchDurationSec }
+                    .thenBy { it.name.lowercase() }
+            AnalyticsMetric.DURATION ->
+                compareByDescending<ClientBreakdownItemDto> { it.watchDurationSec }
+                    .thenByDescending { it.playCount }
+                    .thenBy { it.name.lowercase() }
+        }
+
+    private fun aggregateTopMovies(
+        rows: List<PlaybackHistoryStatsRow>,
+        metric: AnalyticsMetric = AnalyticsMetric.PLAYS,
+    ): List<TopMediaStatDto> =
         rows
             .filter { it.mediaType.equals("movie", ignoreCase = true) }
             .groupBy { it.ratingKey }
@@ -735,13 +836,13 @@ class HistoryAndStatsService(
                     watchDurationSec = group.sumOf { it.watchedDurationSec.toLong() },
                     thumbUrl = thumbUrl,
                 )
-            }.sortedWith(
-                compareByDescending<TopMediaStatDto> { it.playCount }
-                    .thenByDescending { it.watchDurationSec }
-                    .thenBy { it.title.lowercase() },
-            ).take(TOP_MEDIA_LIMIT)
+            }.sortedWith(topMediaComparator(metric))
+            .take(TOP_MEDIA_LIMIT)
 
-    private fun aggregateTopShows(rows: List<PlaybackHistoryStatsRow>): List<TopMediaStatDto> =
+    private fun aggregateTopShows(
+        rows: List<PlaybackHistoryStatsRow>,
+        metric: AnalyticsMetric = AnalyticsMetric.PLAYS,
+    ): List<TopMediaStatDto> =
         rows
             .filter { it.mediaType.equals("episode", ignoreCase = true) }
             .groupBy { it.grandparentTitle?.takeIf { title -> title.isNotBlank() } ?: it.title }
@@ -754,15 +855,14 @@ class HistoryAndStatsService(
                     watchDurationSec = group.sumOf { it.watchedDurationSec.toLong() },
                     thumbUrl = buildThumbUrl(thumbRow.ratingKey, thumbRow.thumbPath),
                 )
-            }.sortedWith(
-                compareByDescending<TopMediaStatDto> { it.playCount }
-                    .thenByDescending { it.watchDurationSec }
-                    .thenBy { it.title.lowercase() },
-            ).take(TOP_MEDIA_LIMIT)
+            }.sortedWith(topMediaComparator(metric))
+            .take(TOP_MEDIA_LIMIT)
 
     private fun aggregatePlatforms(
         rows: List<PlaybackHistoryStatsRow>,
         totalPlays: Long,
+        totalWatchDurationSec: Long,
+        metric: AnalyticsMetric = AnalyticsMetric.PLAYS,
     ): List<PlatformStatDto> =
         rows
             .groupBy { row ->
@@ -771,39 +871,70 @@ class HistoryAndStatsService(
                     ?: "Unknown"
             }.map { (platform, group) ->
                 val count = group.size.toLong()
+                val duration = group.sumOf { it.watchedDurationSec.toLong() }
+                val pct =
+                    when (metric) {
+                        AnalyticsMetric.PLAYS -> toPercent(count, totalPlays)
+                        AnalyticsMetric.DURATION -> toPercent(duration, totalWatchDurationSec)
+                    }
                 PlatformStatDto(
                     platform = platform,
                     playCount = count,
-                    watchDurationSec = group.sumOf { it.watchedDurationSec.toLong() },
-                    percent = toPercent(count, totalPlays),
+                    watchDurationSec = duration,
+                    percent = pct,
                 )
             }.sortedWith(
-                compareByDescending<PlatformStatDto> { it.playCount }
-                    .thenByDescending { it.watchDurationSec }
-                    .thenBy { it.platform.lowercase() },
+                when (metric) {
+                    AnalyticsMetric.PLAYS ->
+                        compareByDescending<PlatformStatDto> { it.playCount }
+                            .thenByDescending { it.watchDurationSec }
+                            .thenBy { it.platform.lowercase() }
+                    AnalyticsMetric.DURATION ->
+                        compareByDescending<PlatformStatDto> { it.watchDurationSec }
+                            .thenByDescending { it.playCount }
+                            .thenBy { it.platform.lowercase() }
+                },
             ).take(TOP_MEDIA_LIMIT)
 
     private fun aggregateLibraries(
         rows: List<PlaybackHistoryStatsRow>,
         totalPlays: Long,
+        totalWatchDurationSec: Long,
+        metric: AnalyticsMetric = AnalyticsMetric.PLAYS,
     ): List<LibraryBreakdownStatDto> =
         rows
             .groupBy { row -> row.librarySectionKey?.takeIf { it.isNotBlank() } ?: "unknown" }
             .map { (librarySectionKey, group) ->
                 val count = group.size.toLong()
+                val duration = group.sumOf { it.watchedDurationSec.toLong() }
+                val pct =
+                    when (metric) {
+                        AnalyticsMetric.PLAYS -> toPercent(count, totalPlays)
+                        AnalyticsMetric.DURATION -> toPercent(duration, totalWatchDurationSec)
+                    }
                 LibraryBreakdownStatDto(
                     librarySectionKey = librarySectionKey,
                     playCount = count,
-                    watchDurationSec = group.sumOf { it.watchedDurationSec.toLong() },
-                    percent = toPercent(count, totalPlays),
+                    watchDurationSec = duration,
+                    percent = pct,
                 )
             }.sortedWith(
-                compareByDescending<LibraryBreakdownStatDto> { it.playCount }
-                    .thenByDescending { it.watchDurationSec }
-                    .thenBy { it.librarySectionKey.lowercase() },
+                when (metric) {
+                    AnalyticsMetric.PLAYS ->
+                        compareByDescending<LibraryBreakdownStatDto> { it.playCount }
+                            .thenByDescending { it.watchDurationSec }
+                            .thenBy { it.librarySectionKey.lowercase() }
+                    AnalyticsMetric.DURATION ->
+                        compareByDescending<LibraryBreakdownStatDto> { it.watchDurationSec }
+                            .thenByDescending { it.playCount }
+                            .thenBy { it.librarySectionKey.lowercase() }
+                },
             )
 
-    private fun aggregateMostRewatched(rows: List<PlaybackHistoryStatsRow>): List<RewatchedMediaStatDto> =
+    private fun aggregateMostRewatched(
+        rows: List<PlaybackHistoryStatsRow>,
+        metric: AnalyticsMetric = AnalyticsMetric.PLAYS,
+    ): List<RewatchedMediaStatDto> =
         rows
             .groupBy { it.ratingKey }
             .filter { (_, group) -> group.size >= 2 }
@@ -823,31 +954,43 @@ class HistoryAndStatsService(
                     thumbUrl = thumbUrl,
                 )
             }.sortedWith(
-                compareByDescending<RewatchedMediaStatDto> { it.playCount }
-                    .thenByDescending { it.watchDurationSec }
-                    .thenBy { it.title.lowercase() },
+                when (metric) {
+                    AnalyticsMetric.PLAYS ->
+                        compareByDescending<RewatchedMediaStatDto> { it.playCount }
+                            .thenByDescending { it.watchDurationSec }
+                            .thenBy { it.title.lowercase() }
+                    AnalyticsMetric.DURATION ->
+                        compareByDescending<RewatchedMediaStatDto> { it.watchDurationSec }
+                            .thenByDescending { it.playCount }
+                            .thenBy { it.title.lowercase() }
+                },
             ).take(TOP_MEDIA_LIMIT)
 
     private fun aggregateClientBreakdown(
         rows: List<PlaybackHistoryStatsRow>,
         totalPlays: Long,
+        totalWatchDurationSec: Long,
+        metric: AnalyticsMetric,
         keySelector: (PlaybackHistoryStatsRow) -> String,
     ): List<ClientBreakdownItemDto> =
         rows
             .groupBy { keySelector(it).ifBlank { "Unknown" } }
             .map { (name, group) ->
                 val count = group.size.toLong()
+                val duration = group.sumOf { it.watchedDurationSec.toLong() }
+                val pct =
+                    when (metric) {
+                        AnalyticsMetric.PLAYS -> toPercent(count, totalPlays)
+                        AnalyticsMetric.DURATION -> toPercent(duration, totalWatchDurationSec)
+                    }
                 ClientBreakdownItemDto(
                     name = name,
                     playCount = count,
-                    watchDurationSec = group.sumOf { it.watchedDurationSec.toLong() },
-                    percent = toPercent(count, totalPlays),
+                    watchDurationSec = duration,
+                    percent = pct,
                 )
-            }.sortedWith(
-                compareByDescending<ClientBreakdownItemDto> { it.playCount }
-                    .thenByDescending { it.watchDurationSec }
-                    .thenBy { it.name.lowercase() },
-            ).take(TOP_MEDIA_LIMIT)
+            }.sortedWith(clientBreakdownComparator(metric))
+            .take(TOP_MEDIA_LIMIT)
 
     private fun classifyTranscodeReason(row: PlaybackHistoryStatsRow): String? {
         val streamDec = row.streamDecision.trim().lowercase()
@@ -915,7 +1058,10 @@ class HistoryAndStatsService(
         }
     }
 
-    private fun computePeakDayOfWeek(rows: List<PlaybackHistoryStatsRow>): String? {
+    private fun computePeakDayOfWeek(
+        rows: List<PlaybackHistoryStatsRow>,
+        metric: AnalyticsMetric,
+    ): String? {
         if (rows.isEmpty()) return null
         val counts = LongArray(DAYS_IN_WEEK)
         val durations = LongArray(DAYS_IN_WEEK)
@@ -926,9 +1072,16 @@ class HistoryAndStatsService(
         }
         var bestIdx = 0
         for (idx in 1 until DAYS_IN_WEEK) {
-            if (counts[idx] > counts[bestIdx] ||
-                (counts[idx] == counts[bestIdx] && durations[idx] > durations[bestIdx])
-            ) {
+            val isHigher =
+                when (metric) {
+                    AnalyticsMetric.PLAYS ->
+                        counts[idx] > counts[bestIdx] ||
+                            (counts[idx] == counts[bestIdx] && durations[idx] > durations[bestIdx])
+                    AnalyticsMetric.DURATION ->
+                        durations[idx] > durations[bestIdx] ||
+                            (durations[idx] == durations[bestIdx] && counts[idx] > counts[bestIdx])
+                }
+            if (isHigher) {
                 bestIdx = idx
             }
         }
@@ -938,13 +1091,23 @@ class HistoryAndStatsService(
     private fun isHigherHeatmapPeak(
         candidate: HeatmapCellDto,
         current: HeatmapCellDto?,
+        metric: AnalyticsMetric,
     ): Boolean {
         if (candidate.playCount <= 0L) return false
         if (current == null) return true
-        return if (candidate.playCount != current.playCount) {
-            candidate.playCount > current.playCount
-        } else {
-            candidate.watchDurationSec > current.watchDurationSec
+        return when (metric) {
+            AnalyticsMetric.PLAYS ->
+                if (candidate.playCount != current.playCount) {
+                    candidate.playCount > current.playCount
+                } else {
+                    candidate.watchDurationSec > current.watchDurationSec
+                }
+            AnalyticsMetric.DURATION ->
+                if (candidate.watchDurationSec != current.watchDurationSec) {
+                    candidate.watchDurationSec > current.watchDurationSec
+                } else {
+                    candidate.playCount > current.playCount
+                }
         }
     }
 

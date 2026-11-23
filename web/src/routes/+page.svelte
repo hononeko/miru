@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { api, MiruApiError, unwrap } from '$api/client';
 	import type {
+		AnalyticsMetricPreference,
 		ClientStatsResponse,
 		HeatmapRange,
 		HeatmapStatsResponse,
@@ -50,7 +51,11 @@
 		}
 	});
 
-	async function loadOverview(selectedRange: StatsRange) {
+	const analyticsMetric = $derived<AnalyticsMetricPreference>(
+		preferencesStore.prefs.analyticsMetric
+	);
+
+	async function loadOverview(selectedRange: StatsRange, selectedMetric: AnalyticsMetricPreference) {
 		if (authStore.isUnlinkedUser) {
 			overview = null;
 			clientStats = null;
@@ -63,10 +68,10 @@
 		try {
 			const [overviewRes, clientsRes] = await Promise.all([
 				api.GET('/api/v1/stats/overview', {
-					params: { query: { range: selectedRange } }
+					params: { query: { range: selectedRange, metric: selectedMetric } }
 				}),
 				api.GET('/api/v1/stats/clients', {
-					params: { query: { range: selectedRange } }
+					params: { query: { range: selectedRange, metric: selectedMetric } }
 				})
 			]);
 			overview = unwrap(overviewRes);
@@ -78,7 +83,10 @@
 		}
 	}
 
-	async function loadHeatmap(selectedHeatmapRange: HeatmapRange) {
+	async function loadHeatmap(
+		selectedHeatmapRange: HeatmapRange,
+		selectedMetric: AnalyticsMetricPreference
+	) {
 		if (authStore.isUnlinkedUser) {
 			heatmap = null;
 			loadingHeatmap = false;
@@ -88,7 +96,7 @@
 		try {
 			heatmap = unwrap(
 				await api.GET('/api/v1/stats/heatmap', {
-					params: { query: { range: selectedHeatmapRange } }
+					params: { query: { range: selectedHeatmapRange, metric: selectedMetric } }
 				})
 			);
 		} catch {
@@ -100,12 +108,12 @@
 
 	$effect(() => {
 		void authStore.isUnlinkedUser;
-		void loadOverview(range);
+		void loadOverview(range, analyticsMetric);
 	});
 
 	$effect(() => {
 		void authStore.isUnlinkedUser;
-		void loadHeatmap(heatmapRange);
+		void loadHeatmap(heatmapRange, analyticsMetric);
 	});
 
 	const playingCount = $derived(
@@ -155,7 +163,7 @@
 		const tail = days.slice(-14);
 		return tail.map((d) => ({
 			label: d.date.slice(8, 10),
-			value: d.playCount,
+			value: analyticsMetric === 'duration' ? d.watchDurationSec : d.playCount,
 			tooltip: `${d.date}: ${d.playCount} plays (${formatDurationSec(d.watchDurationSec)})`
 		}));
 	});
@@ -163,7 +171,15 @@
 	const peakDay = $derived.by(() => {
 		const days = overview?.playsPerDay ?? [];
 		if (days.length === 0) return null;
-		return days.reduce((best, cur) => (cur.playCount > best.playCount ? cur : best), days[0]);
+		return days.reduce(
+			(best, cur) =>
+				(analyticsMetric === 'duration'
+					? cur.watchDurationSec > best.watchDurationSec
+					: cur.playCount > best.playCount)
+					? cur
+					: best,
+			days[0]
+		);
 	});
 
 	const topWatched = $derived.by(() => {
@@ -172,7 +188,13 @@
 			...overview.topShows.map((s) => ({ ...s, kind: 'TV Show' })),
 			...overview.topMovies.map((m) => ({ ...m, kind: 'Movie' }))
 		];
-		return combined.sort((a, b) => b.watchDurationSec - a.watchDurationSec).slice(0, 4);
+		return combined
+			.sort((a, b) =>
+				analyticsMetric === 'duration'
+					? b.watchDurationSec - a.watchDurationSec || b.playCount - a.playCount
+					: b.playCount - a.playCount || b.watchDurationSec - a.watchDurationSec
+			)
+			.slice(0, 4);
 	});
 </script>
 
@@ -357,11 +379,11 @@
 			<div class="flex flex-col justify-between gap-4 rounded-xl border border-border bg-surface p-4 lg:col-span-2">
 				<div class="flex items-center justify-between gap-2">
 					<h2 class="font-heading text-sm font-semibold text-fg-primary">
-						Plays Per Day ({range})
+						{analyticsMetric === 'duration' ? 'Watch Time Per Day' : 'Plays Per Day'} ({range})
 					</h2>
-					{#if peakDay && peakDay.playCount > 0}
+					{#if peakDay && (analyticsMetric === 'duration' ? peakDay.watchDurationSec > 0 : peakDay.playCount > 0)}
 						<span class="font-mono text-[11px] font-medium text-primary-hover">
-							Peak: {peakDay.playCount} plays ({peakDay.date})
+							Peak: {analyticsMetric === 'duration' ? formatDurationSec(peakDay.watchDurationSec) : `${peakDay.playCount} plays`} ({peakDay.date})
 						</span>
 					{/if}
 				</div>
@@ -417,10 +439,11 @@
 			<ViewingHeatmap
 				{heatmap}
 				range={heatmapRange}
+				metric={analyticsMetric}
 				loading={loadingHeatmap}
 				onchangeRange={(next) => (heatmapRange = next)}
 			/>
-			<ClientsCodecsPanel {clientStats} loading={loadingStats} />
+			<ClientsCodecsPanel {clientStats} metric={analyticsMetric} loading={loadingStats} />
 		</section>
 	{/if}
 	{/if}

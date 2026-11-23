@@ -102,12 +102,15 @@ class PlexMapperTest :
             stream.technical.videoDecision shouldBe StreamDecision.TRANSCODE
             stream.technical.audioDecision shouldBe StreamDecision.DIRECT_STREAM
             stream.technical.isHwTranscode shouldBe true
-            stream.technical.videoCodec shouldBe "hevc"
+            // The session's Media describes the transcoded output, so the source video codec and container are
+            // unknown here (the adapter fills them in). Audio is copied, so its session codec is the file's.
+            stream.technical.videoCodec shouldBe null
             stream.technical.transcodeVideoCodec shouldBe "h264"
             stream.technical.audioCodec shouldBe "eac3"
-            stream.technical.transcodeAudioCodec shouldBe "aac"
-            stream.technical.container shouldBe "mkv"
+            stream.technical.transcodeAudioCodec shouldBe null
+            stream.technical.container shouldBe null
             stream.technical.transcodeContainer shouldBe "mp4"
+            stream.technical.subtitleDecision shouldBe "burn"
             stream.technical.videoResolution shouldBe "4k"
             stream.technical.bitrateKbps shouldBe 4_500
             stream.technical.transcodeProgress shouldBe 42.5
@@ -120,6 +123,12 @@ class PlexMapperTest :
             swStream.state shouldBe PlaybackState.BUFFERING
             swStream.technical.decision shouldBe StreamDecision.TRANSCODE
             swStream.technical.isHwTranscode shouldBe false
+            // With no Media element, the source codecs come from the transcode session.
+            swStream.technical.videoCodec shouldBe "hevc"
+            swStream.technical.transcodeVideoCodec shouldBe "h264"
+            swStream.technical.audioCodec shouldBe "truehd"
+            swStream.technical.transcodeAudioCodec shouldBe "opus"
+            swStream.technical.subtitleDecision shouldBe null
 
             val remuxResponse = MiruJson.decodeFromString<PlexSessionsResponse>(PlexFixtures.directStreamRemuxJson)
             val remuxStream = PlexMapper.mapSessions(remuxResponse.mediaContainer).single()
@@ -127,6 +136,19 @@ class PlexMapperTest :
             remuxStream.technical.videoDecision shouldBe StreamDecision.DIRECT_STREAM
             remuxStream.technical.audioDecision shouldBe StreamDecision.DIRECT_STREAM
             remuxStream.technical.isHwTranscode shouldBe false
+            remuxStream.technical.videoCodec shouldBe "h264"
+            remuxStream.technical.transcodeVideoCodec shouldBe null
+            remuxStream.technical.container shouldBe null
+            remuxStream.technical.transcodeContainer shouldBe "mp4"
+        }
+
+        test("treats a '*' transcode codec as unknown") {
+            val response = MiruJson.decodeFromString<PlexSessionsResponse>(PlexFixtures.episodeSwTranscodeJson)
+            val metadata = response.mediaContainer.metadata.orEmpty().single()
+            metadata.transcodeSession = metadata.transcodeSession?.copy(sourceVideoCodec = "*", videoCodec = "*")
+            val tech = PlexMapper.mapSession(metadata).technical
+            tech.videoCodec shouldBe null
+            tech.transcodeVideoCodec shouldBe null
         }
 
         test("maps Plexamp music track and Live TV with missing duration and Media") {

@@ -405,6 +405,16 @@ class TautulliImporterService(
                         audioCodec = raw.audioCodec ?: raw.streamAudioCodec,
                         videoResolution = raw.videoResolution ?: raw.streamVideoResolution,
                         bandwidthKbps = raw.bandwidth ?: raw.bitrate,
+                        // Tautulli's transcode_* columns mirror Plex's transcode session; stream_* describe what
+                        // reached the player and fill in for databases without them.
+                        transcodeVideoCodec =
+                            (raw.transcodeVideoCodec ?: raw.streamVideoCodec)?.takeIf { videoDecision == "transcode" },
+                        transcodeAudioCodec =
+                            (raw.transcodeAudioCodec ?: raw.streamAudioCodec)?.takeIf { audioDecision == "transcode" },
+                        container = raw.container,
+                        transcodeContainer =
+                            (raw.transcodeContainer ?: raw.streamContainer)?.takeIf { streamDecision != "direct_play" },
+                        subtitleDecision = raw.streamSubtitleDecision?.lowercase(),
                     ),
                 player =
                     PlayerRecord(

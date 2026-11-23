@@ -88,6 +88,11 @@ internal fun ResultRow.toActiveSessionRecord(): ActiveSessionRecord =
                 audioCodec = this[ActiveSessionsTable.audioCodec],
                 videoResolution = this[ActiveSessionsTable.videoResolution],
                 bandwidthKbps = this[ActiveSessionsTable.bandwidthKbps],
+                transcodeVideoCodec = this[ActiveSessionsTable.transcodeVideoCodec],
+                transcodeAudioCodec = this[ActiveSessionsTable.transcodeAudioCodec],
+                container = this[ActiveSessionsTable.container],
+                transcodeContainer = this[ActiveSessionsTable.transcodeContainer],
+                subtitleDecision = this[ActiveSessionsTable.subtitleDecision],
             ),
         player =
             PlayerRecord(
@@ -139,6 +144,11 @@ internal fun ResultRow.toPlaybackHistoryRecord(): PlaybackHistoryRecord =
                 audioCodec = this[PlaybackHistoryTable.audioCodec],
                 videoResolution = this[PlaybackHistoryTable.videoResolution],
                 bandwidthKbps = this[PlaybackHistoryTable.bandwidthKbps],
+                transcodeVideoCodec = this[PlaybackHistoryTable.transcodeVideoCodec],
+                transcodeAudioCodec = this[PlaybackHistoryTable.transcodeAudioCodec],
+                container = this[PlaybackHistoryTable.container],
+                transcodeContainer = this[PlaybackHistoryTable.transcodeContainer],
+                subtitleDecision = this[PlaybackHistoryTable.subtitleDecision],
             ),
         player =
             PlayerRecord(
@@ -178,6 +188,11 @@ internal fun ResultRow.toPlaybackHistoryStatsRow(): PlaybackHistoryStatsRow =
         videoResolution = this[PlaybackHistoryTable.videoResolution],
         playerName = this[PlaybackHistoryTable.playerName],
         startedAtMs = this[PlaybackHistoryTable.startedAtMs],
+        transcodeVideoCodec = this[PlaybackHistoryTable.transcodeVideoCodec],
+        transcodeAudioCodec = this[PlaybackHistoryTable.transcodeAudioCodec],
+        container = this[PlaybackHistoryTable.container],
+        transcodeContainer = this[PlaybackHistoryTable.transcodeContainer],
+        subtitleDecision = this[PlaybackHistoryTable.subtitleDecision],
     )
 
 internal fun ResultRow.toLibrarySectionRecord(): LibrarySectionRecord =

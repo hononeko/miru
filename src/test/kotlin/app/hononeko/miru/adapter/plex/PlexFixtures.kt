@@ -147,19 +147,19 @@ internal object PlexFixtures {
                     "id": "888",
                     "bitrate": 18000,
                     "videoResolution": "4k",
-                    "container": "mkv",
-                    "videoCodec": "hevc",
+                    "container": "mpegts",
+                    "videoCodec": "h264",
                     "audioCodec": "eac3",
                     "Part": [
                       {
                         "id": "889",
-                        "container": "mkv",
+                        "container": "mpegts",
                         "decision": "transcode",
                         "Stream": [
                           {
                             "id": "890",
                             "streamType": 1,
-                            "codec": "hevc",
+                            "codec": "h264",
                             "decision": "transcode",
                             "selected": true,
                             "height": 2160
@@ -245,6 +245,8 @@ internal object PlexFixtures {
                   "location": "wan"
                 },
                 "TranscodeSession": {
+                  "sourceVideoCodec": "hevc",
+                  "sourceAudioCodec": "truehd",
                   "videoDecision": "transcode",
                   "audioDecision": "transcode",
                   "container": "mkv",

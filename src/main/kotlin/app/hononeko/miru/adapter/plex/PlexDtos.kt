@@ -272,6 +272,8 @@ data class PlexSessionDto(
 
 @Serializable
 data class PlexTranscodeSessionDto(
+    val sourceVideoCodec: String? = null,
+    val sourceAudioCodec: String? = null,
     val videoDecision: String? = null,
     val audioDecision: String? = null,
     val subtitleDecision: String? = null,

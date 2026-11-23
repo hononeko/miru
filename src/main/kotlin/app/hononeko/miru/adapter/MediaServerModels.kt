@@ -88,6 +88,7 @@ data class StreamTechnicalInfo(
     val transcodeAudioCodec: String? = null,
     val container: String? = null,
     val transcodeContainer: String? = null,
+    val subtitleDecision: String? = null,
     val videoResolution: String? = null,
     val bitrateKbps: Int? = null,
     val transcodeProgress: Double? = null,

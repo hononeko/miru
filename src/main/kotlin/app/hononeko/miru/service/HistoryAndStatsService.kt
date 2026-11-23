@@ -52,6 +52,7 @@ private val MONTH_NAMES = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul"
 
 private val VALID_MEDIA_TYPES = setOf("movie", "episode", "track", "clip", "live_tv")
 private val VALID_DECISIONS = setOf("direct_play", "direct_stream", "transcode")
+private val COPY_DECISIONS = setOf("copy", "direct_stream", "directstream")
 
 enum class AnalyticsMetric(
     val code: String,
@@ -363,12 +364,15 @@ class HistoryAndStatsService(
 
             val nonDirectRows =
                 rows.mapNotNull { row ->
-                    classifyTranscodeReason(row)?.let { reason -> reason to row }
+                    describeConversions(row).takeIf { it.isNotEmpty() }?.let { labels -> labels to row }
                 }
             val nonDirectTotalPlays = nonDirectRows.size.toLong()
             val nonDirectTotalDuration = nonDirectRows.sumOf { it.second.watchedDurationSec.toLong() }
+            // A session that changes several things counts toward each of them, so each percentage is the
+            // share of non-Direct-Play sessions with that change and the list can add up to more than 100%.
             val transcodeReasons =
                 nonDirectRows
+                    .flatMap { (labels, row) -> labels.map { label -> label to row } }
                     .groupBy({ it.first }, { it.second })
                     .map { (reason, group) ->
                         val count = group.size.toLong()
@@ -992,24 +996,71 @@ class HistoryAndStatsService(
             }.sortedWith(clientBreakdownComparator(metric))
             .take(TOP_MEDIA_LIMIT)
 
-    private fun classifyTranscodeReason(row: PlaybackHistoryStatsRow): String? {
+    /**
+     * Names what a non-Direct-Play session changed, such as "Subtitle Burn-in", "Video HEVC → H.264",
+     * "Audio TRUEHD → AAC" or "Container MKV → MPEGTS". Plex reports what it converted, not why, so these
+     * describe the conversion. Rows recorded before conversion details were kept fall back to
+     * "Video Transcode", "Audio Transcode" or "Container Remux". Returns an empty list for Direct Play.
+     */
+    private fun describeConversions(row: PlaybackHistoryStatsRow): List<String> {
         val streamDec = row.streamDecision.trim().lowercase()
         val videoDec = row.videoDecision?.trim()?.lowercase()
         val audioDec = row.audioDecision?.trim()?.lowercase()
 
         val isVideoTranscode = videoDec == "transcode"
         val isAudioTranscode = audioDec == "transcode"
-        val isVideoCopy = videoDec == "copy" || videoDec == "direct_stream" || videoDec == "directstream"
-        val isAudioCopy = audioDec == "copy" || audioDec == "direct_stream" || audioDec == "directstream"
+        val isVideoCopy = videoDec in COPY_DECISIONS
+        val isAudioCopy = audioDec in COPY_DECISIONS
+        val burnsSubtitles =
+            row.subtitleDecision?.trim().equals("burn", ignoreCase = true) &&
+                (isVideoTranscode || streamDec == "transcode")
 
-        return when {
-            isVideoTranscode && isAudioTranscode -> "Video & Audio Transcode"
-            isVideoTranscode -> "Video Transcode"
-            isAudioTranscode -> "Audio Transcode"
-            streamDec == "direct_stream" || isVideoCopy || isAudioCopy -> "Container Remux"
-            streamDec == "transcode" -> "Video Transcode"
-            else -> null
+        val labels = mutableListOf<String>()
+        if (burnsSubtitles) labels += "Subtitle Burn-in"
+        if (isVideoTranscode) {
+            val videoLabel = describeCodecChange("Video", row.videoCodec, row.transcodeVideoCodec)
+            // Burning subtitles is itself a video transcode; only a codec change is worth naming next to it.
+            if (!burnsSubtitles || videoLabel.contains(" → ")) labels += videoLabel
         }
+        if (isAudioTranscode) labels += describeCodecChange("Audio", row.audioCodec, row.transcodeAudioCodec)
+        if (labels.isEmpty()) {
+            when {
+                streamDec == "direct_stream" || isVideoCopy || isAudioCopy ->
+                    labels += describeContainerChange(row.container, row.transcodeContainer)
+                streamDec == "transcode" -> labels += "Video Transcode"
+            }
+        }
+        return labels
+    }
+
+    private fun describeCodecChange(
+        kind: String,
+        sourceCodec: String?,
+        targetCodec: String?,
+    ): String {
+        val from = knownCodec(sourceCodec)
+        val to = knownCodec(targetCodec)
+        return when {
+            from != null && to != null && from != to -> "$kind $from → $to"
+            from != null && to != null -> "$kind Re-encode ($to)"
+            to != null -> "$kind → $to"
+            else -> "$kind Transcode"
+        }
+    }
+
+    private fun knownCodec(raw: String?): String? =
+        raw
+            ?.takeIf { it.isNotBlank() && it.trim() != "*" }
+            ?.let(LibraryNormalizer::normalizeCodec)
+            ?.takeIf { !it.equals("unknown", ignoreCase = true) }
+
+    private fun describeContainerChange(
+        sourceContainer: String?,
+        targetContainer: String?,
+    ): String {
+        val from = sourceContainer?.trim()?.uppercase()?.takeIf { it.isNotEmpty() }
+        val to = targetContainer?.trim()?.uppercase()?.takeIf { it.isNotEmpty() }
+        return if (from != null && to != null && from != to) "Container $from → $to" else "Container Remux"
     }
 
     private fun computeAverageCompletionPercent(rows: List<PlaybackHistoryStatsRow>): Double {

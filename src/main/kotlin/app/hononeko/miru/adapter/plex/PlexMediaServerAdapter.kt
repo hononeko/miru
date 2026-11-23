@@ -8,10 +8,12 @@ import app.hononeko.miru.adapter.LibrarySectionInfo
 import app.hononeko.miru.adapter.MediaItemDetails
 import app.hononeko.miru.adapter.MediaServerAdapter
 import app.hononeko.miru.adapter.MediaServerEvent
+import app.hononeko.miru.adapter.MediaTechnicalSpecs
 import app.hononeko.miru.adapter.MediaType
 import app.hononeko.miru.adapter.MediaUser
 import app.hononeko.miru.adapter.MediaUserLibraryAccess
 import app.hononeko.miru.adapter.ServerIdentity
+import app.hononeko.miru.adapter.StreamDecision
 import app.hononeko.miru.config.PlexConfig
 import app.hononeko.miru.domain.error.MiruError
 import arrow.core.Either
@@ -49,6 +51,14 @@ import kotlinx.serialization.SerializationException
 import org.slf4j.LoggerFactory
 
 private const val DEFAULT_REQUEST_TIMEOUT_MS = 15_000L
+private const val SOURCE_SPECS_CACHE_SIZE = 512
+private const val SOURCE_SPECS_RETRY_MS = 5L * 60L * 1000L
+private const val LRU_LOAD_FACTOR = 0.75f
+
+private data class CachedSourceSpecs(
+    val specs: MediaTechnicalSpecs?,
+    val fetchedAtMs: Long,
+)
 private const val DEFAULT_CONNECT_TIMEOUT_MS = 5_000L
 
 fun createPlexHttpClient(
@@ -72,6 +82,7 @@ class PlexMediaServerAdapter(
     private val httpClient: HttpClient = createPlexHttpClient(),
     plexTvBaseUrl: String? = null,
     private val eventSource: Flow<MediaServerEvent> = emptyFlow(),
+    private val clock: () -> Long = { System.currentTimeMillis() },
 ) : MediaServerAdapter {
     override val serverType: String = PROVIDER_NAME
 
@@ -82,6 +93,12 @@ class PlexMediaServerAdapter(
 
     private val ownerMutex = Mutex()
     private val machineIdMutex = Mutex()
+    private val sourceSpecsMutex = Mutex()
+    private val sourceSpecsCache =
+        object : LinkedHashMap<String, CachedSourceSpecs>(SOURCE_SPECS_CACHE_SIZE, LRU_LOAD_FACTOR, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, CachedSourceSpecs>?): Boolean =
+                size > SOURCE_SPECS_CACHE_SIZE
+        }
 
     @Volatile
     private var cachedOwner: MediaUser? = null
@@ -116,8 +133,60 @@ class PlexMediaServerAdapter(
             val hasLocalOwner = items.any { it.user?.id == LOCAL_OWNER_USER_ID }
             val ownerUser = if (hasLocalOwner) resolveOwnerBestEffort() else null
 
-            PlexMapper.mapSessions(response.mediaContainer, ownerUser = ownerUser)
+            PlexMapper.mapSessions(response.mediaContainer, ownerUser = ownerUser).map { withSourceSpecs(it) }
         }
+
+    /**
+     * Fills in the file's container and codecs for a session Plex is converting, whose session data describes
+     * the output. Each item is looked up once from /library/metadata and cached; a failed lookup is retried
+     * after a few minutes, and the session keeps whatever it already had.
+     */
+    private suspend fun withSourceSpecs(snapshot: ActiveStreamSnapshot): ActiveStreamSnapshot {
+        val tech = snapshot.technical
+        if (tech.decision == StreamDecision.DIRECT_PLAY) return snapshot
+        val source = sourceSpecs(snapshot.media.ratingKey) ?: return snapshot
+        return snapshot.copy(
+            technical =
+                tech.copy(
+                    container = tech.container ?: source.container?.takeIf { it.isNotBlank() },
+                    videoCodec = tech.videoCodec ?: source.videoCodec?.takeIf { it.isNotBlank() },
+                    audioCodec = tech.audioCodec ?: source.audioCodec?.takeIf { it.isNotBlank() },
+                ),
+        )
+    }
+
+    private suspend fun sourceSpecs(ratingKey: String): MediaTechnicalSpecs? {
+        val now = clock()
+        sourceSpecsMutex.withLock {
+            val cached = sourceSpecsCache[ratingKey]
+            if (cached != null && (cached.specs != null || now - cached.fetchedAtMs < SOURCE_SPECS_RETRY_MS)) {
+                return cached.specs
+            }
+        }
+        val specs = fetchSourceSpecs(ratingKey)
+        sourceSpecsMutex.withLock { sourceSpecsCache[ratingKey] = CachedSourceSpecs(specs, now) }
+        return specs
+    }
+
+    private suspend fun fetchSourceSpecs(ratingKey: String): MediaTechnicalSpecs? {
+        val key = ratingKey.trim().takeIf { SECTION_KEY_REGEX.matches(it) } ?: return null
+        return executeJsonGet<PlexLibraryItemsResponse>(
+            url = "$baseUrl/library/metadata/$key",
+            operation = "fetch source media",
+            notFoundResource = "Media",
+            notFoundId = key,
+        ).fold(
+            ifLeft = { error ->
+                logger.debug("Source media lookup for '{}' failed: {}", key, sanitizeMessage(error.message))
+                null
+            },
+            ifRight = { response ->
+                response.mediaContainer.metadata
+                    ?.firstOrNull()
+                    ?.let { PlexMapper.mapMediaItemDetails(it).technical }
+            },
+        )
+    }
 
     override suspend fun fetchUsers(): Either<MiruError, List<MediaUser>> =
         either {

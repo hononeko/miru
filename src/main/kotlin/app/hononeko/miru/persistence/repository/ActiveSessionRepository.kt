@@ -71,6 +71,11 @@ class ExposedActiveSessionRepository(
                     it[audioCodec] = session.streamTech.audioCodec
                     it[videoResolution] = session.streamTech.videoResolution
                     it[bandwidthKbps] = session.streamTech.bandwidthKbps
+                    it[transcodeVideoCodec] = session.streamTech.transcodeVideoCodec
+                    it[transcodeAudioCodec] = session.streamTech.transcodeAudioCodec
+                    it[container] = session.streamTech.container
+                    it[transcodeContainer] = session.streamTech.transcodeContainer
+                    it[subtitleDecision] = session.streamTech.subtitleDecision
                     it[playerName] = session.player.playerName
                     it[playerPlatform] = session.player.playerPlatform
                     it[playerProduct] = session.player.playerProduct

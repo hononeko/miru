@@ -867,6 +867,19 @@ class SessionStateEngineTest :
             }
         }
 
+        test("a merged history row keeps the more converted segment's stream details") {
+            val transcode = StreamTechRecord(streamDecision = "transcode", videoDecision = "transcode", subtitleDecision = "burn")
+            val remux = StreamTechRecord(streamDecision = "direct_stream", videoDecision = "copy")
+            val directPlay = StreamTechRecord(streamDecision = "direct_play")
+
+            moreConverted(earlier = transcode, later = directPlay) shouldBe transcode
+            moreConverted(earlier = remux, later = transcode) shouldBe transcode
+            moreConverted(earlier = directPlay, later = remux) shouldBe remux
+            // A tie keeps the later segment's details.
+            val laterTranscode = transcode.copy(subtitleDecision = null)
+            moreConverted(earlier = transcode, later = laterTranscode) shouldBe laterTranscode
+        }
+
         test("maintains live transcode technical metadata overlay across start, update, and stop") {
             runTest {
                 newEnv().use { env ->
@@ -887,6 +900,7 @@ class SessionStateEngineTest :
                                         transcodeAudioCodec = "aac",
                                         container = "mkv",
                                         transcodeContainer = "mp4",
+                                        subtitleDecision = "burn",
                                         transcodeProgress = 42.5,
                                         transcodeSpeed = 0.8,
                                     ),
@@ -901,6 +915,13 @@ class SessionStateEngineTest :
                     afterStart.transcodeSpeed shouldBe 0.8
                     afterStart.container shouldBe "mkv"
                     afterStart.transcodeContainer shouldBe "mp4"
+                    // The persisted session keeps what the transcode changed, not just the live overlay.
+                    env.sessions
+                        .findByKey(key)
+                        .shouldBeRight()
+                        .shouldNotBeNull()
+                        .streamTech
+                        .subtitleDecision shouldBe "burn"
 
                     val updatedSnapshot =
                         initialSnapshot.copy(
@@ -919,6 +940,19 @@ class SessionStateEngineTest :
                             ReconcileTrigger.NOTIFICATION,
                         ).shouldBeRight()
                     engine.currentLiveTechnical()[key].shouldBeNull()
+
+                    val recorded =
+                        env.history
+                            .query(HistoryFilter(serverId = DEFAULT_SERVER_ID))
+                            .shouldBeRight()
+                            .items
+                            .single()
+                            .streamTech
+                    recorded.transcodeVideoCodec shouldBe "h264"
+                    recorded.transcodeAudioCodec shouldBe "aac"
+                    recorded.container shouldBe "mkv"
+                    recorded.transcodeContainer shouldBe "mp4"
+                    recorded.subtitleDecision shouldBe "burn"
                 }
             }
         }

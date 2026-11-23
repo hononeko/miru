@@ -37,6 +37,21 @@ private const val SESSION_EVENT_BUFFER_CAPACITY = 256
 private val PAUSED_STATE = PlaybackState.PAUSED.name.lowercase()
 private val STOPPED_STATE = PlaybackState.STOPPED.name.lowercase()
 
+private val CONVERSION_RANK = mapOf("direct_play" to 0, "direct_stream" to 1, "transcode" to 2)
+
+/**
+ * Stream details for a history row merged from two segments: the more converted segment's, so a transcode
+ * in one segment (e.g. burned-in subtitles) is not erased by a later direct-play resume. Ties go to [later].
+ */
+internal fun moreConverted(
+    earlier: StreamTechRecord,
+    later: StreamTechRecord,
+): StreamTechRecord {
+    val earlierRank = CONVERSION_RANK[earlier.streamDecision.lowercase()] ?: 0
+    val laterRank = CONVERSION_RANK[later.streamDecision.lowercase()] ?: 0
+    return if (earlierRank > laterRank) earlier else later
+}
+
 /**
  * Reconciles active stream snapshots into persisted `active_sessions` and finalized `playback_history` records.
  */
@@ -464,7 +479,7 @@ class SessionStateEngine(
                 pausedDurationSec = candidate.pausedDurationSec + pausedSec,
                 completionPercent = mergedCompletion,
                 isWatched = candidate.isWatched || mergedCompletion >= config.watchedThresholdPercent.toDouble(),
-                streamTech = record.streamTech,
+                streamTech = moreConverted(candidate.streamTech, record.streamTech),
                 player = record.player,
                 startedAtMs = minOf(candidate.startedAtMs, record.startedAtMs),
                 stoppedAtMs = maxOf(candidate.stoppedAtMs, stoppedAtMs),
@@ -617,6 +632,11 @@ class SessionStateEngine(
             audioCodec = audioCodec,
             videoResolution = videoResolution,
             bandwidthKbps = bitrateKbps,
+            transcodeVideoCodec = transcodeVideoCodec,
+            transcodeAudioCodec = transcodeAudioCodec,
+            container = container,
+            transcodeContainer = transcodeContainer,
+            subtitleDecision = subtitleDecision,
         )
 
     private fun StreamPlayer.toPlayerRecord(): PlayerRecord =

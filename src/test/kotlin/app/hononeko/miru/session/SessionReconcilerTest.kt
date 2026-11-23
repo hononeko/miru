@@ -111,6 +111,11 @@ private class FakeAdapter(
         width: Int?,
         height: Int?,
     ): Either<MiruError, ArtworkData> = error("unused")
+
+    override suspend fun terminateSession(
+        sessionId: String,
+        reason: String,
+    ): Either<MiruError, Unit> = Either.Right(Unit)
 }
 
 private data class Reconciled(

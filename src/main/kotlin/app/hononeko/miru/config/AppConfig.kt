@@ -3,6 +3,7 @@ package app.hononeko.miru.config
 import app.hononeko.miru.auth.CredentialCrypto
 import app.hononeko.miru.auth.PasswordPolicy
 import app.hononeko.miru.domain.error.MiruError
+import app.hononeko.miru.persistence.model.GuardrailMode
 import arrow.core.Either
 import arrow.core.raise.either
 import arrow.core.raise.ensure
@@ -112,12 +113,40 @@ data class AuthConfig(
             "allowLocalLogin=$allowLocalLogin, oidc=$oidc)"
 }
 
+data class GuardrailsConfig(
+    val transcode4kMode: GuardrailMode = GuardrailMode.DISABLED,
+    val transcode4kMessage: String = DEFAULT_TRANSCODE_4K_MESSAGE,
+    val pausedTimeoutMode: GuardrailMode = GuardrailMode.DISABLED,
+    val pausedTimeoutMinutes: Int = DEFAULT_PAUSED_TIMEOUT_MINUTES,
+    val pausedTimeoutMessage: String = DEFAULT_PAUSED_TIMEOUT_MESSAGE,
+    val concurrentStreamsMode: GuardrailMode = GuardrailMode.DISABLED,
+    val concurrentStreamsMax: Int = DEFAULT_CONCURRENT_STREAMS_MAX,
+    val concurrentStreamsMessage: String = DEFAULT_CONCURRENT_STREAMS_MESSAGE,
+) {
+    companion object {
+        const val DEFAULT_PAUSED_TIMEOUT_MINUTES = 30
+        const val MIN_PAUSED_TIMEOUT_MINUTES = 1
+        const val MAX_PAUSED_TIMEOUT_MINUTES = 1440
+        const val DEFAULT_CONCURRENT_STREAMS_MAX = 2
+        const val MIN_CONCURRENT_STREAMS_MAX = 1
+        const val MAX_CONCURRENT_STREAMS_MAX = 50
+        const val MAX_MESSAGE_LENGTH = 500
+        const val DEFAULT_TRANSCODE_4K_MESSAGE =
+            "4K video transcoding is disabled on this server. Please select Direct Play or a 1080p version."
+        const val DEFAULT_PAUSED_TIMEOUT_MESSAGE =
+            "Your stream was terminated because it remained paused for too long."
+        const val DEFAULT_CONCURRENT_STREAMS_MESSAGE =
+            "You have exceeded the maximum number of simultaneous streams allowed for your account."
+    }
+}
+
 data class AppConfig(
     val server: ServerConfig,
     val database: DatabaseConfig,
     val plex: PlexConfig,
     val session: SessionConfig,
     val auth: AuthConfig,
+    val guardrails: GuardrailsConfig = GuardrailsConfig(),
 )
 
 data class DatabaseAndSessionConfig(
@@ -144,6 +173,7 @@ object AppConfigLoader {
             val plex = parsePlexConfig(get, errors)
             val session = parseSessionConfig(get, errors)
             val auth = parseAuthConfig(get, errors)
+            val guardrails = parseGuardrailsConfig(get, errors)
 
             ensure(errors.isEmpty()) {
                 MiruError.ValidationError(
@@ -158,6 +188,7 @@ object AppConfigLoader {
                 plex = plex,
                 session = session,
                 auth = auth,
+                guardrails = guardrails,
             )
         }
 
@@ -505,6 +536,117 @@ object AppConfigLoader {
             .map { it.trim() }
             .filter { it.isNotEmpty() }
             .toSet()
+
+    private fun parseGuardrailsConfig(
+        get: (String, String, String?) -> String?,
+        errors: MutableMap<String, String>,
+    ): GuardrailsConfig {
+        val transcode4kMode =
+            parseGuardrailMode(
+                envKey = "GUARDRAIL_4K_TRANSCODE_MODE",
+                raw = get("GUARDRAIL_4K_TRANSCODE_MODE", "miru.guardrails.transcode4k.mode", null),
+                errors = errors,
+            )
+        val transcode4kMessage =
+            parseGuardrailMessage(
+                envKey = "GUARDRAIL_4K_TRANSCODE_MESSAGE",
+                raw = get("GUARDRAIL_4K_TRANSCODE_MESSAGE", "miru.guardrails.transcode4k.message", null),
+                default = GuardrailsConfig.DEFAULT_TRANSCODE_4K_MESSAGE,
+                errors = errors,
+            )
+
+        val pausedTimeoutMode =
+            parseGuardrailMode(
+                envKey = "GUARDRAIL_PAUSED_TIMEOUT_MODE",
+                raw = get("GUARDRAIL_PAUSED_TIMEOUT_MODE", "miru.guardrails.pausedTimeout.mode", null),
+                errors = errors,
+            )
+        val pausedMinutesRaw =
+            get("GUARDRAIL_PAUSED_TIMEOUT_MINUTES", "miru.guardrails.pausedTimeout.minutes", null)
+                ?: GuardrailsConfig.DEFAULT_PAUSED_TIMEOUT_MINUTES.toString()
+        val pausedMinutes = pausedMinutesRaw.toIntOrNull()
+        if (
+            pausedMinutes == null ||
+            pausedMinutes !in GuardrailsConfig.MIN_PAUSED_TIMEOUT_MINUTES..GuardrailsConfig.MAX_PAUSED_TIMEOUT_MINUTES
+        ) {
+            errors["GUARDRAIL_PAUSED_TIMEOUT_MINUTES"] =
+                "must be an integer between ${GuardrailsConfig.MIN_PAUSED_TIMEOUT_MINUTES} " +
+                "and ${GuardrailsConfig.MAX_PAUSED_TIMEOUT_MINUTES}"
+        }
+        val pausedTimeoutMessage =
+            parseGuardrailMessage(
+                envKey = "GUARDRAIL_PAUSED_TIMEOUT_MESSAGE",
+                raw = get("GUARDRAIL_PAUSED_TIMEOUT_MESSAGE", "miru.guardrails.pausedTimeout.message", null),
+                default = GuardrailsConfig.DEFAULT_PAUSED_TIMEOUT_MESSAGE,
+                errors = errors,
+            )
+
+        val concurrentMode =
+            parseGuardrailMode(
+                envKey = "GUARDRAIL_CONCURRENT_STREAMS_MODE",
+                raw = get("GUARDRAIL_CONCURRENT_STREAMS_MODE", "miru.guardrails.concurrentStreams.mode", null),
+                errors = errors,
+            )
+        val concurrentMaxRaw =
+            get("GUARDRAIL_CONCURRENT_STREAMS_MAX", "miru.guardrails.concurrentStreams.max", null)
+                ?: GuardrailsConfig.DEFAULT_CONCURRENT_STREAMS_MAX.toString()
+        val concurrentMax = concurrentMaxRaw.toIntOrNull()
+        if (
+            concurrentMax == null ||
+            concurrentMax !in GuardrailsConfig.MIN_CONCURRENT_STREAMS_MAX..GuardrailsConfig.MAX_CONCURRENT_STREAMS_MAX
+        ) {
+            errors["GUARDRAIL_CONCURRENT_STREAMS_MAX"] =
+                "must be an integer between ${GuardrailsConfig.MIN_CONCURRENT_STREAMS_MAX} " +
+                "and ${GuardrailsConfig.MAX_CONCURRENT_STREAMS_MAX}"
+        }
+        val concurrentMessage =
+            parseGuardrailMessage(
+                envKey = "GUARDRAIL_CONCURRENT_STREAMS_MESSAGE",
+                raw = get("GUARDRAIL_CONCURRENT_STREAMS_MESSAGE", "miru.guardrails.concurrentStreams.message", null),
+                default = GuardrailsConfig.DEFAULT_CONCURRENT_STREAMS_MESSAGE,
+                errors = errors,
+            )
+
+        return GuardrailsConfig(
+            transcode4kMode = transcode4kMode,
+            transcode4kMessage = transcode4kMessage,
+            pausedTimeoutMode = pausedTimeoutMode,
+            pausedTimeoutMinutes = pausedMinutes ?: GuardrailsConfig.DEFAULT_PAUSED_TIMEOUT_MINUTES,
+            pausedTimeoutMessage = pausedTimeoutMessage,
+            concurrentStreamsMode = concurrentMode,
+            concurrentStreamsMax = concurrentMax ?: GuardrailsConfig.DEFAULT_CONCURRENT_STREAMS_MAX,
+            concurrentStreamsMessage = concurrentMessage,
+        )
+    }
+
+    private fun parseGuardrailMode(
+        envKey: String,
+        raw: String?,
+        errors: MutableMap<String, String>,
+    ): GuardrailMode =
+        when (raw?.lowercase()) {
+            null, "disabled" -> GuardrailMode.DISABLED
+            "warn" -> GuardrailMode.WARN
+            "enforce" -> GuardrailMode.ENFORCE
+            else -> {
+                errors[envKey] = "must be 'disabled', 'warn', or 'enforce', got '$raw'"
+                GuardrailMode.DISABLED
+            }
+        }
+
+    private fun parseGuardrailMessage(
+        envKey: String,
+        raw: String?,
+        default: String,
+        errors: MutableMap<String, String>,
+    ): String {
+        if (raw == null) return default
+        if (raw.length > GuardrailsConfig.MAX_MESSAGE_LENGTH || raw.any { it.code < 0x20 || it.code == 0x7F }) {
+            errors[envKey] = "must be at most ${GuardrailsConfig.MAX_MESSAGE_LENGTH} characters without control characters"
+            return default
+        }
+        return raw
+    }
 
     private fun isValidHttpUrl(raw: String): Boolean =
         runCatching {

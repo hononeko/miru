@@ -57,6 +57,11 @@ export interface MockSharedServer {
 	sharedSectionKeys?: string[];
 }
 
+export interface TerminatedMockSession {
+	sessionId: string;
+	reason: string;
+}
+
 export interface MockPlexServer {
 	readonly port: number;
 	readonly baseUrl: string;
@@ -65,6 +70,8 @@ export interface MockPlexServer {
 	readonly machineId: string;
 	setActiveSessions(sessions: MockPlexSession[]): void;
 	setSharedServers(shares: MockSharedServer[]): void;
+	getTerminatedSessions(): TerminatedMockSession[];
+	clearTerminatedSessions(): void;
 	pushPlayingNotification(
 		sessionKey: string,
 		ratingKey: string,
@@ -540,7 +547,8 @@ export async function startMockPlexServer(options: MockPlexOptions = {}): Promis
 		{ key: '2', title: 'TV Shows', type: 'show', uuid: 'sec-shows-2', count: catalog.shows.length }
 	];
 
-	let activeSessions: MockPlexSession[] = [];
+	let activeSessions: Array<MockPlexSession & { _removeAfterFetch?: boolean }> = [];
+	const terminatedSessions: TerminatedMockSession[] = [];
 	let sharedServers: MockSharedServer[] = [
 		{ userId: '1002', allLibraries: false, sharedSectionKeys: ['1'] },
 		{ userId: '1003', allLibraries: true }
@@ -720,12 +728,52 @@ export async function startMockPlexServer(options: MockPlexOptions = {}): Promis
 
 		if (pathname === '/status/sessions') {
 			const metadata = activeSessions.map(sessionToPlexMetadata);
+			activeSessions = activeSessions.filter((s) => !s._removeAfterFetch);
 			sendJson(res, 200, {
 				MediaContainer: {
 					size: metadata.length,
 					Metadata: metadata
 				}
 			});
+			return;
+		}
+
+		if (pathname === '/status/sessions/terminate') {
+			const sessionId = (url.searchParams.get('sessionId') ?? '').trim();
+			const reason = url.searchParams.get('reason') ?? '';
+			const matchIndex = activeSessions.findIndex(
+				(s) => s.sessionId === sessionId || s.sessionKey === sessionId
+			);
+			if (matchIndex < 0) {
+				sendJson(res, 404, { error: `Session '${sessionId}' not found` });
+				return;
+			}
+			const existing = activeSessions[matchIndex];
+			activeSessions[matchIndex] = { ...existing, state: 'stopped', _removeAfterFetch: true };
+			terminatedSessions.push({ sessionId, reason });
+			sendJson(res, 200, {});
+
+			setTimeout(() => {
+				const frame = JSON.stringify({
+					NotificationContainer: {
+						type: 'playing',
+						size: 1,
+						PlaySessionStateNotification: [
+							{
+								sessionKey: existing.sessionKey,
+								ratingKey: existing.ratingKey,
+								state: 'stopped',
+								viewOffset: existing.viewOffsetMs
+							}
+						]
+					}
+				});
+				for (const client of wsClients) {
+					if (client.readyState === 1) {
+						client.send(frame);
+					}
+				}
+			}, 20);
 			return;
 		}
 
@@ -893,6 +941,12 @@ export async function startMockPlexServer(options: MockPlexOptions = {}): Promis
 				...s,
 				sharedSectionKeys: s.sharedSectionKeys ? [...s.sharedSectionKeys] : undefined
 			}));
+		},
+		getTerminatedSessions() {
+			return terminatedSessions.map((t) => ({ ...t }));
+		},
+		clearTerminatedSessions() {
+			terminatedSessions.length = 0;
 		},
 		pushPlayingNotification(
 			sessionKey: string,

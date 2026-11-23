@@ -768,6 +768,143 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /api/v1/admin/guardrails:
+    get:
+      tags: [Admin]
+      operationId: listGuardrails
+      summary: List configured stream guardrail rules and effective defaults
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Guardrail rules list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GuardrailRulesResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/admin/guardrails/{ruleType}:
+    put:
+      tags: [Admin]
+      operationId: updateGuardrail
+      summary: Update a stream guardrail rule mode, threshold, and viewer message
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: ruleType
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/GuardrailRuleType'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateGuardrailRuleRequest'
+      responses:
+        '200':
+          description: Updated guardrail rule
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GuardrailRuleDto'
+        '400':
+          description: Invalid rule type, threshold, or message
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/admin/guardrails/audit:
+    get:
+      tags: [Admin]
+      operationId: listTerminationAudit
+      summary: List manual stream termination and automated guardrail audit log entries
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: source
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/TerminationAuditSource'
+        - name: action
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/TerminationAuditAction'
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Paginated termination and guardrail audit events
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TerminationAuditListResponse'
+        '400':
+          description: Invalid query filter or pagination parameter
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
   /api/v1/admin/plex/status:
     get:
       tags: [Admin]
@@ -1354,6 +1491,66 @@ paths:
                 type: string
         '401':
           description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/streams/{sessionId}/terminate:
+    post:
+      tags: [Streams]
+      operationId: terminateStream
+      summary: Terminate an active media stream with an optional custom viewer message (admin only)
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          description: Plex session ID or Miru session key of the active stream
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TerminateStreamRequest'
+      responses:
+        '200':
+          description: Stream terminated and audit event recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TerminateStreamResponse'
+        '400':
+          description: Invalid sessionId or termination reason
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Active stream session not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '502':
+          description: Upstream media server unavailable or rejected termination
           content:
             application/problem+json:
               schema:
@@ -4583,3 +4780,163 @@ components:
           oneOf:
             - $ref: '#/components/schemas/MediaPlaySummaryDto'
             - type: 'null'
+
+    TerminateStreamRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          maxLength: 500
+          nullable: true
+
+    TerminateStreamResponse:
+      type: object
+      required: [sessionId, sessionKey, reason, auditEventId, terminatedAtMs]
+      properties:
+        sessionId:
+          type: string
+        sessionKey:
+          type: string
+        reason:
+          type: string
+        auditEventId:
+          type: string
+        terminatedAtMs:
+          type: integer
+          format: int64
+
+    GuardrailRuleType:
+      type: string
+      enum: [TRANSCODE_4K, PAUSED_TIMEOUT, CONCURRENT_STREAMS]
+
+    GuardrailMode:
+      type: string
+      enum: [DISABLED, WARN, ENFORCE]
+
+    GuardrailRuleDto:
+      type: object
+      required: [ruleType, mode, message, defaultMessage, isOverridden]
+      properties:
+        ruleType:
+          $ref: '#/components/schemas/GuardrailRuleType'
+        mode:
+          $ref: '#/components/schemas/GuardrailMode'
+        threshold:
+          type: integer
+          nullable: true
+        thresholdUnit:
+          type: string
+          nullable: true
+        message:
+          type: string
+        defaultMessage:
+          type: string
+        isOverridden:
+          type: boolean
+        updatedAtMs:
+          type: integer
+          format: int64
+          nullable: true
+        updatedBy:
+          type: string
+          nullable: true
+
+    GuardrailRulesResponse:
+      type: object
+      required: [rules]
+      properties:
+        rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/GuardrailRuleDto'
+
+    UpdateGuardrailRuleRequest:
+      type: object
+      required: [mode]
+      properties:
+        mode:
+          $ref: '#/components/schemas/GuardrailMode'
+        threshold:
+          type: integer
+          nullable: true
+        message:
+          type: string
+          maxLength: 500
+          nullable: true
+
+    TerminationAuditSource:
+      type: string
+      enum: [MANUAL, GUARDRAIL]
+
+    TerminationAuditAction:
+      type: string
+      enum: [TERMINATED, WARNED, TERMINATE_FAILED]
+
+    TerminationAuditEntryDto:
+      type: object
+      required: [id, createdAtMs, sessionId, source, action, actorName, mediaTitle, reason]
+      properties:
+        id:
+          type: string
+        createdAtMs:
+          type: integer
+          format: int64
+        serverId:
+          type: string
+          nullable: true
+        sessionId:
+          type: string
+        sessionKey:
+          type: string
+          nullable: true
+        source:
+          $ref: '#/components/schemas/TerminationAuditSource'
+        action:
+          $ref: '#/components/schemas/TerminationAuditAction'
+        ruleType:
+          oneOf:
+            - $ref: '#/components/schemas/GuardrailRuleType'
+            - type: 'null'
+        actorAccountId:
+          type: string
+          nullable: true
+        actorName:
+          type: string
+        targetUserId:
+          type: string
+          nullable: true
+        targetUsername:
+          type: string
+          nullable: true
+        mediaRatingKey:
+          type: string
+          nullable: true
+        mediaTitle:
+          type: string
+        streamDecision:
+          type: string
+          nullable: true
+        videoResolution:
+          type: string
+          nullable: true
+        reason:
+          type: string
+        errorDetail:
+          type: string
+          nullable: true
+
+    TerminationAuditListResponse:
+      type: object
+      required: [items, totalCount, limit, offset]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TerminationAuditEntryDto'
+        totalCount:
+          type: integer
+          format: int64
+        limit:
+          type: integer
+        offset:
+          type: integer

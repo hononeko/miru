@@ -14,6 +14,8 @@
 		Plus,
 		RefreshCw,
 		Server,
+		ShieldAlert,
+		SlidersHorizontal,
 		Trash2,
 		Upload
 	} from 'lucide-svelte';
@@ -21,6 +23,9 @@
 	import type {
 		AccountResponse,
 		ApiKeyResponse,
+		GuardrailMode,
+		GuardrailRuleDto,
+		GuardrailRuleType,
 		MiruRole,
 		PlexConnectionOptionDto,
 		PlexConnectionStatus,
@@ -29,6 +34,9 @@
 		ProblemDetails,
 		ReadinessResponse,
 		TautulliImportResponse,
+		TerminationAuditAction,
+		TerminationAuditEntryDto,
+		TerminationAuditSource,
 		UserSummaryDto
 	} from '$api/types';
 	import Badge from '$components/ui/Badge.svelte';
@@ -41,6 +49,8 @@
 		API_KEY_EXPIRY_PRESETS,
 		formatApiKeyExpiry,
 		formatBytes,
+		formatDateTime,
+		formatFullUtc,
 		formatRelativeTime,
 		getApiKeyStatus,
 		resolveApiKeyExpiresAtMs,
@@ -57,8 +67,23 @@
 	let mediaUsers = $state<UserSummaryDto[]>([]);
 	let readiness = $state<ReadinessResponse | null>(null);
 	let plexStatus = $state<PlexConnectionStatus | null>(null);
+	let guardrails = $state<GuardrailRuleDto[]>([]);
+	let auditEntries = $state<TerminationAuditEntryDto[]>([]);
+	let auditTotalCount = $state(0);
+	let auditSourceFilter = $state<'ALL' | TerminationAuditSource>('ALL');
+	let auditLoading = $state(false);
+	let guardrailError = $state<string | null>(null);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+
+	// Guardrail Edit Sheet
+	let editRuleTarget = $state<GuardrailRuleDto | null>(null);
+	let editRuleOpen = $state(false);
+	let editRuleMode = $state<GuardrailMode>('DISABLED');
+	let editRuleThreshold = $state<number>(30);
+	let editRuleMessage = $state('');
+	let editRuleSubmitting = $state(false);
+	let editRuleError = $state<string | null>(null);
 
 	// Newly created API key one-time reveal
 	let createdRawKey = $state<string | null>(null);
@@ -166,13 +191,24 @@
 	async function loadAll() {
 		loading = true;
 		error = null;
+		guardrailError = null;
 		try {
-			const [accRes, keyRes, usrRes, readyRes, plexRes] = await Promise.all([
+			const [accRes, keyRes, usrRes, readyRes, plexRes, guardrailsRes, auditRes] = await Promise.all([
 				api.GET('/api/v1/admin/accounts'),
 				api.GET('/api/v1/admin/api-keys'),
 				api.GET('/api/v1/users'),
 				api.GET('/readyz'),
-				api.GET('/api/v1/admin/plex/status')
+				api.GET('/api/v1/admin/plex/status'),
+				api.GET('/api/v1/admin/guardrails'),
+				api.GET('/api/v1/admin/guardrails/audit', {
+					params: {
+						query: {
+							source: auditSourceFilter === 'ALL' ? undefined : auditSourceFilter,
+							limit: 20,
+							offset: 0
+						}
+					}
+				})
 			]);
 			const accountList = unwrap(accRes);
 			accounts = accountList.accounts;
@@ -181,10 +217,145 @@
 			mediaUsers = usrRes.data?.users ?? [];
 			readiness = readyRes.data ?? null;
 			plexStatus = plexRes.data ?? null;
+			if (guardrailsRes.data) {
+				guardrails = guardrailsRes.data.rules;
+			} else if (guardrailsRes.error) {
+				guardrailError = new MiruApiError(guardrailsRes.response.status, guardrailsRes.error).detail;
+			}
+			if (auditRes.data) {
+				auditEntries = auditRes.data.items;
+				auditTotalCount = auditRes.data.totalCount;
+			}
 		} catch (e) {
 			error = e instanceof MiruApiError ? e.detail : 'Failed to load admin console';
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function loadAudit(sourceFilter: 'ALL' | TerminationAuditSource = auditSourceFilter) {
+		auditSourceFilter = sourceFilter;
+		auditLoading = true;
+		guardrailError = null;
+		try {
+			const data = unwrap(
+				await api.GET('/api/v1/admin/guardrails/audit', {
+					params: {
+						query: {
+							source: sourceFilter === 'ALL' ? undefined : sourceFilter,
+							limit: 20,
+							offset: 0
+						}
+					}
+				})
+			);
+			auditEntries = data.items;
+			auditTotalCount = data.totalCount;
+		} catch (e) {
+			guardrailError = e instanceof MiruApiError ? e.detail : 'Failed to load termination audit log';
+		} finally {
+			auditLoading = false;
+		}
+	}
+
+	function guardrailTitle(ruleType: GuardrailRuleType): string {
+		switch (ruleType) {
+			case 'TRANSCODE_4K':
+				return '4K Video Transcode';
+			case 'PAUSED_TIMEOUT':
+				return 'Paused Stream Timeout';
+			case 'CONCURRENT_STREAMS':
+				return 'Per-User Concurrent Stream Cap';
+		}
+	}
+
+	function guardrailModeLabel(mode: GuardrailMode): string {
+		switch (mode) {
+			case 'DISABLED':
+				return 'DISABLED';
+			case 'WARN':
+				return 'DRY-RUN WARN';
+			case 'ENFORCE':
+				return 'ENFORCE';
+		}
+	}
+
+	function guardrailModeTone(mode: GuardrailMode): 'neutral' | 'hw-transcode' | 'danger' {
+		switch (mode) {
+			case 'DISABLED':
+				return 'neutral';
+			case 'WARN':
+				return 'hw-transcode';
+			case 'ENFORCE':
+				return 'danger';
+		}
+	}
+
+	function guardrailThresholdLabel(rule: GuardrailRuleDto): string {
+		switch (rule.ruleType) {
+			case 'TRANSCODE_4K':
+				return 'Any 4K / UHD video transcode';
+			case 'PAUSED_TIMEOUT':
+				return `${rule.threshold ?? 30}m paused`;
+			case 'CONCURRENT_STREAMS':
+				return `Max ${rule.threshold ?? 2} streams / user`;
+		}
+	}
+
+	function auditActionLabel(action: TerminationAuditAction): string {
+		switch (action) {
+			case 'TERMINATED':
+				return 'TERMINATED';
+			case 'WARNED':
+				return 'DRY-RUN WARN';
+			case 'TERMINATE_FAILED':
+				return 'FAILED';
+		}
+	}
+
+	function auditActionTone(action: TerminationAuditAction): 'primary' | 'hw-transcode' | 'danger' {
+		switch (action) {
+			case 'TERMINATED':
+				return 'primary';
+			case 'WARNED':
+				return 'hw-transcode';
+			case 'TERMINATE_FAILED':
+				return 'danger';
+		}
+	}
+
+	function openEditGuardrail(rule: GuardrailRuleDto) {
+		editRuleTarget = rule;
+		editRuleMode = rule.mode;
+		editRuleThreshold =
+			rule.threshold ?? (rule.ruleType === 'PAUSED_TIMEOUT' ? 30 : rule.ruleType === 'CONCURRENT_STREAMS' ? 2 : 0);
+		editRuleMessage = rule.message;
+		editRuleError = null;
+		editRuleOpen = true;
+	}
+
+	async function handleSaveGuardrail(e: SubmitEvent) {
+		e.preventDefault();
+		if (!editRuleTarget || editRuleSubmitting) return;
+		editRuleSubmitting = true;
+		editRuleError = null;
+		try {
+			const updated = unwrap(
+				await api.PUT('/api/v1/admin/guardrails/{ruleType}', {
+					params: { path: { ruleType: editRuleTarget.ruleType } },
+					body: {
+						mode: editRuleMode,
+						threshold: editRuleTarget.ruleType === 'TRANSCODE_4K' ? null : Number(editRuleThreshold),
+						message: editRuleMessage.trim() || null
+					}
+				})
+			);
+			guardrails = guardrails.map((r) => (r.ruleType === updated.ruleType ? updated : r));
+			editRuleOpen = false;
+		} catch (err) {
+			editRuleError = err instanceof MiruApiError ? err.detail : 'Failed to update guardrail rule';
+		} finally {
+			editRuleSubmitting = false;
 		}
 	}
 
@@ -779,6 +950,167 @@
 		{/if}
 	</section>
 
+	<!-- Stream Guardrails & Audit Log -->
+	<section class="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
+		<div class="flex flex-wrap items-center justify-between gap-2">
+			<div class="flex items-center gap-2">
+				<ShieldAlert class="h-4 w-4 text-cyan-hi" />
+				<div>
+					<h2 class="font-heading text-sm font-semibold text-fg-primary">
+						Stream Guardrails &amp; Termination Audit
+					</h2>
+					<p class="mt-0.5 text-[11px] text-fg-muted">
+						Automated resource-protection rules (default disabled; test safely with Dry-Run Warn before enforcing)
+					</p>
+				</div>
+			</div>
+			<Badge tone="neutral" mono>EVALUATED ON STREAM UPDATES</Badge>
+		</div>
+
+		{#if guardrailError}
+			<div role="alert" class="rounded-xl border border-danger/50 bg-danger-soft px-4 py-3 text-xs text-danger">
+				{guardrailError}
+			</div>
+		{/if}
+
+		{#if guardrails.length > 0}
+			<div class="grid grid-cols-1 gap-2.5 lg:grid-cols-3">
+				{#each guardrails as rule (rule.ruleType)}
+					<div class="flex flex-col justify-between gap-3 rounded-xl border border-border bg-elevated p-3.5">
+						<div class="flex flex-col gap-2">
+							<div class="flex flex-wrap items-start justify-between gap-2">
+								<h3 class="font-heading text-xs font-semibold text-fg-primary">
+									{guardrailTitle(rule.ruleType)}
+								</h3>
+								<Badge
+									tone={guardrailModeTone(rule.mode)}
+									dot={rule.mode !== 'DISABLED'}
+									mono
+								>
+									{guardrailModeLabel(rule.mode)}
+								</Badge>
+							</div>
+							<div class="flex flex-wrap items-center gap-1.5">
+								<Badge tone="cyan" mono>{guardrailThresholdLabel(rule)}</Badge>
+								{#if rule.isOverridden}
+									<Badge tone="neutral" mono>CONFIGURED</Badge>
+								{/if}
+							</div>
+							<p class="line-clamp-2 text-[11px] text-fg-secondary" title={rule.message}>
+								&ldquo;{rule.message}&rdquo;
+							</p>
+						</div>
+
+						<div class="flex items-center justify-between gap-2 border-t border-border pt-2.5">
+							<span class="truncate font-mono text-[10px] text-fg-muted">
+								{#if rule.updatedAtMs}
+									{formatRelativeTime(rule.updatedAtMs, Date.now(), preferencesStore.prefs)}{rule.updatedBy ? ` · ${rule.updatedBy}` : ''}
+								{:else}
+									Environment default
+								{/if}
+							</span>
+							<Button variant="outline" size="sm" onclick={() => openEditGuardrail(rule)}>
+								<SlidersHorizontal class="h-3.5 w-3.5" />
+								Configure
+							</Button>
+						</div>
+					</div>
+				{/each}
+			</div>
+		{:else if loading}
+			<p class="py-4 text-center font-mono text-xs text-fg-muted">Loading guardrail rules…</p>
+		{/if}
+
+		<div class="flex flex-col gap-2.5 rounded-xl border border-border bg-elevated p-3.5">
+			<div class="flex flex-wrap items-center justify-between gap-2">
+				<div class="flex items-center gap-2">
+					<h3 class="font-heading text-xs font-semibold text-fg-primary">
+						Termination &amp; Guardrail Audit Log
+					</h3>
+					<Badge tone="neutral" mono>{auditTotalCount}</Badge>
+				</div>
+				<div class="flex flex-wrap items-center gap-1.5">
+					{#each [{ key: 'ALL', label: 'All' }, { key: 'MANUAL', label: 'Manual' }, { key: 'GUARDRAIL', label: 'Guardrail' }] as tab (tab.key)}
+						<button
+							type="button"
+							onclick={() => void loadAudit(tab.key as 'ALL' | TerminationAuditSource)}
+							aria-pressed={auditSourceFilter === tab.key}
+							class={`cursor-pointer rounded-lg border px-2.5 py-1 font-heading text-[11px] font-medium transition-colors ${
+								auditSourceFilter === tab.key
+									? 'border-cyan bg-cyan-soft text-cyan-hi'
+									: 'border-border bg-canvas text-fg-secondary hover:text-fg-primary'
+							}`}
+						>
+							{tab.label}
+						</button>
+					{/each}
+					<Button
+						variant="outline"
+						size="sm"
+						disabled={auditLoading}
+						onclick={() => void loadAudit(auditSourceFilter)}
+					>
+						<RefreshCw class={`h-3 w-3 ${auditLoading ? 'animate-spin' : ''}`} />
+						Refresh
+					</Button>
+				</div>
+			</div>
+
+			{#if auditEntries.length === 0}
+				<p class="py-4 text-center text-xs text-fg-muted">
+					No termination or guardrail audit events recorded yet.
+				</p>
+			{:else}
+				<div class="flex flex-col gap-2">
+					{#each auditEntries as entry (entry.id)}
+						<div class="flex flex-col gap-1.5 rounded-lg border border-border bg-canvas px-3 py-2.5 text-xs">
+							<div class="flex flex-wrap items-center justify-between gap-2">
+								<div class="flex flex-wrap items-center gap-1.5">
+									<Badge
+										tone={auditActionTone(entry.action)}
+										dot
+										mono
+									>
+										{auditActionLabel(entry.action)}
+									</Badge>
+									<span class="font-heading font-semibold text-fg-primary">
+										{entry.actorName}
+									</span>
+									<span class="text-fg-muted">→</span>
+									<span class="font-heading font-semibold text-cyan-hi">
+										{entry.targetUsername || entry.targetUserId || 'Unknown user'}
+									</span>
+									<span class="text-fg-secondary">· {entry.mediaTitle}</span>
+									{#if entry.videoResolution || entry.streamDecision}
+										<Badge tone="neutral" mono>
+											{[entry.videoResolution?.toUpperCase(), entry.streamDecision]
+												.filter(Boolean)
+												.join(' · ')}
+										</Badge>
+									{/if}
+								</div>
+								<span
+									class="font-mono text-[10px] text-fg-muted"
+									title={formatFullUtc(entry.createdAtMs)}
+								>
+									{formatDateTime(entry.createdAtMs, preferencesStore.prefs)}
+								</span>
+							</div>
+							<p class="text-[11px] text-fg-secondary">
+								&ldquo;{entry.reason}&rdquo;
+							</p>
+							{#if entry.errorDetail}
+								<p class="font-mono text-[10px] text-danger">
+									Error: {entry.errorDetail}
+								</p>
+							{/if}
+						</div>
+					{/each}
+				</div>
+			{/if}
+		</div>
+	</section>
+
 	<!-- Data Import (Tautulli) -->
 	<section class="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
 		<div class="flex flex-wrap items-center justify-between gap-2">
@@ -1340,4 +1672,107 @@
 			{keySubmitting ? 'Generating…' : 'Generate API Key'}
 		</Button>
 	</form>
+</Sheet>
+
+<!-- Configure Guardrail Rule Sheet -->
+<Sheet
+	bind:open={editRuleOpen}
+	onOpenChange={(v) => {
+		editRuleOpen = v;
+		if (!v) editRuleError = null;
+	}}
+	title={editRuleTarget ? `Configure ${guardrailTitle(editRuleTarget.ruleType)}` : 'Configure Guardrail'}
+	description="Adjust enforcement mode, threshold, and message displayed to viewers"
+>
+	{#if editRuleTarget}
+		<form onsubmit={handleSaveGuardrail} class="flex flex-col gap-3.5">
+			{#if editRuleError}
+				<div role="alert" class="rounded-lg border border-danger/50 bg-danger-soft px-3 py-2 text-xs text-danger">
+					{editRuleError}
+				</div>
+			{/if}
+
+			<label class="flex flex-col gap-1">
+				<span class="font-heading text-xs font-semibold text-fg-primary">Rule Mode</span>
+				<select
+					value={editRuleMode}
+					onchange={(e) => {
+						editRuleMode = e.currentTarget.value as GuardrailMode;
+					}}
+					class="rounded-lg border border-border-strong bg-canvas px-3 py-2 text-sm text-fg-primary focus:border-cyan focus:outline-none"
+				>
+					<option value="DISABLED">DISABLED — Rule inactive</option>
+					<option value="WARN">DRY-RUN WARN — Log &amp; audit only (do not kill)</option>
+					<option value="ENFORCE">ENFORCE — Auto-terminate matching streams</option>
+				</select>
+			</label>
+
+			{#if editRuleTarget.ruleType === 'PAUSED_TIMEOUT'}
+				<label class="flex flex-col gap-1">
+					<span class="font-heading text-xs font-semibold text-fg-primary">
+						Paused Threshold (minutes)
+					</span>
+					<input
+						type="number"
+						min={1}
+						max={1440}
+						required
+						bind:value={editRuleThreshold}
+						class="rounded-lg border border-border-strong bg-canvas px-3 py-2 font-mono text-sm text-fg-primary focus:border-cyan focus:outline-none"
+					/>
+					<span class="text-[10px] text-fg-muted">
+						Continuous paused minutes before triggering (1–1440; resets when resumed).
+					</span>
+				</label>
+			{:else if editRuleTarget.ruleType === 'CONCURRENT_STREAMS'}
+				<label class="flex flex-col gap-1">
+					<span class="font-heading text-xs font-semibold text-fg-primary">
+						Max Concurrent Streams Per User
+					</span>
+					<input
+						type="number"
+						min={1}
+						max={50}
+						required
+						bind:value={editRuleThreshold}
+						class="rounded-lg border border-border-strong bg-canvas px-3 py-2 font-mono text-sm text-fg-primary focus:border-cyan focus:outline-none"
+					/>
+					<span class="text-[10px] text-fg-muted">
+						Oldest active streams are kept; newest excess streams are targeted (1–50).
+					</span>
+				</label>
+			{/if}
+
+			<div class="flex flex-col gap-1">
+				<div class="flex items-center justify-between gap-2">
+					<label for="guardrail-message-input" class="font-heading text-xs font-semibold text-fg-primary">
+						Viewer Message
+					</label>
+					<button
+						type="button"
+						onclick={() => {
+							if (editRuleTarget) editRuleMessage = editRuleTarget.defaultMessage;
+						}}
+						class="cursor-pointer font-heading text-[11px] font-medium text-cyan-hi hover:underline"
+					>
+						Reset to default
+					</button>
+				</div>
+				<textarea
+					id="guardrail-message-input"
+					rows={3}
+					maxlength={500}
+					bind:value={editRuleMessage}
+					class="rounded-lg border border-border-strong bg-canvas px-3 py-2 text-sm text-fg-primary focus:border-cyan focus:outline-none"
+				></textarea>
+				<span class="text-[10px] text-fg-muted">
+					Shown to the viewer on termination ({editRuleMessage.trim().length}/500).
+				</span>
+			</div>
+
+			<Button type="submit" variant="primary" size="lg" disabled={editRuleSubmitting} class="mt-2 w-full">
+				{editRuleSubmitting ? 'Saving…' : 'Save Guardrail Rule'}
+			</Button>
+		</form>
+	{/if}
 </Sheet>

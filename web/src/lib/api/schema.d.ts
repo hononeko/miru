@@ -356,6 +356,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/guardrails": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List configured stream guardrail rules and effective defaults */
+        get: operations["listGuardrails"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/guardrails/{ruleType}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update a stream guardrail rule mode, threshold, and viewer message */
+        put: operations["updateGuardrail"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/guardrails/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List manual stream termination and automated guardrail audit log entries */
+        get: operations["listTerminationAudit"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/plex/status": {
         parameters: {
             query?: never;
@@ -543,6 +594,23 @@ export interface paths {
         get: operations["streamEvents"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/streams/{sessionId}/terminate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Terminate an active media stream with an optional custom viewer message (admin only) */
+        post: operations["terminateStream"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1811,6 +1879,73 @@ export interface components {
             playSummary: components["schemas"]["MediaPlaySummaryDto"];
             seriesPlaySummary?: components["schemas"]["MediaPlaySummaryDto"] | null;
         };
+        TerminateStreamRequest: {
+            reason?: string | null;
+        };
+        TerminateStreamResponse: {
+            sessionId: string;
+            sessionKey: string;
+            reason: string;
+            auditEventId: string;
+            /** Format: int64 */
+            terminatedAtMs: number;
+        };
+        /** @enum {string} */
+        GuardrailRuleType: "TRANSCODE_4K" | "PAUSED_TIMEOUT" | "CONCURRENT_STREAMS";
+        /** @enum {string} */
+        GuardrailMode: "DISABLED" | "WARN" | "ENFORCE";
+        GuardrailRuleDto: {
+            ruleType: components["schemas"]["GuardrailRuleType"];
+            mode: components["schemas"]["GuardrailMode"];
+            threshold?: number | null;
+            thresholdUnit?: string | null;
+            message: string;
+            defaultMessage: string;
+            isOverridden: boolean;
+            /** Format: int64 */
+            updatedAtMs?: number | null;
+            updatedBy?: string | null;
+        };
+        GuardrailRulesResponse: {
+            rules: components["schemas"]["GuardrailRuleDto"][];
+        };
+        UpdateGuardrailRuleRequest: {
+            mode: components["schemas"]["GuardrailMode"];
+            threshold?: number | null;
+            message?: string | null;
+        };
+        /** @enum {string} */
+        TerminationAuditSource: "MANUAL" | "GUARDRAIL";
+        /** @enum {string} */
+        TerminationAuditAction: "TERMINATED" | "WARNED" | "TERMINATE_FAILED";
+        TerminationAuditEntryDto: {
+            id: string;
+            /** Format: int64 */
+            createdAtMs: number;
+            serverId?: string | null;
+            sessionId: string;
+            sessionKey?: string | null;
+            source: components["schemas"]["TerminationAuditSource"];
+            action: components["schemas"]["TerminationAuditAction"];
+            ruleType?: components["schemas"]["GuardrailRuleType"] | null;
+            actorAccountId?: string | null;
+            actorName: string;
+            targetUserId?: string | null;
+            targetUsername?: string | null;
+            mediaRatingKey?: string | null;
+            mediaTitle: string;
+            streamDecision?: string | null;
+            videoResolution?: string | null;
+            reason: string;
+            errorDetail?: string | null;
+        };
+        TerminationAuditListResponse: {
+            items: components["schemas"]["TerminationAuditEntryDto"][];
+            /** Format: int64 */
+            totalCount: number;
+            limit: number;
+            offset: number;
+        };
     };
     responses: never;
     parameters: never;
@@ -2753,6 +2888,149 @@ export interface operations {
             };
         };
     };
+    listGuardrails: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Guardrail rules list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GuardrailRulesResponse"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    updateGuardrail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                ruleType: components["schemas"]["GuardrailRuleType"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateGuardrailRuleRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated guardrail rule */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GuardrailRuleDto"];
+                };
+            };
+            /** @description Invalid rule type, threshold, or message */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    listTerminationAudit: {
+        parameters: {
+            query?: {
+                source?: components["schemas"]["TerminationAuditSource"];
+                action?: components["schemas"]["TerminationAuditAction"];
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paginated termination and guardrail audit events */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TerminationAuditListResponse"];
+                };
+            };
+            /** @description Invalid query filter or pagination parameter */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
     getPlexConnectionStatus: {
         parameters: {
             query?: never;
@@ -3407,6 +3685,78 @@ export interface operations {
             };
             /** @description Authentication required */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    terminateStream: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Plex session ID or Miru session key of the active stream */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["TerminateStreamRequest"];
+            };
+        };
+        responses: {
+            /** @description Stream terminated and audit event recorded */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TerminateStreamResponse"];
+                };
+            };
+            /** @description Invalid sessionId or termination reason */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Active stream session not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Upstream media server unavailable or rejected termination */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };

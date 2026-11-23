@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { startMockPlexServer, type MockPlexServer } from './helpers/mock-plex';
+import { startMockPlexServer, type MockPlexServer, type MockPlexSession } from './helpers/mock-plex';
 import {
 	E2E_ADMIN_PASSWORD,
 	E2E_ADMIN_USERNAME,
@@ -23,6 +23,7 @@ test.describe('Responsive mobile viewport: bottom navigation, compact cards & us
 	test.beforeAll(async () => {
 		mockPlex = await startMockPlexServer();
 		miru = await startMiruServer({ mockPlex });
+		await mockPlex.waitForWsClient();
 		fixture = createTautulliFixture();
 
 		const adminCookie = await miru.apiLogin(E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
@@ -113,5 +114,58 @@ test.describe('Responsive mobile viewport: bottom navigation, compact cards & us
 		// Sign out from mobile user menu
 		await prefsDialog.getByRole('button', { name: 'Sign Out' }).click();
 		await expect(page).toHaveURL(`${miru.baseUrl}/login`);
+	});
+
+	test('allows admin to terminate an active stream via bottom sheet on mobile viewport', async ({ page }) => {
+		await loginViaUi(page, miru.baseUrl, E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
+
+		mockPlex.clearTerminatedSessions();
+		const mobileSession: MockPlexSession = {
+			sessionKey: 'mob-sess-1',
+			sessionId: 'mob-plex-1',
+			ratingKey: '102',
+			type: 'movie',
+			title: 'Akira',
+			year: 1988,
+			durationMs: 7_440_000,
+			viewOffsetMs: 600_000,
+			state: 'playing',
+			user: { id: '1001', title: 'alice' },
+			player: {
+				machineIdentifier: 'ios-mobile',
+				product: 'Plex for iOS',
+				platform: 'iOS',
+				device: 'iPhone',
+				title: 'Alice iPhone',
+				address: '192.168.1.99',
+				local: true
+			},
+			bandwidthKbps: 12_400,
+			location: 'lan',
+			decision: 'direct_play',
+			videoResolution: '1080',
+			videoCodec: 'h264',
+			audioCodec: 'dts'
+		};
+
+		mockPlex.setActiveSessions([mobileSession]);
+		mockPlex.pushPlayingNotification(mobileSession.sessionKey, mobileSession.ratingKey, 'playing', mobileSession.viewOffsetMs);
+
+		const streamCard = page.locator('article').filter({ hasText: 'Akira' });
+		await expect(streamCard).toBeVisible();
+
+		await streamCard.getByRole('button', { name: 'Terminate' }).click();
+		const bottomSheet = page.getByRole('dialog');
+		await expect(bottomSheet.getByText('Terminate Active Stream')).toBeVisible();
+
+		await bottomSheet.getByPlaceholder(/Optional message shown/i).fill('Mobile maintenance stop');
+		await bottomSheet.getByRole('button', { name: 'Terminate Stream' }).click();
+		await expect(bottomSheet).not.toBeVisible();
+
+		await expect(page.getByRole('status')).toContainText('Termination requested for Alice Admin — Akira');
+		await expect(page.getByRole('heading', { name: 'Active Streams (0)' })).toBeVisible();
+		expect(mockPlex.getTerminatedSessions()).toEqual([
+			{ sessionId: 'mob-plex-1', reason: 'Mobile maintenance stop' }
+		]);
 	});
 });

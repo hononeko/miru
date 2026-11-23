@@ -517,6 +517,24 @@ class PlexMediaServerAdapter(
             ArtworkData(bytes = bytes, contentType = contentType)
         }
 
+    override suspend fun terminateSession(
+        sessionId: String,
+        reason: String,
+    ): Either<MiruError, Unit> =
+        either {
+            val (trimmedSessionId, trimmedReason) = validateTerminateParams(sessionId, reason).bind()
+            executeRequest(
+                url = "$baseUrl/status/sessions/terminate",
+                acceptHeader = ContentType.Application.Json.toString(),
+                operation = "terminate session",
+                notFoundResource = "Stream session",
+                notFoundId = trimmedSessionId,
+            ) {
+                parameter("sessionId", trimmedSessionId)
+                parameter("reason", trimmedReason)
+            }.bind()
+        }
+
     override fun events(): Flow<MediaServerEvent> = eventSource
 
     private suspend fun resolveOwnerBestEffort(): MediaUser? {
@@ -793,6 +811,37 @@ class PlexMediaServerAdapter(
         return path.none { ch -> ch.code < ASCII_SPACE || ch.code == ASCII_DEL }
     }
 
+    private fun validateTerminateParams(
+        sessionId: String,
+        reason: String,
+    ): Either<MiruError.ValidationError, Pair<String, String>> =
+        either {
+            val trimmedSessionId = sessionId.trim()
+            val trimmedReason = reason.trim()
+            val errors = linkedMapOf<String, String>()
+            if (trimmedSessionId.isEmpty() ||
+                trimmedSessionId.length > MAX_TERMINATION_SESSION_ID_LENGTH ||
+                hasControlChars(sessionId)
+            ) {
+                errors["sessionId"] =
+                    "must be 1..$MAX_TERMINATION_SESSION_ID_LENGTH characters without control characters"
+            }
+            if (trimmedReason.length > MAX_TERMINATION_REASON_LENGTH || hasControlChars(reason)) {
+                errors["reason"] =
+                    "must be at most $MAX_TERMINATION_REASON_LENGTH characters without control characters"
+            }
+            ensure(errors.isEmpty()) {
+                MiruError.ValidationError(
+                    message = "Invalid stream termination parameters",
+                    fieldErrors = errors,
+                )
+            }
+            trimmedSessionId to trimmedReason
+        }
+
+    private fun hasControlChars(value: String): Boolean =
+        value.any { ch -> ch.code < ASCII_SPACE || ch.code == ASCII_DEL }
+
     private fun sanitizeMessage(raw: String?): String {
         val text = raw?.takeIf { it.isNotBlank() } ?: "unexpected upstream error"
         return if (config.token.isNotEmpty()) {
@@ -815,6 +864,8 @@ class PlexMediaServerAdapter(
         private const val DEFAULT_ARTWORK_CONTENT_TYPE = "application/octet-stream"
         private const val ASCII_SPACE = 0x20
         private const val ASCII_DEL = 0x7F
+        private const val MAX_TERMINATION_SESSION_ID_LENGTH = 256
+        private const val MAX_TERMINATION_REASON_LENGTH = 500
         private val SECTION_KEY_REGEX = Regex("^[A-Za-z0-9_-]+$")
         private val MACHINE_ID_REGEX = Regex("^[A-Za-z0-9._-]+$")
     }

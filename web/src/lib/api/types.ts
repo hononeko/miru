@@ -26,6 +26,18 @@ export type ActiveStreamDto = Schemas['ActiveStreamDto'];
 export type SessionStartedEventDto = Schemas['SessionStartedEventDto'];
 export type SessionUpdatedEventDto = Schemas['SessionUpdatedEventDto'];
 export type SessionStoppedEventDto = Schemas['SessionStoppedEventDto'];
+export type TerminateStreamRequest = Schemas['TerminateStreamRequest'];
+export type TerminateStreamResponse = Schemas['TerminateStreamResponse'];
+
+export type GuardrailRuleType = Schemas['GuardrailRuleType'];
+export type GuardrailMode = Schemas['GuardrailMode'];
+export type GuardrailRuleDto = Schemas['GuardrailRuleDto'];
+export type GuardrailRulesResponse = Schemas['GuardrailRulesResponse'];
+export type UpdateGuardrailRuleRequest = Schemas['UpdateGuardrailRuleRequest'];
+export type TerminationAuditSource = Schemas['TerminationAuditSource'];
+export type TerminationAuditAction = Schemas['TerminationAuditAction'];
+export type TerminationAuditEntryDto = Schemas['TerminationAuditEntryDto'];
+export type TerminationAuditListResponse = Schemas['TerminationAuditListResponse'];
 
 export type UsersListResponse = Schemas['UsersListResponse'];
 export type UserSummaryDto = Schemas['UserSummaryDto'];

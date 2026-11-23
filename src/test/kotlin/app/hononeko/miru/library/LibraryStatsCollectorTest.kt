@@ -154,6 +154,11 @@ private class FakeMediaServerAdapter(
         width: Int?,
         height: Int?,
     ): Either<MiruError, ArtworkData> = error("unused")
+
+    override suspend fun terminateSession(
+        sessionId: String,
+        reason: String,
+    ): Either<MiruError, Unit> = Either.Right(Unit)
 }
 
 private class InMemoryLibraryRepository : LibraryRepository {

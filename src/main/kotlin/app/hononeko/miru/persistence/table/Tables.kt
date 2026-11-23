@@ -198,3 +198,37 @@ object UserLibraryAccessTable : Table("user_library_access") {
 
     override val primaryKey = PrimaryKey(serverId, externalUserId)
 }
+
+object GuardrailRulesTable : Table("guardrail_rules") {
+    val ruleType = text("rule_type")
+    val mode = text("mode")
+    val thresholdInt = integer("threshold_int").nullable()
+    val message = text("message")
+    val updatedAtMs = long("updated_at_ms")
+    val updatedBy = text("updated_by").nullable()
+
+    override val primaryKey = PrimaryKey(ruleType)
+}
+
+object StreamTerminationAuditTable : Table("stream_termination_audit") {
+    val id = text("id")
+    val createdAtMs = long("created_at_ms")
+    val serverId = text("server_id").nullable()
+    val sessionId = text("session_id")
+    val sessionKey = text("session_key").nullable()
+    val auditSource = text("source")
+    val action = text("action")
+    val ruleType = text("rule_type").nullable()
+    val actorAccountId = text("actor_account_id").nullable()
+    val actorName = text("actor_name")
+    val targetUserId = text("target_user_id").nullable()
+    val targetUsername = text("target_username").nullable()
+    val mediaRatingKey = text("media_rating_key").nullable()
+    val mediaTitle = text("media_title")
+    val streamDecision = text("stream_decision").nullable()
+    val videoResolution = text("video_resolution").nullable()
+    val reason = text("reason")
+    val errorDetail = text("error_detail").nullable()
+
+    override val primaryKey = PrimaryKey(id)
+}

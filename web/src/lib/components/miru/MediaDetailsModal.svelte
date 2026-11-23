@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import {
-		X,
 		Film,
 		Tv,
 		Layers,
@@ -185,45 +184,29 @@
 	{...({ closedby: 'any' } as Record<string, string>)}
 	class="media-details-dialog fixed inset-x-0 bottom-0 top-auto z-50 m-0 max-h-[90dvh] w-full max-w-none overflow-hidden rounded-t-2xl border-t border-border-strong bg-surface text-fg-primary shadow-2xl focus:outline-none md:inset-0 md:m-auto md:max-h-[88dvh] md:w-[calc(100%-2rem)] md:max-w-3xl md:rounded-2xl md:border"
 >
-	<!-- Mobile drag indicator -->
+	<!-- Mobile drag indicator, laid over the top of the sheet so the hero art reaches the top edge -->
 	<div
 		data-sheet-drag-handle
-		class="flex shrink-0 cursor-grab touch-none justify-center pt-2.5 pb-1 active:cursor-grabbing md:hidden"
+		class="absolute inset-x-0 top-0 z-10 flex cursor-grab touch-none justify-center pt-2.5 pb-2 active:cursor-grabbing md:hidden"
 	>
 		<div class="h-1 w-10 rounded-full bg-border-strong"></div>
 	</div>
 
 	{#if mediaDetailsModal.loading}
-		<div class="flex items-center justify-between border-b border-border px-5 py-4">
+		<div class="border-b border-border px-5 pt-7 pb-4 md:pt-4">
 			<h1 id={titleId} class="font-display text-lg font-bold text-fg-primary">
 				{modalHeading}
 			</h1>
-			<button
-				type="button"
-				onclick={() => mediaDetailsModal.close()}
-				aria-label="Close media details"
-				class="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-fg-muted hover:bg-elevated hover:text-fg-primary"
-			>
-				<X class="h-4 w-4" />
-			</button>
 		</div>
 		<div class="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-16 text-center">
 			<div class="h-8 w-8 animate-spin rounded-full border-2 border-cyan border-t-transparent"></div>
 			<p class="font-mono text-xs text-fg-muted">Fetching metadata &amp; telemetry…</p>
 		</div>
 	{:else if mediaDetailsModal.error}
-		<div class="flex items-center justify-between border-b border-border px-5 py-4">
+		<div class="border-b border-border px-5 pt-7 pb-4 md:pt-4">
 			<h1 id={titleId} class="font-display text-lg font-bold text-fg-primary">
 				{modalHeading}
 			</h1>
-			<button
-				type="button"
-				onclick={() => mediaDetailsModal.close()}
-				aria-label="Close media details"
-				class="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-fg-muted hover:bg-elevated hover:text-fg-primary"
-			>
-				<X class="h-4 w-4" />
-			</button>
 		</div>
 		<div class="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-14 text-center">
 			<div class="flex h-11 w-11 items-center justify-center rounded-full bg-danger-soft text-danger">
@@ -233,17 +216,20 @@
 				<p class="font-heading text-sm font-semibold text-fg-primary">Unable to load media details</p>
 				<p class="mt-1 text-xs text-fg-secondary">{mediaDetailsModal.error}</p>
 			</div>
-			{#if mediaDetailsModal.ratingKey}
-				<Button
-					variant="secondary"
-					size="sm"
-					onclick={() => {
-						if (mediaDetailsModal.ratingKey) void mediaDetailsModal.open(mediaDetailsModal.ratingKey);
-					}}
-				>
-					Retry
-				</Button>
-			{/if}
+			<div class="flex items-center gap-2">
+				{#if mediaDetailsModal.ratingKey}
+					<Button
+						variant="secondary"
+						size="sm"
+						onclick={() => {
+							if (mediaDetailsModal.ratingKey) void mediaDetailsModal.open(mediaDetailsModal.ratingKey);
+						}}
+					>
+						Retry
+					</Button>
+				{/if}
+				<Button variant="ghost" size="sm" onclick={() => mediaDetailsModal.close()}>Close</Button>
+			</div>
 		</div>
 	{:else if data}
 		<!-- Scrollable Body -->
@@ -265,16 +251,7 @@
 					class="pointer-events-none absolute inset-0 bg-gradient-to-t from-surface via-surface/80 to-surface/40"
 				></div>
 
-				<div class="relative flex flex-col gap-4 p-5 sm:flex-row sm:items-end sm:gap-5 sm:p-6">
-					<button
-						type="button"
-						onclick={() => mediaDetailsModal.close()}
-						aria-label="Close media details"
-						class="absolute right-4 top-4 inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-border/80 bg-surface/80 text-fg-secondary backdrop-blur-sm hover:bg-elevated hover:text-fg-primary"
-					>
-						<X class="h-4 w-4" />
-					</button>
-
+				<div class="relative flex flex-col gap-4 p-5 pt-7 sm:flex-row sm:items-end sm:gap-5 sm:p-6">
 					<ProxiedImage
 						src={heroPosterSrc}
 						alt={data.title}
@@ -283,7 +260,7 @@
 						class="h-32 w-[86px] shrink-0 shadow-md sm:h-40 sm:w-[108px]"
 					/>
 
-					<div class="flex min-w-0 flex-1 flex-col gap-2 pr-8 sm:pr-10">
+					<div class="flex min-w-0 flex-1 flex-col gap-2">
 						<div class="flex flex-wrap items-center gap-1.5">
 							<Badge tone="primary" mono>{data.mediaType.replace('_', ' ').toUpperCase()}</Badge>
 							{#if episodeCode}

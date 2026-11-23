@@ -1,4 +1,4 @@
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 import { api } from '$api/client';
 import type {
 	ActiveStreamDto,

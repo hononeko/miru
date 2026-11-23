@@ -3,11 +3,12 @@
 /// <reference lib="esnext" />
 /// <reference lib="webworker" />
 
-import { build, files, version } from '$service-worker';
+import { version } from '$app/env';
+import { assets, immutable } from '$app/manifest';
 
 const sw = self as unknown as ServiceWorkerGlobalScope;
 const CACHE = `miru-shell-${version}`;
-const ASSETS = [...build, ...files];
+const ASSETS = [...immutable, ...assets].map((entry) => `/${entry.path}`);
 
 sw.addEventListener('install', (event) => {
 	event.waitUntil(

@@ -35,7 +35,6 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Set up Gradle & JDK
         uses: hononeko/actions/gradle-setup@v1
@@ -54,7 +53,6 @@ jobs:
       push: >-
         ${{ github.event.pull_request.head.repo.full_name == github.repository
         && contains(github.event.pull_request.labels.*.name, 'snapshot') }}
-      ref: ${{ github.event.pull_request.head.sha }}
       version: ${{ needs.version.outputs.snapshot_version }}
     permissions:
       contents: read

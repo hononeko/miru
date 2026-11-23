@@ -4,6 +4,11 @@ name: CodeQL config
 queries:
   - uses: security-extended
 
+paths-ignore:
+  - "src/test/**"
+  - "web/e2e/**"
+  - "web/src/**/*.test.ts"
+
 query-filters:
   # Flags hononeko/actions@v1, a first-party major tag every release moves on purpose. zizmor (hononeko/actions'
   # lint-actions) still requires every other action to be pinned by hash.

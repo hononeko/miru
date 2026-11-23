@@ -1,7 +1,7 @@
 name: "CodeQL Analysis"
 
-# CodeQL on the workflows, with .github/codeql/codeql-config.yml. Replaces the default setup, which
-# can't leave a query out.
+# CodeQL across GitHub Actions workflows, Kotlin backend, and SvelteKit/TypeScript frontend,
+# with .github/codeql/codeql-config.yml. Replaces the default setup, which can't leave a query out.
 on:
   push:
     branches: ["main"]
@@ -25,7 +25,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [actions]
+        include:
+          - language: actions
+            build-mode: none
+          - language: java-kotlin
+            build-mode: manual
+          - language: javascript-typescript
+            build-mode: none
 
     steps:
       - name: Checkout repository
@@ -33,12 +39,22 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up Gradle & JDK
+        if: matrix.language == 'java-kotlin'
+        uses: hononeko/actions/gradle-setup@v1
+        with:
+          cache-read-only: "true"
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
           languages: ${{ matrix.language }}
-          build-mode: none
+          build-mode: ${{ matrix.build-mode }}
           config-file: ./.github/codeql/codeql-config.yml
+
+      - name: Build Kotlin sources for CodeQL
+        if: matrix.language == 'java-kotlin'
+        run: ./gradlew compileKotlin --no-daemon --no-build-cache --rerun-tasks
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4

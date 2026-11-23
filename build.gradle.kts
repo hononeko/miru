@@ -11,10 +11,11 @@ group = "app.hononeko.miru"
 version = "0.1.0"
 
 repositories {
-    mavenCentral()
-    // Google's mirror of Maven Central, asked only when Central answers "not found": Central sometimes answers
-    // that for artifacts it has, failing CI builds
+    // Google's mirror of Maven Central first: Central rate-limits CI runners (HTTP 429), and Gradle moves to the next
+    // repository only when one answers "not found", never on an error. Releases the mirror has not copied yet answer
+    // "not found" there and come from Central.
     maven("https://maven-central.storage-download.googleapis.com/maven2/") { name = "MavenCentralMirror" }
+    mavenCentral()
 }
 
 dependencies {

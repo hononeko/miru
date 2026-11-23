@@ -267,6 +267,10 @@ object TautulliSqliteReader {
                 selectExpr("stream_video_resolution", listOf(shmi)),
                 selectExpr("stream_video_codec", listOf(shmi)),
                 selectExpr("stream_audio_codec", listOf(shmi)),
+                selectExpr("container", listOf(shmi)),
+                selectExpr("stream_container", listOf(shmi)),
+                selectExpr("subtitle_decision", listOf(shmi)),
+                selectExpr("stream_subtitle_decision", listOf(shmi)),
                 selectExpr("bandwidth", listOf(shmi)),
                 selectExpr("bitrate", listOf(shmi)),
             )
@@ -325,6 +329,10 @@ object TautulliSqliteReader {
             streamVideoResolution = rs.readOptionalString("stream_video_resolution"),
             streamVideoCodec = rs.readOptionalString("stream_video_codec"),
             streamAudioCodec = rs.readOptionalString("stream_audio_codec"),
+            container = rs.readOptionalString("container"),
+            streamContainer = rs.readOptionalString("stream_container"),
+            subtitleDecision = rs.readOptionalString("subtitle_decision"),
+            streamSubtitleDecision = rs.readOptionalString("stream_subtitle_decision"),
             bandwidth = rs.readOptionalLenientInt("bandwidth"),
             bitrate = rs.readOptionalLenientInt("bitrate"),
         )

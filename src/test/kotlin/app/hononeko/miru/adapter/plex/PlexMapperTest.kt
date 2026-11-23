@@ -108,6 +108,7 @@ class PlexMapperTest :
             stream.technical.transcodeAudioCodec shouldBe "aac"
             stream.technical.container shouldBe "mkv"
             stream.technical.transcodeContainer shouldBe "mp4"
+            stream.technical.subtitleDecision shouldBe "burn"
             stream.technical.videoResolution shouldBe "4k"
             stream.technical.bitrateKbps shouldBe 4_500
             stream.technical.transcodeProgress shouldBe 42.5
@@ -120,6 +121,12 @@ class PlexMapperTest :
             swStream.state shouldBe PlaybackState.BUFFERING
             swStream.technical.decision shouldBe StreamDecision.TRANSCODE
             swStream.technical.isHwTranscode shouldBe false
+            // With no Media element, the source codecs come from the transcode session.
+            swStream.technical.videoCodec shouldBe "hevc"
+            swStream.technical.transcodeVideoCodec shouldBe "h264"
+            swStream.technical.audioCodec shouldBe "truehd"
+            swStream.technical.transcodeAudioCodec shouldBe "opus"
+            swStream.technical.subtitleDecision shouldBe null
 
             val remuxResponse = MiruJson.decodeFromString<PlexSessionsResponse>(PlexFixtures.directStreamRemuxJson)
             val remuxStream = PlexMapper.mapSessions(remuxResponse.mediaContainer).single()

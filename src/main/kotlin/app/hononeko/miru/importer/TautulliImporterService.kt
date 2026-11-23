@@ -405,6 +405,12 @@ class TautulliImporterService(
                         audioCodec = raw.audioCodec ?: raw.streamAudioCodec,
                         videoResolution = raw.videoResolution ?: raw.streamVideoResolution,
                         bandwidthKbps = raw.bandwidth ?: raw.bitrate,
+                        // Tautulli's stream_* columns describe what was sent to the player.
+                        transcodeVideoCodec = raw.streamVideoCodec?.takeIf { videoDecision == "transcode" },
+                        transcodeAudioCodec = raw.streamAudioCodec?.takeIf { audioDecision == "transcode" },
+                        container = raw.container,
+                        transcodeContainer = raw.streamContainer?.takeIf { streamDecision != "direct_play" },
+                        subtitleDecision = (raw.streamSubtitleDecision ?: raw.subtitleDecision)?.lowercase(),
                     ),
                 player =
                     PlayerRecord(

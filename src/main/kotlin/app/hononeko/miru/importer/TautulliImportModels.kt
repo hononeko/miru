@@ -73,6 +73,10 @@ internal data class TautulliHistoryRow(
     val streamVideoResolution: String?,
     val streamVideoCodec: String?,
     val streamAudioCodec: String?,
+    val container: String? = null,
+    val streamContainer: String? = null,
+    val subtitleDecision: String? = null,
+    val streamSubtitleDecision: String? = null,
     val bandwidth: Int?,
     val bitrate: Int?,
 )

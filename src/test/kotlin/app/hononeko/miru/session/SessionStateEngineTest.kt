@@ -887,6 +887,7 @@ class SessionStateEngineTest :
                                         transcodeAudioCodec = "aac",
                                         container = "mkv",
                                         transcodeContainer = "mp4",
+                                        subtitleDecision = "burn",
                                         transcodeProgress = 42.5,
                                         transcodeSpeed = 0.8,
                                     ),
@@ -901,6 +902,13 @@ class SessionStateEngineTest :
                     afterStart.transcodeSpeed shouldBe 0.8
                     afterStart.container shouldBe "mkv"
                     afterStart.transcodeContainer shouldBe "mp4"
+                    // The persisted session keeps what the transcode changed, not just the live overlay.
+                    env.sessions
+                        .findByKey(key)
+                        .shouldBeRight()
+                        .shouldNotBeNull()
+                        .streamTech
+                        .subtitleDecision shouldBe "burn"
 
                     val updatedSnapshot =
                         initialSnapshot.copy(
@@ -919,6 +927,19 @@ class SessionStateEngineTest :
                             ReconcileTrigger.NOTIFICATION,
                         ).shouldBeRight()
                     engine.currentLiveTechnical()[key].shouldBeNull()
+
+                    val recorded =
+                        env.history
+                            .query(HistoryFilter(serverId = DEFAULT_SERVER_ID))
+                            .shouldBeRight()
+                            .items
+                            .single()
+                            .streamTech
+                    recorded.transcodeVideoCodec shouldBe "h264"
+                    recorded.transcodeAudioCodec shouldBe "aac"
+                    recorded.container shouldBe "mkv"
+                    recorded.transcodeContainer shouldBe "mp4"
+                    recorded.subtitleDecision shouldBe "burn"
                 }
             }
         }

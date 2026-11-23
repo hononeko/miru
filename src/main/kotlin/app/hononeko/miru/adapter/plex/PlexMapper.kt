@@ -483,12 +483,20 @@ private fun mapStreamTechnicalInfo(
         videoDecision = videoDecision,
         audioDecision = audioDecision,
         isHwTranscode = isHwTranscode,
-        videoCodec = selectedMedia?.videoCodec?.takeIf { it.isNotBlank() } ?: videoStream?.codec?.takeIf { it.isNotBlank() },
+        // The transcode session names the source codecs explicitly; prefer them when the server reports them.
+        videoCodec =
+            ts?.sourceVideoCodec?.takeIf { it.isNotBlank() }
+                ?: selectedMedia?.videoCodec?.takeIf { it.isNotBlank() }
+                ?: videoStream?.codec?.takeIf { it.isNotBlank() },
         transcodeVideoCodec = ts?.videoCodec?.takeIf { it.isNotBlank() },
-        audioCodec = selectedMedia?.audioCodec?.takeIf { it.isNotBlank() } ?: audioStream?.codec?.takeIf { it.isNotBlank() },
+        audioCodec =
+            ts?.sourceAudioCodec?.takeIf { it.isNotBlank() }
+                ?: selectedMedia?.audioCodec?.takeIf { it.isNotBlank() }
+                ?: audioStream?.codec?.takeIf { it.isNotBlank() },
         transcodeAudioCodec = ts?.audioCodec?.takeIf { it.isNotBlank() },
         container = selectedMedia?.container?.takeIf { it.isNotBlank() } ?: selectedPart?.container?.takeIf { it.isNotBlank() },
         transcodeContainer = ts?.container?.takeIf { it.isNotBlank() },
+        subtitleDecision = ts?.subtitleDecision?.trim()?.lowercase()?.takeIf { it.isNotEmpty() },
         videoResolution = resolution,
         bitrateKbps = metadata.session?.bandwidth ?: selectedMedia?.bitrate ?: videoStream?.bitrate,
         transcodeProgress = ts?.progress,

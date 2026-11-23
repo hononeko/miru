@@ -245,6 +245,8 @@ internal object PlexFixtures {
                   "location": "wan"
                 },
                 "TranscodeSession": {
+                  "sourceVideoCodec": "hevc",
+                  "sourceAudioCodec": "truehd",
                   "videoDecision": "transcode",
                   "audioDecision": "transcode",
                   "container": "mkv",

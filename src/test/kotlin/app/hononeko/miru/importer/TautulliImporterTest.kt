@@ -143,7 +143,10 @@ private fun createRichTautulliSchema(stmt: java.sql.Statement) {
             stream_video_codec TEXT,
             stream_audio_codec TEXT,
             bandwidth INTEGER,
-            bitrate INTEGER
+            bitrate INTEGER,
+            container TEXT,
+            stream_container TEXT,
+            stream_subtitle_decision TEXT
         )
         """.trimIndent(),
     )
@@ -217,19 +220,23 @@ private fun seedRichTautulliData(stmt: java.sql.Statement) {
 
     stmt.executeUpdate(
         "INSERT INTO session_history_media_info VALUES " +
-            "(1, 'direct play', 'direct play', 'direct play', 0, 0, 'h264', 'aac', '1080', NULL, NULL, NULL, 8000, 7500)",
+            "(1, 'direct play', 'direct play', 'direct play', 0, 0, 'h264', 'aac', '1080', NULL, NULL, NULL, 8000, 7500, " +
+            "'mp4', 'mp4', NULL)",
     )
     stmt.executeUpdate(
         "INSERT INTO session_history_media_info VALUES " +
-            "(2, 'transcode', 'transcode', 'copy', 1, 0, 'hevc', 'aac', '4k', '1080', 'h264', 'aac', 12000, 10000)",
+            "(2, 'transcode', 'transcode', 'copy', 1, 0, 'hevc', 'aac', '4k', '1080', 'h264', 'aac', 12000, 10000, " +
+            "'mkv', 'mpegts', 'Burn')",
     )
     stmt.executeUpdate(
         "INSERT INTO session_history_media_info VALUES " +
-            "(3, 'copy', 'copy', 'copy', 0, 0, 'h264', 'ac3', '1080', NULL, NULL, NULL, NULL, 6000)",
+            "(3, 'copy', 'copy', 'copy', 0, 0, 'h264', 'ac3', '1080', NULL, NULL, NULL, NULL, 6000, " +
+            "'mkv', 'mp4', NULL)",
     )
     stmt.executeUpdate(
         "INSERT INTO session_history_media_info VALUES " +
-            "(4, 'direct play', NULL, NULL, 0, 0, 'h264', 'dts', '1080', NULL, NULL, NULL, 5000, NULL)",
+            "(4, 'direct play', NULL, NULL, 0, 0, 'h264', 'dts', '1080', NULL, NULL, NULL, 5000, NULL, " +
+            "'mkv', 'mkv', NULL)",
     )
 }
 
@@ -316,12 +323,21 @@ class TautulliImporterTest :
                 grouped.streamTech.streamDecision shouldBe "transcode"
                 grouped.streamTech.hwTranscode shouldBe true
                 grouped.streamTech.bandwidthKbps shouldBe 12_000
+                // Only the transcoded video stream gets a target codec; audio was copied.
+                grouped.streamTech.transcodeVideoCodec shouldBe "h264"
+                grouped.streamTech.transcodeAudioCodec shouldBe null
+                grouped.streamTech.container shouldBe "mkv"
+                grouped.streamTech.transcodeContainer shouldBe "mpegts"
+                grouped.streamTech.subtitleDecision shouldBe "burn"
                 grouped.player.location shouldBe "lan"
                 grouped.media.thumbPath shouldBe "/thumb/ep1-v2"
 
                 val directStream = historyPage.items.first { it.externalImportKey == "tautulli:3" }
                 directStream.streamTech.streamDecision shouldBe "direct_stream"
                 directStream.streamTech.bandwidthKbps shouldBe 6_000
+                directStream.streamTech.container shouldBe "mkv"
+                directStream.streamTech.transcodeContainer shouldBe "mp4"
+                directStream.streamTech.transcodeVideoCodec shouldBe null
                 directStream.player.location shouldBe "wan"
                 directStream.isWatched shouldBe true
 
@@ -537,11 +553,13 @@ class TautulliImporterTest :
                         )
                         stmt.executeUpdate(
                             "INSERT INTO session_history_media_info VALUES " +
-                                "(1, 'direct play', NULL, NULL, 0, 0, 'h264', 'aac', '1080', NULL, NULL, NULL, 8000, 8000)",
+                                "(1, 'direct play', NULL, NULL, 0, 0, 'h264', 'aac', '1080', NULL, NULL, NULL, 8000, 8000, " +
+                                "NULL, NULL, NULL)",
                         )
                         stmt.executeUpdate(
                             "INSERT INTO session_history_media_info VALUES " +
-                                "(2, 'direct play', NULL, NULL, 0, 0, 'h264', 'aac', '1080', NULL, NULL, NULL, 8000, 8000)",
+                                "(2, 'direct play', NULL, NULL, 0, 0, 'h264', 'aac', '1080', NULL, NULL, NULL, 8000, 8000, " +
+                                "NULL, NULL, NULL)",
                         )
                     }
                 }

@@ -54,6 +54,16 @@ data class StreamTechRecord(
     val audioCodec: String? = null,
     val videoResolution: String? = null,
     val bandwidthKbps: Int? = null,
+    /** Video codec the server transcoded to; null when video was not transcoded or not reported. */
+    val transcodeVideoCodec: String? = null,
+    /** Audio codec the server transcoded to; null when audio was not transcoded or not reported. */
+    val transcodeAudioCodec: String? = null,
+    /** Source file container. */
+    val container: String? = null,
+    /** Container the server streamed in when it remuxed or transcoded. */
+    val transcodeContainer: String? = null,
+    /** Subtitle handling reported by the server (`burn`, `copy`, `transcode`). */
+    val subtitleDecision: String? = null,
 )
 
 data class PlayerRecord(
@@ -202,6 +212,11 @@ data class PlaybackHistoryStatsRow(
     val videoResolution: String? = null,
     val playerName: String? = null,
     val startedAtMs: Long = 0L,
+    val transcodeVideoCodec: String? = null,
+    val transcodeAudioCodec: String? = null,
+    val container: String? = null,
+    val transcodeContainer: String? = null,
+    val subtitleDecision: String? = null,
 )
 
 enum class StaleMediaSort {

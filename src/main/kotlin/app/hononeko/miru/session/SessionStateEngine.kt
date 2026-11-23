@@ -617,6 +617,11 @@ class SessionStateEngine(
             audioCodec = audioCodec,
             videoResolution = videoResolution,
             bandwidthKbps = bitrateKbps,
+            transcodeVideoCodec = transcodeVideoCodec,
+            transcodeAudioCodec = transcodeAudioCodec,
+            container = container,
+            transcodeContainer = transcodeContainer,
+            subtitleDecision = subtitleDecision,
         )
 
     private fun StreamPlayer.toPlayerRecord(): PlayerRecord =

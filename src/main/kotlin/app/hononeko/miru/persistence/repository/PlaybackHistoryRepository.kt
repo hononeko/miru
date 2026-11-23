@@ -197,6 +197,11 @@ class ExposedPlaybackHistoryRepository(
                 it[audioCodec] = record.streamTech.audioCodec
                 it[videoResolution] = record.streamTech.videoResolution
                 it[bandwidthKbps] = record.streamTech.bandwidthKbps
+                it[transcodeVideoCodec] = record.streamTech.transcodeVideoCodec
+                it[transcodeAudioCodec] = record.streamTech.transcodeAudioCodec
+                it[container] = record.streamTech.container
+                it[transcodeContainer] = record.streamTech.transcodeContainer
+                it[subtitleDecision] = record.streamTech.subtitleDecision
                 it[playerName] = record.player.playerName
                 it[playerPlatform] = record.player.playerPlatform
                 it[playerProduct] = record.player.playerProduct
@@ -308,6 +313,11 @@ class ExposedPlaybackHistoryRepository(
                     PlaybackHistoryTable.videoResolution,
                     PlaybackHistoryTable.playerName,
                     PlaybackHistoryTable.startedAtMs,
+                    PlaybackHistoryTable.transcodeVideoCodec,
+                    PlaybackHistoryTable.transcodeAudioCodec,
+                    PlaybackHistoryTable.container,
+                    PlaybackHistoryTable.transcodeContainer,
+                    PlaybackHistoryTable.subtitleDecision,
                 ).where { condition }
                 .orderBy(PlaybackHistoryTable.stoppedAtMs to SortOrder.ASC, PlaybackHistoryTable.id to SortOrder.ASC)
                 .map { it.toPlaybackHistoryStatsRow() }
@@ -545,6 +555,11 @@ class ExposedPlaybackHistoryRepository(
         stmt[PlaybackHistoryTable.audioCodec] = record.streamTech.audioCodec
         stmt[PlaybackHistoryTable.videoResolution] = record.streamTech.videoResolution
         stmt[PlaybackHistoryTable.bandwidthKbps] = record.streamTech.bandwidthKbps
+        stmt[PlaybackHistoryTable.transcodeVideoCodec] = record.streamTech.transcodeVideoCodec
+        stmt[PlaybackHistoryTable.transcodeAudioCodec] = record.streamTech.transcodeAudioCodec
+        stmt[PlaybackHistoryTable.container] = record.streamTech.container
+        stmt[PlaybackHistoryTable.transcodeContainer] = record.streamTech.transcodeContainer
+        stmt[PlaybackHistoryTable.subtitleDecision] = record.streamTech.subtitleDecision
         stmt[PlaybackHistoryTable.playerName] = record.player.playerName
         stmt[PlaybackHistoryTable.playerPlatform] = record.player.playerPlatform
         stmt[PlaybackHistoryTable.playerProduct] = record.player.playerProduct

@@ -113,6 +113,7 @@ fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
         userPreferencesTests { ctx }
         historyAndStatsServiceTests { ctx }
         advancedAnalyticsServiceTests { ctx }
+        streamConversionTests { ctx }
         tautulliBatchAndImporterTests { ctx }
         userLibraryAccessTests { ctx }
     }
@@ -1445,6 +1446,97 @@ private fun FunSpecRootScope.historyAndStatsServiceTests(ctxProvider: () -> Cont
             aliceStats.mostRewatched.shouldBeEmpty()
             aliceStats.topPlatforms.map { it.platform } shouldContainExactly listOf("Apple TV", "Web")
             aliceStats.libraryBreakdown.map { it.librarySectionKey } shouldContainExactly listOf("sec-movies", "sec-tv")
+        }
+    }
+}
+
+private fun FunSpecRootScope.streamConversionTests(ctxProvider: () -> ContractContext) {
+    context("Stream conversion details") {
+        test("persists conversion details on active sessions and history and names what each session changed") {
+            val ctx = ctxProvider()
+            val nowMs = Instant.parse("2026-04-10T12:00:00Z").toEpochMilli()
+            val admin = MiruPrincipal(accountId = "acc-admin", username = "admin", role = MiruRole.ADMIN)
+            val service = HistoryAndStatsService(playbackHistoryRepository = ctx.history, userRepository = ctx.users, clock = { nowMs })
+            ctx.servers.upsert(sampleServer(id = "srv-1")).shouldBeRight()
+            ctx.users.upsert(sampleUser(id = "u-1", serverId = "srv-1", externalUserId = "1", username = "alice")).shouldBeRight()
+
+            val fullTranscode =
+                StreamTechRecord(
+                    streamDecision = "transcode",
+                    videoDecision = "transcode",
+                    audioDecision = "transcode",
+                    videoCodec = "hevc",
+                    transcodeVideoCodec = "h264",
+                    audioCodec = "truehd",
+                    transcodeAudioCodec = "aac",
+                    container = "mkv",
+                    transcodeContainer = "mpegts",
+                    subtitleDecision = "burn",
+                )
+
+            val session = sampleSession(serverId = "srv-1", sessionKey = "k-1", ratingKey = "rk-1", userId = "u-1")
+            ctx.sessions.upsert(session.copy(streamTech = fullTranscode)).shouldBeRight()
+            ctx.sessions
+                .findByKey(ActiveSessionKey("srv-1", "k-1", "rk-1"))
+                .shouldBeRight()
+                .shouldNotBeNull()
+                .streamTech shouldBe fullTranscode
+
+            val stoppedAt = Instant.parse("2026-04-09T22:00:00Z").toEpochMilli()
+            fun play(
+                id: String,
+                streamTech: StreamTechRecord,
+            ) = sampleHistory(id = id, userId = "u-1", ratingKey = "rk-$id", stoppedAtMs = stoppedAt).copy(streamTech = streamTech)
+
+            listOf(
+                play("full", fullTranscode),
+                play(
+                    "same-codec",
+                    StreamTechRecord(
+                        streamDecision = "transcode",
+                        videoDecision = "transcode",
+                        audioDecision = "copy",
+                        videoCodec = "avc",
+                        transcodeVideoCodec = "h264",
+                    ),
+                ),
+                play(
+                    "unknown-source",
+                    StreamTechRecord(streamDecision = "transcode", videoDecision = "transcode", transcodeVideoCodec = "hevc"),
+                ),
+                play(
+                    "remux",
+                    StreamTechRecord(
+                        streamDecision = "direct_stream",
+                        videoDecision = "copy",
+                        audioDecision = "copy",
+                        container = "mkv",
+                        transcodeContainer = "mp4",
+                    ),
+                ),
+                play("remux-unknown", StreamTechRecord(streamDecision = "direct_stream", videoDecision = "copy")),
+                play("legacy-video", StreamTechRecord(streamDecision = "transcode", videoDecision = "transcode", videoCodec = "hevc")),
+                play("legacy-stream", StreamTechRecord(streamDecision = "transcode")),
+                play("direct", StreamTechRecord(streamDecision = "direct_play", subtitleDecision = "burn")),
+            ).forEach { ctx.history.insert(it).shouldBeRight() }
+
+            ctx.history.findById("full").shouldBeRight().shouldNotBeNull().streamTech shouldBe fullTranscode
+
+            val clients = service.getClientStats(admin, "30d").shouldBeRight()
+            clients.transcodeOrRemuxPlays shouldBe 7L
+            clients.transcodeReasons.associate { it.name to it.playCount } shouldBe
+                mapOf(
+                    "Subtitle Burn-in" to 1L,
+                    "Video HEVC → H.264" to 1L,
+                    "Audio TRUEHD → AAC" to 1L,
+                    "Video Re-encode (H.264)" to 1L,
+                    "Video → HEVC" to 1L,
+                    "Container MKV → MP4" to 1L,
+                    "Container Remux" to 1L,
+                    "Video Transcode" to 2L,
+                )
+            // Shares are of the 7 non-Direct-Play sessions; one session can count toward several changes.
+            clients.transcodeReasons.single { it.name == "Video Transcode" }.percent shouldBe 28.57
         }
     }
 }

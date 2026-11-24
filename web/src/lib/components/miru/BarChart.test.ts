@@ -92,7 +92,9 @@ describe('BarChart', () => {
 		});
 	});
 
-	it('draws negative values below a shared baseline on the same scale and keeps positive-only charts full height', () => {
+	it('draws negative values below a shared baseline on the same scale and keeps positive-only charts full height', async () => {
+		const outlines = (root: Element) =>
+			Array.from(root.querySelectorAll<HTMLElement>('[data-testid="bar-outline"]'), (el) => [el.style.top, el.style.bottom]);
 		const { container, unmount } = render(BarChart, {
 			props: {
 				points: [
@@ -114,8 +116,8 @@ describe('BarChart', () => {
 			}
 		});
 
-		const added = container.querySelectorAll<HTMLElement>('.rounded-t-sm');
-		const removed = container.querySelectorAll<HTMLElement>('.rounded-b-sm');
+		const added = container.querySelectorAll<HTMLElement>('.rounded-t-sm:not([data-testid])');
+		const removed = container.querySelectorAll<HTMLElement>('.rounded-b-sm:not([data-testid])');
 		// The day without additions has no bar above the baseline
 		expect(added).toHaveLength(1);
 		expect(added[0].style.bottom).toBe('40%');
@@ -124,11 +126,19 @@ describe('BarChart', () => {
 			['60%', '20%'],
 			['60%', '40%']
 		]);
+		// Each day has one outline, around all of its bars
+		expect(outlines(container)).toEqual([
+			['0%', '20%'],
+			['60%', '0%']
+		]);
+		await fireEvent.click(screen.getByRole('button', { name: '20: 30' }));
+		expect(container.querySelectorAll('.ring-2')).toHaveLength(1);
 		unmount();
 
 		const plain = render(BarChart, { props: { points: [{ id: 'a', label: '20', value: 5 }] } });
 		const bar = plain.container.querySelector<HTMLElement>('.rounded-t-sm')!;
 		expect([bar.style.bottom, bar.style.height]).toEqual(['0%', '100%']);
+		expect(outlines(plain.container)).toEqual([['0%', '0%']]);
 		expect(plain.container.querySelector('.rounded-b-sm')).toBeNull();
 	});
 });

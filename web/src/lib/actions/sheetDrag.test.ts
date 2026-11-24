@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sheetDrag, shouldDismissSheetDrag } from './sheetDrag';
 
-function createSheetDom(scrollTop = 0) {
-	const sheet = document.createElement('div');
+function createSheetDom(scrollTop = 0, tagName: 'div' | 'dialog' = 'div') {
+	const sheet = document.createElement(tagName);
 	Object.defineProperty(sheet, 'offsetHeight', { configurable: true, value: 480 });
 	sheet.getBoundingClientRect = () =>
 		({
@@ -138,6 +138,27 @@ describe('sheetDrag action', () => {
 		dispatchTouch(body, 'touchmove', 150, 340);
 		expect(sheet.style.transform).toBe('translateY(140px)');
 		dispatchTouch(body, 'touchend', 150, 340);
+		expect(onDismiss).toHaveBeenCalledTimes(1);
+
+		action.destroy();
+	});
+
+	it('ignores drags on the backdrop of a native dialog, which target the dialog itself', () => {
+		const onDismiss = vi.fn();
+		const { sheet } = createSheetDom(0, 'dialog');
+		const action = sheetDrag(sheet, { onDismiss });
+
+		dispatchTouch(sheet, 'touchstart', 150, 40);
+		dispatchTouch(sheet, 'touchmove', 150, 300);
+		expect(sheet.style.transform).toBe('');
+		dispatchTouch(sheet, 'touchend', 150, 300);
+		expect(onDismiss).not.toHaveBeenCalled();
+
+		// The dialog's own padding still drags
+		dispatchTouch(sheet, 'touchstart', 150, 120);
+		dispatchTouch(sheet, 'touchmove', 150, 300);
+		expect(sheet.style.transform).toBe('translateY(180px)');
+		dispatchTouch(sheet, 'touchend', 150, 300);
 		expect(onDismiss).toHaveBeenCalledTimes(1);
 
 		action.destroy();

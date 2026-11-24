@@ -75,6 +75,21 @@ async function openMediaDetailsFromSheet(page: Page): Promise<Locator> {
 	return dialog;
 }
 
+/** Swipes with one finger. Playwright has no touch drag, and CDP's synthesized scroll gesture sends wheel events. */
+async function swipe(page: Page, from: { x: number; y: number }, distanceY: number) {
+	const cdp = await page.context().newCDPSession(page);
+	await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [from] });
+	const steps = 20;
+	for (let step = 1; step <= steps; step++) {
+		const point = { x: from.x, y: from.y + (distanceY * step) / steps };
+		await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [point] });
+		await page.waitForTimeout(10);
+	}
+	await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+	await cdp.detach();
+	await page.waitForTimeout(400);
+}
+
 /** Counts pointer presses and clicks that land on the page behind the modal. */
 async function recordBackgroundClicks(page: Page) {
 	await page.evaluate(() => {
@@ -179,7 +194,7 @@ test.describe('Modals block the page behind them', () => {
 				});
 
 				test(`${modal.name}: the page behind does not scroll`, async ({ page, browserName }) => {
-					test.skip(device.hasTouch && browserName !== 'chromium', 'Touch scrolling is synthesized over CDP');
+					test.skip(device.hasTouch && browserName !== 'chromium', 'Touch input is sent over CDP');
 					await openHistory(page);
 
 					const widthBefore = await page.evaluate(() => document.querySelector('main')!.getBoundingClientRect().width);
@@ -191,8 +206,10 @@ test.describe('Modals block the page behind them', () => {
 					await expect(page.locator('body')).toHaveCSS('overflow-y', 'hidden');
 
 					if (device.hasTouch) {
-						const cdp = await page.context().newCDPSession(page);
-						await cdp.send('Input.synthesizeScrollGesture', { ...point, yDistance: -400, speed: 2000 });
+						const box = (await dialog.boundingBox())!;
+						await swipe(page, { x: point.x, y: point.y }, -Math.min(60, point.y - 4));
+						await swipe(page, { x: box.x + box.width / 2, y: box.y + box.height * 0.8 }, -box.height * 0.6);
+						await swipe(page, { x: box.x + box.width / 2, y: box.y + box.height * 0.8 }, -box.height * 0.6);
 					} else {
 						await page.mouse.move(point.x, point.y);
 						await page.mouse.wheel(0, 600);
@@ -280,6 +297,21 @@ test.describe('Modals block the page behind them', () => {
 				await expect(dialog).not.toBeVisible();
 			});
 
+			test('swiping down on the backdrop does not move or close the dialog', async ({ page, browserName }) => {
+				test.skip(!device.hasTouch || browserName !== 'chromium', 'Touch input is sent over CDP');
+				await openHistory(page);
+
+				for (const modal of MODALS.slice(0, 2)) {
+					const dialog = await modal.open(page);
+					const box = (await dialog.boundingBox())!;
+					const point = await backdropPoint(page, dialog);
+					await swipe(page, { x: point.x, y: Math.min(20, point.y) }, 500);
+					await expect(dialog).toBeVisible();
+					expect(await dialog.boundingBox()).toEqual(box);
+					await page.keyboard.press('Escape');
+					await expect(dialog).not.toBeVisible();
+				}
+			});
 		});
 	}
 });

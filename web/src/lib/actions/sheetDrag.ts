@@ -54,6 +54,13 @@ function areScrollContainersAtTop(target: EventTarget | null, boundary: HTMLElem
 	return boundary.scrollTop <= 0;
 }
 
+/** A native dialog is itself the target of touches on its ::backdrop, which lies outside its box. */
+function isOnBackdrop(touch: Touch, target: EventTarget | null, node: HTMLElement): boolean {
+	if (!(node instanceof HTMLDialogElement) || target !== node) return false;
+	const r = node.getBoundingClientRect();
+	return touch.clientX < r.left || touch.clientX > r.right || touch.clientY < r.top || touch.clientY > r.bottom;
+}
+
 export function sheetDrag(node: HTMLElement, initialOptions: SheetDragOptions) {
 	let currentOptions = initialOptions;
 	let tracking = false;
@@ -188,13 +195,15 @@ export function sheetDrag(node: HTMLElement, initialOptions: SheetDragOptions) {
 		const maxWidth = currentOptions.maxViewportWidthPx ?? DEFAULT_MAX_VIEWPORT_WIDTH_PX;
 		if (!isMobileViewport(maxWidth)) return;
 
+		const touch = e.touches[0];
+		if (isOnBackdrop(touch, e.target, node)) return;
+
 		const onHandle = e.target instanceof Element && Boolean(e.target.closest('[data-sheet-drag-handle]'));
 		if (!onHandle) {
 			if (isInteractiveControl(e.target)) return;
 			if (!areScrollContainersAtTop(e.target, node)) return;
 		}
 
-		const touch = e.touches[0];
 		beginTracking(touch.clientX, touch.clientY, e.target, null);
 	}
 

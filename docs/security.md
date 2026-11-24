@@ -3,7 +3,7 @@
 This document captures Miru's security architecture, threat model, and source-verified controls across the backend, frontend, container build, Kubernetes examples, and CI/CD workflows.
 
 > [!NOTE]
-> Every control below is verified directly against the repository source code. All six hardening follow-ups identified in the initial audit (**MRU-31**–**MRU-36**) have been implemented and merged (PRs [#52](https://github.com/hononeko/miru/pull/52)–[#57](https://github.com/hononeko/miru/pull/57)).
+> Every control below is verified directly against the repository source code.
 
 ---
 
@@ -96,18 +96,3 @@ Miru isolates untrusted browser/API clients from the Plex Media Server, database
   - **SAST**: [`codeql.yml`](../.github/workflows/codeql.yml) runs GitHub CodeQL `security-extended` across `actions`, `java-kotlin`, and `javascript-typescript`.
   - **Testing & coverage**: Unit tests, Kover (≥ 80% changed-line coverage on backend source changes), PostgreSQL Testcontainers integration tests, and Playwright Chromium E2E tests gate image publishing.
   - **Image provenance**: Multi-arch (`amd64` / `arm64`) images are built and pushed by digest to GHCR with GitHub Artifact Attestations (`attest: "true"`).
-
----
-
-## 6. Completed Audit Hardening (MRU-31 – MRU-36)
-
-All six hardening items surfaced during the initial audit have been resolved:
-
-| Ticket | Severity | Resolution | PR |
-| :--- | :--- | :--- | :---: |
-| **MRU-31** | Medium | Added global HTTP security headers (`nosniff`, `DENY`, `Referrer-Policy`, `Permissions-Policy`) and strict API/SPA CSP with startup SHA-256 script hashes and externalized `/theme-init.js` | [#52](https://github.com/hononeko/miru/pull/52) |
-| **MRU-32** | Medium | Added proxy-aware `Secure` flag (`AUTH_COOKIE_SECURE=auto\|true\|false`, honoring TLS, `X-Forwarded-Proto`, and `Forwarded: proto=https`) across session and OIDC cookies | [#53](https://github.com/hononeko/miru/pull/53) |
-| **MRU-33** | Medium | Added bounded-memory per-IP and per-account rate limiting (`AuthRateLimiter`, `429` + `Retry-After`) with anti-spoofing proxy IP resolution and Argon2id `Semaphore(4)` concurrency cap | [#54](https://github.com/hononeko/miru/pull/54) |
-| **MRU-34** | Medium | Enforced fail-closed Plex library-section RBAC (`MediaSectionAccessChecker`) on media metadata (`GET /api/v1/media/{ratingKey}`) and artwork endpoints | [#55](https://github.com/hononeko/miru/pull/55) |
-| **MRU-35** | Low | Added DNS A/AAAA public-IP validation (`IpAddressSafety`) and socket-pinned HTTPS fetching with TLS SNI & hostname verification (`PinnedHttpsAvatarFetcher`) to stop DNS-rebinding SSRF | [#56](https://github.com/hononeko/miru/pull/56) |
-| **MRU-36** | Low | Migrated runtime to digest-pinned Distroless `base-nossl-debian13:nonroot` + 14-module `jlink` JRE with pre-extracted `libsqlitejdbc.so` (`noexec` `/tmp`), Jackson BOM `3.1.8`, and blocking Trivy `CRITICAL,HIGH` CVE gate | [#57](https://github.com/hononeko/miru/pull/57) |

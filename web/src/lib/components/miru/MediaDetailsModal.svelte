@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import {
 		Film,
 		Tv,
@@ -17,6 +16,7 @@
 	import Badge from '$components/ui/Badge.svelte';
 	import Button from '$components/ui/Button.svelte';
 	import ProxiedImage from './ProxiedImage.svelte';
+	import { modalDialog } from '$lib/actions/modalDialog';
 	import { sheetDrag } from '$lib/actions/sheetDrag';
 	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
 	import {
@@ -49,39 +49,6 @@
 	$effect(() => {
 		void data;
 		failedBackdrops = [];
-	});
-
-	onMount(() => {
-		const el = dialogEl;
-		if (!el || 'closedBy' in HTMLDialogElement.prototype) return;
-
-		const isOutside = (e: PointerEvent) => {
-			const rect = el.getBoundingClientRect();
-			return (
-				e.clientX < rect.left ||
-				e.clientX > rect.right ||
-				e.clientY < rect.top ||
-				e.clientY > rect.bottom
-			);
-		};
-
-		let pressedOutside = false;
-		const onPointerDown = (e: PointerEvent) => {
-			pressedOutside = isOutside(e);
-		};
-		const onPointerUp = (e: PointerEvent) => {
-			if (pressedOutside && isOutside(e)) {
-				el.close();
-			}
-			pressedOutside = false;
-		};
-
-		el.addEventListener('pointerdown', onPointerDown);
-		el.addEventListener('pointerup', onPointerUp);
-		return () => {
-			el.removeEventListener('pointerdown', onPointerDown);
-			el.removeEventListener('pointerup', onPointerUp);
-		};
 	});
 
 	function handleNativeClose() {
@@ -189,8 +156,8 @@
 	bind:this={dialogEl}
 	aria-labelledby={titleId}
 	onclose={handleNativeClose}
+	use:modalDialog
 	use:sheetDrag={{ onDismiss: () => mediaDetailsModal.close() }}
-	{...({ closedby: 'any' } as Record<string, string>)}
 	class="media-details-dialog fixed inset-x-0 bottom-0 top-auto z-50 m-0 max-h-[90dvh] w-full max-w-none overflow-hidden rounded-t-2xl border-t border-border-strong bg-surface text-fg-primary shadow-2xl focus:outline-none md:inset-0 md:m-auto md:max-h-[88dvh] md:w-[calc(100%-2rem)] md:max-w-3xl md:rounded-2xl md:border"
 >
 	{#if mediaDetailsModal.loading}
@@ -248,7 +215,7 @@
 	{:else if data}
 		<!-- Scrollable body: flex-auto, not flex-1, because WebKit before 26.4 resolves a 0% basis to 0px in an
 		auto-height dialog and collapses the modal -->
-		<div data-modal-body class="min-h-0 flex-auto overflow-y-auto">
+		<div data-modal-body class="min-h-0 flex-auto overflow-y-auto overscroll-contain">
 			<!-- Hero Banner -->
 			<div class="relative overflow-hidden border-b border-border bg-elevated">
 				<!-- Mobile drag indicator sits inside the hero so art reaches the top edge without floating over scrolled content -->

@@ -7,6 +7,7 @@
 	import { authStore } from '$stores/auth.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
 	import { themeStore } from '$stores/theme.svelte';
+	import { modalDialog } from '$lib/actions/modalDialog';
 	import { sheetDrag } from '$lib/actions/sheetDrag';
 	import type {
 		AnalyticsMetricPreference,
@@ -36,7 +37,6 @@
 	let passwordError = $state<string | null>(null);
 	let passwordSuccess = $state<string | null>(null);
 	let savedOnClose = false;
-	let pressedOutside = false;
 
 	const canChangePassword = $derived(
 		authStore.authMode !== 'none' &&
@@ -129,24 +129,6 @@
 		preferencesStore.closeModal();
 	}
 
-	function isOutsideDialog(e: PointerEvent, dialog: HTMLDialogElement): boolean {
-		const r = dialog.getBoundingClientRect();
-		return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
-	}
-
-	function handlePointerDown(e: PointerEvent) {
-		if (!dialogEl || 'closedBy' in HTMLDialogElement.prototype) return;
-		pressedOutside = isOutsideDialog(e, dialogEl);
-	}
-
-	function handlePointerUp(e: PointerEvent) {
-		if (!dialogEl || 'closedBy' in HTMLDialogElement.prototype) return;
-		if (pressedOutside && isOutsideDialog(e, dialogEl)) {
-			dialogEl.close();
-		}
-		pressedOutside = false;
-	}
-
 	async function handleSave(e: SubmitEvent) {
 		e.preventDefault();
 		saveError = null;
@@ -211,11 +193,9 @@
 
 <dialog
 	bind:this={dialogEl}
-	closedby="any"
 	aria-labelledby="user-preferences-title"
 	onclose={handleDialogClose}
-	onpointerdown={handlePointerDown}
-	onpointerup={handlePointerUp}
+	use:modalDialog
 	use:sheetDrag={{ onDismiss: handleCancel }}
 	class="m-0 mt-auto w-full max-w-none rounded-t-2xl border-t border-border-strong bg-surface p-0 text-fg-primary shadow-2xl open:flex open:flex-col max-h-[90dvh] md:m-auto md:w-full md:max-w-lg md:rounded-2xl md:border"
 >
@@ -259,7 +239,7 @@
 	<!-- Preferences form: flex-auto, not flex-1, because WebKit before 26.4 resolves a 0% basis to 0px in an
 	auto-height dialog and collapses the modal -->
 	<form onsubmit={handleSave} class="flex min-h-0 flex-auto flex-col">
-		<div data-modal-body class="flex min-h-0 flex-col gap-5 overflow-y-auto px-5 py-4">
+		<div data-modal-body class="flex min-h-0 flex-col gap-5 overflow-y-auto overscroll-contain px-5 py-4">
 			{#if saveError}
 				<div class="rounded-xl border border-danger/50 bg-danger-soft px-3.5 py-2.5 text-xs text-danger">
 					{saveError}

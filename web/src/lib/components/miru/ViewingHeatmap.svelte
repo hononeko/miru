@@ -26,9 +26,12 @@
 
 	const HOUR_TICKS = [0, 3, 6, 9, 12, 15, 18, 21];
 
+	// The focused or pressed cell keeps the selection and the tab stop; hovering only previews another one.
 	let activeCell = $state<HeatmapCellDto | null>(null);
+	let hoveredCell = $state<HeatmapCellDto | null>(null);
 	let gridEl: HTMLDivElement | undefined = $state();
 
+	const shownCell = $derived(hoveredCell ?? activeCell);
 	const dateFormat = $derived(preferencesStore.prefs.dateFormat);
 
 	// Newest day first, so today stays next to the hour axis
@@ -46,7 +49,17 @@
 	$effect(() => {
 		void heatmap;
 		activeCell = null;
+		hoveredCell = null;
 	});
+
+	function isSameCell(a: HeatmapCellDto | null, b: HeatmapCellDto): boolean {
+		return a?.date === b.date && a.hour === b.hour;
+	}
+
+	function selectCell(cell: HeatmapCellDto) {
+		activeCell = cell;
+		hoveredCell = null;
+	}
 
 	const ARROW_STEPS: Record<string, { row: number; hour: number }> = {
 		ArrowUp: { row: -1, hour: 0 },
@@ -143,7 +156,13 @@
 			{loading ? 'Loading heatmap…' : 'No heatmap data available'}
 		</div>
 	{:else}
-		<div bind:this={gridEl} class={cn('flex flex-col', compact ? 'gap-[2px]' : 'gap-1')}>
+		<div
+			bind:this={gridEl}
+			onmouseleave={() => (hoveredCell = null)}
+			role="group"
+			aria-label="Plays by day and hour"
+			class={cn('flex flex-col', compact ? 'gap-[2px]' : 'gap-1')}
+		>
 			<!-- Hour axis labels -->
 			<div class="flex items-center gap-1.5">
 				<span class="w-16 shrink-0 font-mono text-[9px] text-fg-muted">UTC</span>
@@ -165,8 +184,8 @@
 					</span>
 					<div class="grid flex-1 grid-cols-24 gap-[2px] sm:gap-1">
 						{#each day.cells as cell (cell.hour)}
-							{@const isSelected = activeCell?.date === cell.date && activeCell?.hour === cell.hour}
-							{@const isTabStop = activeCell ? isSelected : row === 0 && cell.hour === 0}
+							{@const isShown = isSameCell(shownCell, cell)}
+							{@const isTabStop = activeCell ? isSameCell(activeCell, cell) : row === 0 && cell.hour === 0}
 							<button
 								type="button"
 								data-row={row}
@@ -174,15 +193,15 @@
 								tabindex={isTabStop ? 0 : -1}
 								aria-label={cellDescription(cell)}
 								title={cellDescription(cell)}
-								onmouseenter={() => (activeCell = cell)}
-								onfocus={() => (activeCell = cell)}
-								onclick={() => (activeCell = cell)}
+								onmouseenter={() => (hoveredCell = cell)}
+								onfocus={() => selectCell(cell)}
+								onclick={() => selectCell(cell)}
 								onkeydown={(e) => moveFocus(e, row, cell.hour)}
 								class={cn(
 									'w-full rounded-[3px] border transition-transform sm:rounded-xs cursor-pointer focus-visible:outline-1 focus-visible:outline-cyan',
 									compact ? 'h-3 sm:h-3.5' : 'h-4 sm:h-5',
 									cellIntensityClass(cell),
-									isSelected && 'ring-1 ring-fg-primary scale-105'
+									isShown && 'ring-1 ring-fg-primary scale-105'
 								)}
 							></button>
 						{/each}
@@ -195,12 +214,12 @@
 	<!-- Active cell tooltip readout + Intensity legend -->
 	<div class="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-elevated px-3 py-2 text-xs">
 		<div class="font-mono text-[11px] text-fg-primary tabular-nums" data-testid="heatmap-cell-readout">
-			{#if activeCell}
+			{#if shownCell}
 				<span class="font-semibold text-cyan-hi">
-					{activeCell.dayName} {formatCalendarDate(activeCell.date, dateFormat)} · {formatHourSlot(activeCell.hour)}
+					{shownCell.dayName} {formatCalendarDate(shownCell.date, dateFormat)} · {formatHourSlot(shownCell.hour)}
 				</span>
 				<span class="text-fg-secondary">
-					— {activeCell.playCount} {activeCell.playCount === 1 ? 'play' : 'plays'} · {formatDurationSec(activeCell.watchDurationSec)}
+					— {shownCell.playCount} {shownCell.playCount === 1 ? 'play' : 'plays'} · {formatDurationSec(shownCell.watchDurationSec)}
 				</span>
 			{:else if heatmap && heatmap.totalPlays > 0}
 				<span class="text-fg-secondary">

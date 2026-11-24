@@ -30,8 +30,10 @@ fun Route.libraryRoutes(
             registerLibraryReadRoutes(libraryQueryService)
         }
 
-        if (librarySyncTrigger != null) {
-            authenticated(authService = authService, authMode = authMode, requiredRole = MiruRole.ADMIN) {
+        authenticated(authService = authService, authMode = authMode, requiredRole = MiruRole.ADMIN) {
+            registerLibraryAdminRoutes(libraryQueryService)
+
+            if (librarySyncTrigger != null) {
                 post("/sync") {
                     val query = call.request.queryParameters
                     val result =
@@ -124,7 +126,9 @@ private fun Route.registerLibraryReadRoutes(libraryQueryService: LibraryQuerySer
             }
         call.respondEither(result)
     }
+}
 
+private fun Route.registerLibraryAdminRoutes(libraryQueryService: LibraryQueryService) {
     get("/{id}/stale") {
         val sectionId = call.parameters["id"].orEmpty()
         val query = call.request.queryParameters

@@ -29,7 +29,44 @@ RUN ./gradlew --no-daemon shadowJar \
     && mv build/libs/miru-all.jar /miru-all.jar \
     && rm -rf build /root/.gradle
 
-FROM eclipse-temurin:25.0.5_8-jre-noble
+# Pre-extract the target architecture's SQLite native library into a read-only directory and strip
+# unused cross-platform native libraries (other OS/arches + Netty HTTP/3 Quiche) from the container JAR.
+# This lets runtime containers mount /tmp with noexec,nosuid,nodev while shrinking the image.
+FROM --platform=$BUILDPLATFORM eclipse-temurin:25.0.5_8-jdk-noble AS app-prepare
+ARG TARGETARCH
+WORKDIR /work
+COPY --from=build /miru-all.jar /in/miru-all.jar
+RUN set -eu; \
+    case "${TARGETARCH}" in \
+        amd64) sqlite_arch="x86_64" ;; \
+        arm64) sqlite_arch="aarch64" ;; \
+        *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    mkdir -p /out/native; \
+    jar xf /in/miru-all.jar; \
+    grep -q "^Main-Class: app.hononeko.miru.ApplicationKt" META-INF/MANIFEST.MF; \
+    cp "org/sqlite/native/Linux/${sqlite_arch}/libsqlitejdbc.so" /out/native/libsqlitejdbc.so; \
+    chmod 0555 /out/native/libsqlitejdbc.so; \
+    rm -rf org/sqlite/native META-INF/native/libnetty_quiche42_* META-INF/native/netty_quiche42_*; \
+    mv META-INF/MANIFEST.MF /tmp/MANIFEST.MF; \
+    jar cfm /out/miru-all.jar /tmp/MANIFEST.MF .; \
+    chmod 0444 /out/miru-all.jar; \
+    rm -rf /work/* /in /tmp/MANIFEST.MF
+
+FROM eclipse-temurin:25.0.5_8-jdk-noble AS jre-build
+RUN jlink \
+    --add-modules java.base,java.logging,java.management,java.naming,java.net.http,java.security.jgss,java.security.sasl,java.sql,java.xml,jdk.charsets,jdk.crypto.ec,jdk.management,jdk.unsupported,jdk.zipfs \
+    --strip-debug \
+    --no-man-pages \
+    --no-header-files \
+    --compress=zip-6 \
+    --output /opt/jre \
+    && mkdir -p /data \
+    && chmod 0755 /data
+
+# Hardened shell-less, package-manager-less, OpenSSL-less Distroless glibc base (7 Debian 13 packages).
+# Pinned by multi-arch OCI index digest (amd64 + arm64).
+FROM gcr.io/distroless/base-nossl-debian13:nonroot@sha256:4006ac92504be607b70de01d1f64f38288c69fcd8faa820f6d3aed266ea32ac5
 ARG VERSION=dev
 LABEL org.opencontainers.image.title="miru" \
       org.opencontainers.image.description="Lightweight media server telemetry, live stream monitor, playback history tracker, and library stats engine" \
@@ -37,20 +74,22 @@ LABEL org.opencontainers.image.title="miru" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.version="${VERSION}"
 
-RUN groupadd --system --gid 10001 miru \
-    && useradd --system --uid 10001 --gid miru --no-create-home miru \
-    && mkdir -p /data /opt/miru/static \
-    && chown -R 10001:10001 /data /opt/miru
-
-COPY --from=build --chown=10001:10001 /miru-all.jar /opt/miru/miru-all.jar
-COPY --from=web-build --chown=10001:10001 /web/build /opt/miru/static
-
-ENV MIRU_JAVA_OPTS="-XX:MaxRAMPercentage=50.0 -XX:MinRAMPercentage=25.0 -XX:ReservedCodeCacheSize=64m -XX:MaxDirectMemorySize=64m -XX:+ExitOnOutOfMemoryError" \
+ENV JAVA_HOME=/opt/java/openjdk \
+    PATH="/opt/java/openjdk/bin:${PATH}" \
+    JDK_JAVA_OPTIONS="-XX:MaxRAMPercentage=50.0 -XX:MinRAMPercentage=25.0 -XX:ReservedCodeCacheSize=64m -XX:MaxDirectMemorySize=64m -XX:+ExitOnOutOfMemoryError" \
     SQLITE_PATH="/data/miru.db" \
     STATIC_WEB_DIR="/opt/miru/static"
+
+# App code, JRE, static assets, and native library are owned by root (read-only to UID 10001).
+# Only /data is owned by UID/GID 10001 so named volumes keep existing ownership compatibility.
+COPY --from=jre-build --chown=0:0 /opt/jre /opt/java/openjdk
+COPY --from=jre-build --chown=10001:10001 /data /data
+COPY --from=app-prepare --chown=0:0 /out/miru-all.jar /opt/miru/miru-all.jar
+COPY --from=app-prepare --chown=0:0 /out/native /opt/miru/native
+COPY --from=web-build --chown=0:0 /web/build /opt/miru/static
 
 USER 10001:10001
 WORKDIR /data
 EXPOSE 8080
 
-ENTRYPOINT ["/bin/sh", "-c", "exec java --enable-native-access=ALL-UNNAMED $MIRU_JAVA_OPTS -jar /opt/miru/miru-all.jar"]
+ENTRYPOINT ["/opt/java/openjdk/bin/java", "--enable-native-access=ALL-UNNAMED", "-Dorg.sqlite.lib.path=/opt/miru/native", "-Dorg.sqlite.lib.name=libsqlitejdbc.so", "-jar", "/opt/miru/miru-all.jar"]

@@ -126,4 +126,6 @@ Miru logs JSON lines to standard output.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `MIRU_JAVA_OPTS` | `-XX:MaxRAMPercentage=50.0 -XX:MinRAMPercentage=25.0 -XX:ReservedCodeCacheSize=64m -XX:MaxDirectMemorySize=64m -XX:+ExitOnOutOfMemoryError` | JVM options the container image starts Java with. Setting it replaces the defaults, so repeat any you want to keep. |
+| `JDK_JAVA_OPTIONS` | `-XX:MaxRAMPercentage=50.0 -XX:MinRAMPercentage=25.0 -XX:ReservedCodeCacheSize=64m -XX:MaxDirectMemorySize=64m -XX:+ExitOnOutOfMemoryError` | Standard JVM environment variable read directly by the Java launcher (no shell required). Setting it replaces the defaults, so repeat any you want to keep. |
+
+The container image pairs a trimmed `jlink` Java runtime with Google Distroless `base-nossl-debian13:nonroot` (no shell, package manager, coreutils, or OpenSSL). The JRE, application JAR, static web assets, and pre-extracted SQLite native library (`/opt/miru/native/libsqlitejdbc.so`) are owned by `root` and read-only to the runtime user (`10001:10001`), which only owns `/data`. Because `libsqlitejdbc.so` is pre-extracted at build time rather than unpacked into `/tmp` at startup, `/tmp` can be mounted non-executable (`--read-only --tmpfs /tmp:noexec,nosuid,nodev`).

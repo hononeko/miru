@@ -63,8 +63,8 @@ services:
     #   - host.docker.internal:host-gateway
     read_only: true
     tmpfs:
-      # The SQLite driver loads its native library from /tmp, so it must allow exec.
-      - /tmp:exec
+      # Writable scratch space for JVM/SQLite temp files without allowing execution.
+      - /tmp:noexec,nosuid,nodev
     cap_drop:
       - ALL
     security_opt:

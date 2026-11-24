@@ -119,6 +119,20 @@ test.describe('Playback History filtering, search, pagination, sorting & detail 
 		await expect(header('Media')).toHaveAttribute('aria-sort', 'ascending');
 		await expect(desktopRows.first()).toContainText('Akira');
 
+		// A slow response for an earlier sort does not replace the rows of the current one
+		await page.route(/\/api\/v1\/history\?.*sortBy=title&sortDir=desc/, async (route) => {
+			await new Promise((resolve) => setTimeout(resolve, 1_000));
+			await route.continue();
+		});
+		const slowResponse = page.waitForResponse(/sortBy=title&sortDir=desc/);
+		await header('Media').getByRole('button').click();
+		await header('Media').getByRole('button').click();
+		await expect(header('Media')).toHaveAttribute('aria-sort', 'ascending');
+		await slowResponse;
+		await page.waitForTimeout(200);
+		await expect(desktopRows.first()).toContainText('Akira');
+		await page.unrouteAll();
+
 		// Open Play Detail Drawer by clicking the first row (non-title cell)
 		await desktopRows.first().locator('td').first().click();
 		const sheetDialog = page.getByRole('dialog');

@@ -12,6 +12,7 @@
 	import { authStore } from '$stores/auth.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
 	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
+	import { latestRequest } from '$lib/latestRequest';
 	import {
 		cn,
 		formatDurationSec,
@@ -113,7 +114,11 @@
 		}
 	}
 
+	const startHistoryRequest = latestRequest();
+	const startDetailRequest = latestRequest();
+
 	async function loadHistory() {
+		const isLatest = startHistoryRequest();
 		if (authStore.isUnlinkedUser) {
 			items = [];
 			totalCount = 0;
@@ -141,32 +146,37 @@
 					}
 				})
 			);
+			if (!isLatest()) return;
 			items = res.items;
 			totalCount = res.totalCount;
 			totalPages = res.totalPages;
 		} catch (e) {
+			if (!isLatest()) return;
 			error = e instanceof MiruApiError ? e.detail : 'Failed to load playback history';
 		} finally {
-			loading = false;
+			if (isLatest()) loading = false;
 		}
 	}
 
 	async function openDetail(id: string) {
+		const isLatest = startDetailRequest();
 		selectedId = id;
 		detailOpen = true;
 		detailLoading = true;
 		detailError = null;
 		detail = null;
 		try {
-			detail = unwrap(
+			const res = unwrap(
 				await api.GET('/api/v1/history/{id}', {
 					params: { path: { id } }
 				})
 			);
+			if (isLatest()) detail = res;
 		} catch (e) {
+			if (!isLatest()) return;
 			detailError = e instanceof MiruApiError ? e.detail : 'Failed to load play details';
 		} finally {
-			detailLoading = false;
+			if (isLatest()) detailLoading = false;
 		}
 	}
 

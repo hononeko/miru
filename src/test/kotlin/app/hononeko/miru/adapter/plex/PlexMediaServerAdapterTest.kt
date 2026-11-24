@@ -1,14 +1,22 @@
 package app.hononeko.miru.adapter.plex
 
+import app.hononeko.miru.adapter.ActiveStreamSnapshot
 import app.hononeko.miru.adapter.ArtworkData
+import app.hononeko.miru.adapter.LibraryItemsPage
+import app.hononeko.miru.adapter.LibrarySectionInfo
+import app.hononeko.miru.adapter.MediaItemDetails
+import app.hononeko.miru.adapter.MediaServerAdapter
 import app.hononeko.miru.adapter.MediaServerEvent
 import app.hononeko.miru.adapter.MediaType
+import app.hononeko.miru.adapter.MediaUser
 import app.hononeko.miru.adapter.MediaUserLibraryAccess
 import app.hononeko.miru.adapter.PlaybackState
+import app.hononeko.miru.adapter.ServerIdentity
 import app.hononeko.miru.adapter.StreamDecision
 import app.hononeko.miru.adapter.StreamLocation
 import app.hononeko.miru.config.PlexConfig
 import app.hononeko.miru.domain.error.MiruError
+import arrow.core.Either
 import io.kotest.assertions.arrow.core.shouldBeLeft
 import io.kotest.assertions.arrow.core.shouldBeRight
 import io.kotest.core.spec.style.FunSpec
@@ -798,5 +806,77 @@ class PlexMediaServerAdapterTest :
                     .shouldBeLeft()
                     .shouldBeInstanceOf<MiruError.UpstreamUnavailable>()
             unavailable.message shouldNotContain TEST_TOKEN
+        }
+
+        test("fetchMediaSectionKey resolves section ID, handles null/empty metadata/validation, and covers default interface method") {
+            val (adapter, requests) =
+                adapterWithMock { request ->
+                    when (request.url.encodedPath) {
+                        "/library/metadata/123" ->
+                            respondJson("""{"MediaContainer":{"Metadata":[{"ratingKey":"123","type":"movie","librarySectionID":"2"}]}}""")
+                        "/library/metadata/124" ->
+                            respondJson("""{"MediaContainer":{"Metadata":[{"ratingKey":"124","type":"movie","librarySectionID":"   "}]}}""")
+                        "/library/metadata/125" ->
+                            respondJson("""{"MediaContainer":{"Metadata":[{"ratingKey":"125","type":"movie"}]}}""")
+                        "/library/metadata/126" ->
+                            respondJson("""{"MediaContainer":{"Metadata":[]}}""")
+                        else -> respond("missing", HttpStatusCode.NotFound)
+                    }
+                }
+
+            adapter.fetchMediaSectionKey("123").shouldBeRight() shouldBe "2"
+            adapter.fetchMediaSectionKey("124").shouldBeRight().shouldBeNull()
+            adapter.fetchMediaSectionKey("125").shouldBeRight().shouldBeNull()
+            adapter.fetchMediaSectionKey("126").shouldBeLeft().shouldBeInstanceOf<MiruError.NotFound>()
+            adapter.fetchMediaSectionKey("bad!key").shouldBeLeft().shouldBeInstanceOf<MiruError.ValidationError>()
+            requests shouldHaveSize 4
+
+            val defaultAdapter =
+                object : MediaServerAdapter {
+                    override val serverType: String = "STUB"
+
+                    override suspend fun checkHealth(): Either<MiruError, ServerIdentity> = error("unused")
+
+                    override suspend fun fetchActiveSessions(): Either<MiruError, List<ActiveStreamSnapshot>> = error("unused")
+
+                    override suspend fun fetchUsers(): Either<MiruError, List<MediaUser>> = error("unused")
+
+                    override suspend fun fetchLibrarySections(): Either<MiruError, List<LibrarySectionInfo>> = error("unused")
+
+                    override suspend fun fetchLibraryCount(
+                        sectionKey: String,
+                        mediaTypeCode: Int?,
+                    ): Either<MiruError, Int> = error("unused")
+
+                    override suspend fun fetchLibraryItems(
+                        sectionKey: String,
+                        start: Int,
+                        size: Int,
+                        mediaTypeCode: Int?,
+                    ): Either<MiruError, LibraryItemsPage> = error("unused")
+
+                    override suspend fun fetchMediaDetails(ratingKey: String): Either<MiruError, MediaItemDetails> =
+                        Either.Right(
+                            MediaItemDetails(
+                                ratingKey = ratingKey,
+                                mediaType = MediaType.MOVIE,
+                                title = "Stub Movie",
+                                librarySectionId = "77",
+                            ),
+                        )
+
+                    override suspend fun fetchArtwork(
+                        path: String,
+                        width: Int?,
+                        height: Int?,
+                    ): Either<MiruError, ArtworkData> = error("unused")
+
+                    override suspend fun terminateSession(
+                        sessionId: String,
+                        reason: String,
+                    ): Either<MiruError, Unit> = error("unused")
+                }
+
+            defaultAdapter.fetchMediaSectionKey("99").shouldBeRight() shouldBe "77"
         }
     })

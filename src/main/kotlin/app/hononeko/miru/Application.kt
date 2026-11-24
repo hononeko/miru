@@ -235,7 +235,7 @@ private fun runServer() {
     }
 }
 
-private fun createArtworkProxyService(
+internal fun createArtworkProxyService(
     plexRuntimeManager: PlexRuntimeManager,
     userRepository: ExposedUserRepository,
     externalAvatarClient: io.ktor.client.HttpClient,

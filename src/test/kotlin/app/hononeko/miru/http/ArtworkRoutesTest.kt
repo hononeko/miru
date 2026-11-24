@@ -1,7 +1,9 @@
 package app.hononeko.miru.http
 
 import app.hononeko.miru.MiruJson
+import app.hononeko.miru.adapter.plex.DelegatingMediaServerAdapter
 import app.hononeko.miru.adapter.plex.PlexMediaServerAdapter
+import app.hononeko.miru.adapter.plex.PlexRuntimeManager
 import app.hononeko.miru.adapter.plex.createPlexHttpClient
 import app.hononeko.miru.artwork.ArtworkKind
 import app.hononeko.miru.artwork.ArtworkProxyService
@@ -20,11 +22,13 @@ import app.hononeko.miru.config.DatabaseConfig
 import app.hononeko.miru.config.PlexConfig
 import app.hononeko.miru.config.ServerConfig
 import app.hononeko.miru.config.SessionConfig
+import app.hononeko.miru.createArtworkProxyService
 import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.http.ProblemDetails
 import app.hononeko.miru.miruModule
 import app.hononeko.miru.persistence.DatabaseFactory
 import app.hononeko.miru.persistence.DatabaseHandle
+import app.hononeko.miru.persistence.model.LibrarySectionRecord
 import app.hononeko.miru.persistence.model.MediaItemCacheRecord
 import app.hononeko.miru.persistence.model.MediaServerRecord
 import app.hononeko.miru.persistence.model.UserLibraryAccessRecord
@@ -35,6 +39,7 @@ import app.hononeko.miru.persistence.repository.ExposedAuthSessionRepository
 import app.hononeko.miru.persistence.repository.ExposedLibraryRepository
 import app.hononeko.miru.persistence.repository.ExposedMediaServerRepository
 import app.hononeko.miru.persistence.repository.ExposedUserRepository
+import app.hononeko.miru.service.MediaSectionAccessChecker
 import io.kotest.assertions.arrow.core.shouldBeLeft
 import io.kotest.assertions.arrow.core.shouldBeRight
 import io.kotest.core.spec.style.FunSpec
@@ -958,6 +963,152 @@ class ArtworkRoutesTest :
                         }
                     bobEp2.status shouldBe HttpStatusCode.OK
                     harness.plexRequests shouldHaveSize 4
+                }
+            }
+        }
+
+        test("covers MediaSectionAccessChecker edge cases, DelegatingMediaServerAdapter, and createArtworkProxyService") {
+            val sectionJson = """{"MediaContainer":{"Metadata":[{"ratingKey":"777","type":"movie","librarySectionID":"1"}]}}"""
+            val jsonHeaders = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            createArtworkHarness(
+                plexHandler = { request ->
+                    when (request.url.encodedPath) {
+                        "/library/metadata/777" -> respond(sectionJson, HttpStatusCode.OK, jsonHeaders)
+                        else -> respond(ByteArray(0), HttpStatusCode.NotFound)
+                    }
+                },
+            ).use { harness ->
+                seedAuthAndUsers(harness)
+                harness.libraryRepo
+                    .upsertSection(
+                        LibrarySectionRecord(
+                            serverId = "srv-1",
+                            sectionKey = "1",
+                            title = "Movies",
+                            sectionType = "movie",
+                            updatedAtMs = 1_000L,
+                        ),
+                    ).shouldBeRight()
+                harness.libraryRepo
+                    .replaceUserLibraryAccess(
+                        serverId = "srv-1",
+                        records =
+                            listOf(
+                                UserLibraryAccessRecord(
+                                    serverId = "srv-1",
+                                    externalUserId = "102",
+                                    allLibraries = false,
+                                    sectionKeys = setOf("2"),
+                                    updatedAtMs = 1_000L,
+                                ),
+                                UserLibraryAccessRecord(
+                                    serverId = "srv-1",
+                                    externalUserId = "all-ext",
+                                    allLibraries = true,
+                                    sectionKeys = emptySet(),
+                                    updatedAtMs = 1_000L,
+                                ),
+                            ),
+                    ).shouldBeRight()
+                harness.userRepo
+                    .upsert(
+                        UserRecord(
+                            id = "user-zero-shares",
+                            serverId = "srv-1",
+                            externalUserId = "zero-ext",
+                            username = "zerouser",
+                            createdAtMs = 1_000L,
+                            updatedAtMs = 1_000L,
+                        ),
+                    ).shouldBeRight()
+                harness.userRepo
+                    .upsert(
+                        UserRecord(
+                            id = "user-all-libs",
+                            serverId = "srv-1",
+                            externalUserId = "all-ext",
+                            username = "alluser",
+                            createdAtMs = 1_000L,
+                            updatedAtMs = 1_000L,
+                        ),
+                    ).shouldBeRight()
+
+                val plexAdapter =
+                    PlexMediaServerAdapter(
+                        config = harness.appConfig.plex,
+                        httpClient =
+                            createPlexHttpClient(
+                                engine =
+                                    MockEngine { request ->
+                                        when (request.url.encodedPath) {
+                                            "/library/metadata/777" -> respond(sectionJson, HttpStatusCode.OK, jsonHeaders)
+                                            else -> respond(ByteArray(0), HttpStatusCode.NotFound)
+                                        }
+                                    },
+                            ),
+                    )
+                val delegating = DelegatingMediaServerAdapter(plexAdapter)
+                delegating.fetchMediaSectionKey("777").shouldBeRight() shouldBe "1"
+
+                val checker = MediaSectionAccessChecker(libraryRepository = harness.libraryRepo, adapter = delegating)
+                val restrictedPrincipal =
+                    MiruPrincipal(
+                        accountId = "acc-bob",
+                        username = "bob",
+                        role = MiruRole.USER,
+                        linkedMediaUserIds = setOf("user-gravatar"),
+                    )
+                val zeroSharePrincipal =
+                    MiruPrincipal(
+                        accountId = "acc-zero",
+                        username = "zero",
+                        role = MiruRole.USER,
+                        linkedMediaUserIds = setOf("user-zero-shares"),
+                    )
+                val allLibsPrincipal =
+                    MiruPrincipal(
+                        accountId = "acc-all",
+                        username = "alluser",
+                        role = MiruRole.USER,
+                        linkedMediaUserIds = setOf("user-all-libs"),
+                    )
+
+                checker
+                    .requireAccessForKnownSection(zeroSharePrincipal, "777", "1")
+                    .shouldBeLeft()
+                    .shouldBeInstanceOf<MiruError.Forbidden>()
+                checker
+                    .requireAccessForKnownSection(restrictedPrincipal, "777", null)
+                    .shouldBeLeft()
+                    .shouldBeInstanceOf<MiruError.Forbidden>()
+                checker
+                    .requireAccessForKnownSection(restrictedPrincipal, "777", "1")
+                    .shouldBeLeft()
+                    .shouldBeInstanceOf<MiruError.Forbidden>()
+                checker.requireAccessForKnownSection(allLibsPrincipal, "777", null).shouldBeRight()
+                checker.requireAccessForKnownSection(allLibsPrincipal, "777", "1").shouldBeRight()
+
+                val runtimeManager =
+                    PlexRuntimeManager(
+                        databaseHandle = harness.dbHandle,
+                        plexConfig = harness.appConfig.plex,
+                        mediaServerRepository = harness.serverRepo,
+                    )
+                try {
+                    val created =
+                        createArtworkProxyService(
+                            plexRuntimeManager = runtimeManager,
+                            userRepository = harness.userRepo,
+                            externalAvatarClient = harness.externalClient,
+                            libraryRepository = harness.libraryRepo,
+                            sectionAccessChecker = checker,
+                        )
+                    created
+                        .getMediaArtwork(allLibsPrincipal, "bad!key", ArtworkKind.THUMB)
+                        .shouldBeLeft()
+                        .shouldBeInstanceOf<MiruError.ValidationError>()
+                } finally {
+                    kotlinx.coroutines.runBlocking { runtimeManager.stop() }
                 }
             }
         }

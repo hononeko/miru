@@ -336,6 +336,8 @@ class ExposedPlaybackHistoryRepository(
                     val matching = PlaybackHistoryTable.selectAll().where { condition }
                     sortExpressions
                         .fold(matching) { query, expression -> query.orderBy(expression to sortOrder) }
+                        // Plays that tie, e.g. rewatches or 100% completions, are listed newest first
+                        .orderBy(PlaybackHistoryTable.stoppedAtMs to SortOrder.DESC)
                         .orderBy(PlaybackHistoryTable.id to SortOrder.ASC)
                         .limit(safeLimit)
                         .offset(safeOffset.toLong())

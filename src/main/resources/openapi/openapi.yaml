@@ -2236,7 +2236,7 @@ paths:
     get:
       tags: [Stats]
       operationId: getHeatmapStats
-      summary: Retrieve day-of-week by hour-of-day playback activity heatmap
+      summary: Retrieve playback activity per UTC date and hour of day
       security:
         - CookieAuth: []
         - ApiKeyAuth: []
@@ -2247,8 +2247,8 @@ paths:
           required: false
           schema:
             type: string
-            enum: [7d, 30d, 90d, 365d, all]
-            default: 90d
+            enum: [7d, 30d]
+            default: 7d
         - name: userId
           in: query
           required: false
@@ -2264,7 +2264,7 @@ paths:
             default: plays
       responses:
         '200':
-          description: 7x24 playback heatmap buckets and peak activity slot
+          description: Playback buckets for every hour of every UTC date in the range, and the peak activity slot
           content:
             application/json:
               schema:
@@ -4260,8 +4260,12 @@ components:
 
     HeatmapCellDto:
       type: object
-      required: [dayOfWeek, dayName, hour, playCount, watchDurationSec]
+      required: [date, dayOfWeek, dayName, hour, playCount, watchDurationSec]
       properties:
+        date:
+          type: string
+          format: date
+          description: UTC calendar date
         dayOfWeek:
           type: integer
           minimum: 0
@@ -4291,7 +4295,7 @@ components:
       properties:
         range:
           type: string
-          enum: [7d, 30d, 90d, 365d, all]
+          enum: [7d, 30d]
         fromMs:
           type: integer
           format: int64
@@ -4308,6 +4312,10 @@ components:
         maxCellWatchDurationSec:
           type: integer
           format: int64
+        peakDate:
+          type: string
+          format: date
+          nullable: true
         peakDayName:
           type: string
           nullable: true
@@ -4316,6 +4324,7 @@ components:
           nullable: true
         cells:
           type: array
+          description: Every hour of every UTC date in the range, oldest date first
           items:
             $ref: '#/components/schemas/HeatmapCellDto'
 

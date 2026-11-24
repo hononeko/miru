@@ -39,7 +39,7 @@
 
 	let lastDefaultRange = preferencesStore.prefs.defaultStatsRange;
 	let range = $state<StatsRange>(lastDefaultRange);
-	let heatmapRange = $state<HeatmapRange>('90d');
+	let heatmapRange = $state<HeatmapRange>('7d');
 	let overview = $state<OverviewStatsResponse | null>(null);
 	let heatmap = $state<HeatmapStatsResponse | null>(null);
 	let clientStats = $state<ClientStatsResponse | null>(null);

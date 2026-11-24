@@ -6,6 +6,7 @@ import {
 	formatBandwidthKbps,
 	formatBytes,
 	formatCalendarDate,
+	formatCalendarMonthDay,
 	formatClockMs,
 	formatDateTime,
 	formatDurationSec,
@@ -211,6 +212,11 @@ describe('statistic percentages', () => {
 		expect(formatCalendarDate('2026-11-04', 'mdy')).toBe('Nov 4, 2026');
 		expect(formatCalendarDate('2026-11-04', 'dmy')).toBe('04/11/2026');
 		expect(formatCalendarDate('invalid', 'mdy')).toBe('invalid');
+
+		expect(formatCalendarMonthDay('2026-11-04', 'iso')).toBe('11-04');
+		expect(formatCalendarMonthDay('2026-11-04', 'mdy')).toBe('Nov 4');
+		expect(formatCalendarMonthDay('2026-11-04', 'dmy')).toBe('04/11');
+		expect(formatCalendarMonthDay('invalid', 'mdy')).toBe('invalid');
 
 		expect(getCalendarDateAxisParts('2025-12-28')).toEqual({ dayLabel: '28', monthLabel: 'Dec' });
 		expect(getCalendarDateAxisParts('2025-12-31', '2025-12-28')).toEqual({ dayLabel: '31' });

@@ -830,10 +830,12 @@ class HistoryStatsRoutesTest :
                         MiruJson.decodeFromString<ProblemDetails>(badUserRange.bodyAsText()).errors.shouldNotBeNull()
                     badUserErrors shouldContainKey "range"
 
-                    val badHeatmapRange = client.get("/api/v1/stats/heatmap?range=invalid")
-                    badHeatmapRange.status shouldBe HttpStatusCode.BadRequest
-                    MiruJson.decodeFromString<ProblemDetails>(badHeatmapRange.bodyAsText()).errors.shouldNotBeNull() shouldContainKey
-                        "range"
+                    for (unsupportedRange in listOf("invalid", "90d", "365d", "all")) {
+                        val badHeatmapRange = client.get("/api/v1/stats/heatmap?range=$unsupportedRange")
+                        badHeatmapRange.status shouldBe HttpStatusCode.BadRequest
+                        MiruJson.decodeFromString<ProblemDetails>(badHeatmapRange.bodyAsText()).errors.shouldNotBeNull() shouldContainKey
+                            "range"
+                    }
 
                     val badClientsRange = client.get("/api/v1/stats/clients?range=invalid")
                     badClientsRange.status shouldBe HttpStatusCode.BadRequest
@@ -913,33 +915,38 @@ class HistoryStatsRoutesTest :
                 testApplication {
                     setupApp(harness)
 
-                    // 1. Heatmap endpoint (default range = 90d, 365d, RBAC)
+                    // 1. Heatmap endpoint (default range = 7d, 30d, RBAC)
                     val heatmapResp =
                         client.get("/api/v1/stats/heatmap") {
                             cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
                         }
                     heatmapResp.status shouldBe HttpStatusCode.OK
                     val heatmap = MiruJson.decodeFromString<HeatmapStatsResponse>(heatmapResp.bodyAsText())
-                    heatmap.range shouldBe "90d"
-                    heatmap.totalPlays shouldBe 5L
-                    heatmap.cells shouldHaveSize 168
+                    heatmap.range shouldBe "7d"
+                    heatmap.totalPlays shouldBe 3L
+                    heatmap.cells shouldHaveSize 7 * 24
+                    heatmap.cells.first().date shouldBe "2026-04-09"
+                    heatmap.cells.last().date shouldBe "2026-04-15"
                     heatmap.maxCellPlays shouldBe 1L
+                    heatmap.peakDate shouldBe "2026-04-12"
+                    heatmap.peakDayName shouldBe "Sun"
                     heatmap.peakHour shouldBe 20
 
-                    val heatmap365 =
+                    val heatmap30 =
                         MiruJson.decodeFromString<HeatmapStatsResponse>(
                             client
-                                .get("/api/v1/stats/heatmap?range=365d") {
+                                .get("/api/v1/stats/heatmap?range=30d") {
                                     cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
                                 }.bodyAsText(),
                         )
-                    heatmap365.range shouldBe "365d"
-                    heatmap365.totalPlays shouldBe 6L
+                    heatmap30.range shouldBe "30d"
+                    heatmap30.totalPlays shouldBe 4L
+                    heatmap30.cells shouldHaveSize 30 * 24
 
                     val aliceHeatmap =
                         MiruJson.decodeFromString<HeatmapStatsResponse>(
                             client
-                                .get("/api/v1/stats/heatmap?range=90d") {
+                                .get("/api/v1/stats/heatmap?range=30d") {
                                     header("X-Api-Key", aliceKey.rawKey)
                                 }.bodyAsText(),
                         )

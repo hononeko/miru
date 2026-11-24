@@ -2067,12 +2067,33 @@ private fun FunSpecRootScope.advancedAnalyticsServiceTests(ctxProvider: () -> Co
             }
 
             // Heatmap stats
-            val heatmap = service.getHeatmapStats(admin, "90d").shouldBeRight()
-            heatmap.range shouldBe "90d"
-            heatmap.totalPlays shouldBe 4L
-            heatmap.cells shouldHaveSize 168
+            val heatmap = service.getHeatmapStats(admin, "30d").shouldBeRight()
+            heatmap.range shouldBe "30d"
+            heatmap.fromMs shouldBe Instant.parse("2026-03-12T00:00:00Z").toEpochMilli()
+            heatmap.cells shouldHaveSize 30 * 24
+            heatmap.cells.first().date shouldBe "2026-03-12"
+            heatmap.cells.last().date shouldBe "2026-04-10"
+            heatmap.cells.sumOf { it.playCount } shouldBe heatmap.totalPlays
             heatmap.maxCellPlays shouldBe 1L
+            heatmap.cells
+                .single { it.date == "2026-04-09" && it.hour == 22 }
+                .let { cell ->
+                    cell.dayName shouldBe "Thu"
+                    cell.dayOfWeek shouldBe 3
+                    cell.playCount shouldBe 1L
+                    cell.watchDurationSec shouldBe 7_200L
+                }
+            heatmap.peakDate shouldBe "2026-04-09"
+            heatmap.peakDayName shouldBe "Thu"
             heatmap.peakHour shouldBe 22
+
+            val weekHeatmap = service.getHeatmapStats(admin, null).shouldBeRight()
+            weekHeatmap.range shouldBe "7d"
+            weekHeatmap.cells.map { it.date }.distinct() shouldContainExactly
+                (4..10).map { "2026-04-" + it.toString().padStart(2, '0') }
+            listOf("90d", "365d", "all").forEach { range ->
+                service.getHeatmapStats(admin, range).shouldBeLeft().shouldBeInstanceOf<MiruError.ValidationError>()
+            }
 
             // Client & codec breakdown stats (plays vs duration metric)
             val clients = service.getClientStats(admin, "90d").shouldBeRight()

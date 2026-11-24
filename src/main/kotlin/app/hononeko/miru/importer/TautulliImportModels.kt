@@ -83,12 +83,9 @@ internal data class TautulliHistoryRow(
     val bitrate: Int?,
 )
 
-internal data class TautulliReadResult(
-    val users: List<TautulliUserRow>,
-    val history: List<TautulliHistoryRow>,
+internal data class HistoryStreamSummary(
     val historyRowsRead: Int,
     val malformedRows: Int,
-    val warnings: List<String>,
 )
 
 internal fun MutableList<String>.addBoundedWarning(message: String) {

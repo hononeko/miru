@@ -3404,6 +3404,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
+            /** @description Media item belongs to an unshared library section */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
             /** @description Media item not found */
             404: {
                 headers: {
@@ -3480,6 +3489,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
+            /** @description Artwork belongs to an unshared library section */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
             /** @description Artwork not found */
             404: {
                 headers: {
@@ -3549,6 +3567,15 @@ export interface operations {
             };
             /** @description Authentication required */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Artwork belongs to an unshared library section */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

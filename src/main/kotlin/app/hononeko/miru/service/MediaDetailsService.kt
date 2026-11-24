@@ -6,6 +6,7 @@ import app.hononeko.miru.auth.MiruPrincipal
 import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.http.MediaDetailsResponse
 import app.hononeko.miru.http.toResponse
+import app.hononeko.miru.persistence.repository.LibraryRepository
 import app.hononeko.miru.persistence.repository.PlaybackHistoryRepository
 import arrow.core.Either
 import arrow.core.raise.either
@@ -18,6 +19,9 @@ import arrow.core.raise.ensure
 class MediaDetailsService(
     private val mediaServerAdapter: MediaServerAdapter,
     private val playbackHistoryRepository: PlaybackHistoryRepository,
+    private val libraryRepository: LibraryRepository,
+    private val sectionAccessChecker: MediaSectionAccessChecker =
+        MediaSectionAccessChecker(libraryRepository = libraryRepository, adapter = mediaServerAdapter),
 ) {
     suspend fun getMediaDetails(
         principal: MiruPrincipal,
@@ -31,7 +35,16 @@ class MediaDetailsService(
                 )
             }
 
+            val preloadedAccess =
+                sectionAccessChecker.requireAnyLibraryAccess(principal = principal, ratingKey = ratingKey).bind()
             val details = mediaServerAdapter.fetchMediaDetails(ratingKey).bind()
+            sectionAccessChecker
+                .requireAccessForKnownSection(
+                    principal = principal,
+                    ratingKey = ratingKey,
+                    sectionKey = details.librarySectionId,
+                    preloadedAccess = preloadedAccess,
+                ).bind()
             val allowedUserIds = principal.scopedMediaUserIds()
 
             val playSummary =

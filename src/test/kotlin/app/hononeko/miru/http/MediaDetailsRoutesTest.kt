@@ -24,10 +24,12 @@ import app.hononeko.miru.persistence.model.MediaServerRecord
 import app.hononeko.miru.persistence.model.PlaybackHistoryRecord
 import app.hononeko.miru.persistence.model.PlayerRecord
 import app.hononeko.miru.persistence.model.StreamTechRecord
+import app.hononeko.miru.persistence.model.UserLibraryAccessRecord
 import app.hononeko.miru.persistence.model.UserRecord
 import app.hononeko.miru.persistence.repository.ExposedApiKeyRepository
 import app.hononeko.miru.persistence.repository.ExposedAuthAccountRepository
 import app.hononeko.miru.persistence.repository.ExposedAuthSessionRepository
+import app.hononeko.miru.persistence.repository.ExposedLibraryRepository
 import app.hononeko.miru.persistence.repository.ExposedMediaServerRepository
 import app.hononeko.miru.persistence.repository.ExposedPlaybackHistoryRepository
 import app.hononeko.miru.persistence.repository.ExposedUserRepository
@@ -64,6 +66,7 @@ private class MediaDetailsHarness(
     val tempDir: Path,
     val dbHandle: DatabaseHandle,
     val serverRepo: ExposedMediaServerRepository,
+    val libraryRepo: ExposedLibraryRepository,
     val userRepo: ExposedUserRepository,
     val historyRepo: ExposedPlaybackHistoryRepository,
     val authService: AuthService,
@@ -94,6 +97,7 @@ private fun createHarness(
     val handle = DatabaseFactory.createAndMigrate(DatabaseConfig.Sqlite(dbPath)).shouldBeRight()
     val userRepo = ExposedUserRepository(handle)
     val historyRepo = ExposedPlaybackHistoryRepository(handle)
+    val libraryRepo = ExposedLibraryRepository(handle)
     val authConfig =
         AuthConfig(
             mode = authMode,
@@ -125,6 +129,7 @@ private fun createHarness(
         MediaDetailsService(
             mediaServerAdapter = adapter,
             playbackHistoryRepository = historyRepo,
+            libraryRepository = libraryRepo,
         )
     val appConfig =
         AppConfig(
@@ -138,6 +143,7 @@ private fun createHarness(
         tempDir = dir,
         dbHandle = handle,
         serverRepo = ExposedMediaServerRepository(handle),
+        libraryRepo = libraryRepo,
         userRepo = userRepo,
         historyRepo = historyRepo,
         authService = authService,
@@ -419,10 +425,38 @@ class MediaDetailsRoutesTest :
             }
         }
 
-        test("enforces USER RBAC scoping on playSummary and seriesPlaySummary (unlinked user sees 0 plays)") {
-            createHarness().use { harness ->
-                harness.authService.setupInitialAdmin("admin", "Admin-strong-password-123").shouldBeRight()
+        test("enforces USER library-section access control and RBAC scoping on playSummary and seriesPlaySummary") {
+            var plexCallCount = 0
+            createHarness(
+                plexHandler = { path ->
+                    plexCallCount += 1
+                    val jsonHeaders = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+                    when (path) {
+                        "/library/metadata/12345" -> respond(PlexFixtures.movieMetadataDetailsJson, HttpStatusCode.OK, jsonHeaders)
+                        "/library/metadata/54321" -> respond(PlexFixtures.episodeMetadataDetailsJson, HttpStatusCode.OK, jsonHeaders)
+                        "/library/metadata/54300" -> respond(PlexFixtures.seasonMetadataDetailsJson, HttpStatusCode.OK, jsonHeaders)
+                        "/library/metadata/54000" -> respond(PlexFixtures.showMetadataDetailsJson, HttpStatusCode.OK, jsonHeaders)
+                        else -> respond("missing", HttpStatusCode.NotFound)
+                    }
+                },
+            ).use { harness ->
+                val adminLogin = harness.authService.setupInitialAdmin("admin", "Admin-strong-password-123").shouldBeRight()
                 seedMediaHistory(harness)
+                // Alice (externalUserId 101) has access only to TV Shows section "2", NOT Movies section "1".
+                harness.libraryRepo
+                    .replaceUserLibraryAccess(
+                        serverId = "srv-1",
+                        records =
+                            listOf(
+                                UserLibraryAccessRecord(
+                                    serverId = "srv-1",
+                                    externalUserId = "101",
+                                    allLibraries = false,
+                                    sectionKeys = setOf("2"),
+                                    updatedAtMs = 1_000L,
+                                ),
+                            ),
+                    ).shouldBeRight()
 
                 val aliceAccount =
                     harness.authService
@@ -448,6 +482,13 @@ class MediaDetailsRoutesTest :
                 testApplication {
                     setupApp(harness)
 
+                    // ADMIN access remains unrestricted across all library sections
+                    client
+                        .get("/api/v1/media/12345") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                        }.status shouldBe HttpStatusCode.OK
+
+                    // Alice can fetch episode 54321 and show 54000 in shared section "2" with scoped play summary
                     val aliceEp =
                         MiruJson.decodeFromString<MediaDetailsResponse>(
                             client
@@ -461,19 +502,6 @@ class MediaDetailsRoutesTest :
                     aliceEp.playSummary.lastWatchedUsername shouldBe "Alice"
                     aliceEp.seriesPlaySummary.shouldNotBeNull().totalPlays shouldBe 1L
 
-                    val unlinkedEp =
-                        MiruJson.decodeFromString<MediaDetailsResponse>(
-                            client
-                                .get("/api/v1/media/54321") {
-                                    cookie(SESSION_COOKIE_NAME, unlinkedLogin.signedToken)
-                                }.also { it.status shouldBe HttpStatusCode.OK }
-                                .bodyAsText(),
-                        )
-                    unlinkedEp.playSummary.totalPlays shouldBe 0L
-                    unlinkedEp.playSummary.uniqueUsers shouldBe 0
-                    unlinkedEp.playSummary.lastWatchedUsername.shouldBeNull()
-                    unlinkedEp.seriesPlaySummary.shouldNotBeNull().totalPlays shouldBe 0L
-
                     val aliceShow =
                         MiruJson.decodeFromString<MediaDetailsResponse>(
                             client
@@ -484,15 +512,25 @@ class MediaDetailsRoutesTest :
                         )
                     aliceShow.playSummary.totalPlays shouldBe 1L
 
-                    val unlinkedShow =
-                        MiruJson.decodeFromString<MediaDetailsResponse>(
-                            client
-                                .get("/api/v1/media/54000") {
-                                    cookie(SESSION_COOKIE_NAME, unlinkedLogin.signedToken)
-                                }.also { it.status shouldBe HttpStatusCode.OK }
-                                .bodyAsText(),
-                        )
-                    unlinkedShow.playSummary.totalPlays shouldBe 0L
+                    // Alice is forbidden from unshared section "1" movie 12345
+                    val aliceForbidden =
+                        client.get("/api/v1/media/12345") {
+                            cookie(SESSION_COOKIE_NAME, aliceLogin.signedToken)
+                        }
+                    aliceForbidden.status shouldBe HttpStatusCode.Forbidden
+                    aliceForbidden.contentType()?.withoutParameters() shouldBe ContentType.Application.ProblemJson
+
+                    // Unlinked USER fails closed with 403 Forbidden without making any Plex requests
+                    val callsBeforeUnlinked = plexCallCount
+                    client
+                        .get("/api/v1/media/54321") {
+                            cookie(SESSION_COOKIE_NAME, unlinkedLogin.signedToken)
+                        }.status shouldBe HttpStatusCode.Forbidden
+                    client
+                        .get("/api/v1/media/12345") {
+                            cookie(SESSION_COOKIE_NAME, unlinkedLogin.signedToken)
+                        }.status shouldBe HttpStatusCode.Forbidden
+                    plexCallCount shouldBe callsBeforeUnlinked
                 }
             }
         }

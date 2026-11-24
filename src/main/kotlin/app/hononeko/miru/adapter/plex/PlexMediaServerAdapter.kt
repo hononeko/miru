@@ -450,6 +450,25 @@ class PlexMediaServerAdapter(
             )
         }
 
+    override suspend fun fetchMediaSectionKey(ratingKey: String): Either<MiruError, String?> =
+        either {
+            validateRatingKey(ratingKey).bind()
+
+            val response =
+                executeJsonGet<PlexLibraryItemsResponse>(
+                    url = "$baseUrl/library/metadata/$ratingKey",
+                    operation = "fetch media section",
+                    notFoundResource = "Media",
+                    notFoundId = ratingKey,
+                ).bind()
+
+            val primary =
+                response.mediaContainer.metadata?.firstOrNull()
+                    ?: raise(MiruError.NotFound(resource = "Media", id = ratingKey))
+
+            primary.librarySectionID?.trim()?.takeIf { it.isNotEmpty() }
+        }
+
     private suspend fun fetchOptionalMetadata(ratingKey: String?): PlexMetadataDto? {
         val key = ratingKey?.trim()?.takeIf { it.isNotEmpty() && SECTION_KEY_REGEX.matches(it) } ?: return null
         return executeJsonGet<PlexLibraryItemsResponse>(

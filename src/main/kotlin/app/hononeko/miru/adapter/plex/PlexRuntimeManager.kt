@@ -115,6 +115,9 @@ class DelegatingMediaServerAdapter(
     override suspend fun fetchMediaDetails(ratingKey: String): Either<MiruError, MediaItemDetails> =
         withDelegate { it.fetchMediaDetails(ratingKey) }
 
+    override suspend fun fetchMediaSectionKey(ratingKey: String): Either<MiruError, String?> =
+        withDelegate { it.fetchMediaSectionKey(ratingKey) }
+
     override suspend fun fetchArtwork(
         path: String,
         width: Int?,

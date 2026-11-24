@@ -38,6 +38,9 @@ interface MediaServerAdapter {
 
     suspend fun fetchMediaDetails(ratingKey: String): Either<MiruError, MediaItemDetails>
 
+    suspend fun fetchMediaSectionKey(ratingKey: String): Either<MiruError, String?> =
+        fetchMediaDetails(ratingKey).map { it.librarySectionId }
+
     suspend fun fetchArtwork(
         path: String,
         width: Int? = null,

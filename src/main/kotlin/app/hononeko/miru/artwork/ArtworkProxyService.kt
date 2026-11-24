@@ -3,7 +3,9 @@ package app.hononeko.miru.artwork
 import app.hononeko.miru.adapter.MediaServerAdapter
 import app.hononeko.miru.auth.MiruPrincipal
 import app.hononeko.miru.domain.error.MiruError
+import app.hononeko.miru.persistence.repository.LibraryRepository
 import app.hononeko.miru.persistence.repository.UserRepository
+import app.hononeko.miru.service.MediaSectionAccessChecker
 import arrow.core.Either
 import arrow.core.getOrElse
 import arrow.core.raise.either
@@ -109,6 +111,9 @@ class ArtworkProxyService(
     private val cache: BoundedArtworkCache = BoundedArtworkCache(),
     allowedAvatarHosts: Set<String> = DEFAULT_ALLOWED_AVATAR_HOSTS,
     private val plexBaseUrlProvider: () -> String? = { null },
+    libraryRepository: LibraryRepository? = null,
+    private val sectionAccessChecker: MediaSectionAccessChecker =
+        MediaSectionAccessChecker(libraryRepository = libraryRepository, adapter = adapter),
 ) {
     constructor(
         adapter: MediaServerAdapter,
@@ -117,6 +122,7 @@ class ArtworkProxyService(
         cache: BoundedArtworkCache = BoundedArtworkCache(),
         allowedAvatarHosts: Set<String> = DEFAULT_ALLOWED_AVATAR_HOSTS,
         plexBaseUrl: String?,
+        libraryRepository: LibraryRepository? = null,
     ) : this(
         adapter = adapter,
         userRepository = userRepository,
@@ -124,6 +130,7 @@ class ArtworkProxyService(
         cache = cache,
         allowedAvatarHosts = allowedAvatarHosts,
         plexBaseUrlProvider = { plexBaseUrl },
+        libraryRepository = libraryRepository,
     )
 
     private val normalizedAllowedHosts: Set<String> =
@@ -143,6 +150,7 @@ class ArtworkProxyService(
             ?.let(::parseOrigin)
 
     suspend fun getMediaArtwork(
+        principal: MiruPrincipal,
         ratingKey: String,
         kind: ArtworkKind,
         width: Int? = null,
@@ -150,6 +158,7 @@ class ArtworkProxyService(
     ): Either<MiruError, CachedArtwork> =
         either {
             validateMediaArtworkRequest(ratingKey = ratingKey, width = width, height = height).bind()
+            sectionAccessChecker.requireAccessForRatingKey(principal = principal, ratingKey = ratingKey).bind()
 
             val cacheKey = "media:$ratingKey:${kind.pathSegment}:w=${width ?: 0}:h=${height ?: 0}"
             cache.get(cacheKey)?.let { return@either it }

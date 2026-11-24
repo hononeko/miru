@@ -53,6 +53,7 @@ import app.hononeko.miru.service.HistoryAndStatsService
 import app.hononeko.miru.service.LibraryQueryService
 import app.hononeko.miru.service.LibrarySyncTrigger
 import app.hononeko.miru.service.MediaDetailsService
+import app.hononeko.miru.service.MediaSectionAccessChecker
 import app.hononeko.miru.service.PlexUserSyncService
 import app.hononeko.miru.service.StreamControlService
 import app.hononeko.miru.service.StreamGuardrailRunner
@@ -138,6 +139,12 @@ private fun runServer() {
             sessionConfig = appConfig.session,
             mediaServerRepository = mediaServerRepository,
         )
+    val libraryRepository = ExposedLibraryRepository(databaseHandle)
+    val sectionAccessChecker =
+        MediaSectionAccessChecker(
+            libraryRepository = libraryRepository,
+            adapter = plexRuntimeManager.adapter,
+        )
     val externalAvatarClient = createClientOrCleanup(plexRuntimeManager, databaseHandle, oidcClient) { createAvatarHttpClient() }
     val plexOAuthHttpClient =
         createClientOrCleanup(plexRuntimeManager, databaseHandle, externalAvatarClient, oidcClient) { createPlexHttpClient() }
@@ -149,12 +156,7 @@ private fun runServer() {
             runtimeManager = plexRuntimeManager,
         )
     val artworkProxyService =
-        ArtworkProxyService(
-            adapter = plexRuntimeManager.adapter,
-            userRepository = userRepository,
-            externalAvatarClient = externalAvatarClient,
-            plexBaseUrlProvider = { plexRuntimeManager.currentBaseUrl() },
-        )
+        createArtworkProxyService(plexRuntimeManager, userRepository, externalAvatarClient, libraryRepository, sectionAccessChecker)
     val activeSessionRepository = ExposedActiveSessionRepository(databaseHandle)
     val streamsAndUsersService =
         createStreamsAndUsersService(activeSessionRepository, userRepository, playbackHistoryRepository, plexRuntimeManager)
@@ -166,7 +168,6 @@ private fun runServer() {
             databaseHandle = databaseHandle,
             appConfig = appConfig,
         )
-    val libraryRepository = ExposedLibraryRepository(databaseHandle)
     val libraryQueryService = LibraryQueryService(libraryRepository = libraryRepository)
     val syncServices =
         createSyncServices(
@@ -208,7 +209,13 @@ private fun runServer() {
                 historyAndStatsService = historyAndStatsService,
                 libraryQueryService = libraryQueryService,
                 librarySyncTrigger = syncServices.libraryStatsCollector,
-                mediaDetailsService = MediaDetailsService(plexRuntimeManager.adapter, playbackHistoryRepository),
+                mediaDetailsService =
+                    MediaDetailsService(
+                        mediaServerAdapter = plexRuntimeManager.adapter,
+                        playbackHistoryRepository = playbackHistoryRepository,
+                        libraryRepository = libraryRepository,
+                        sectionAccessChecker = sectionAccessChecker,
+                    ),
                 tautulliImporterService = tautulliImporterService,
                 plexOAuthService = plexOAuthService,
             )
@@ -227,6 +234,22 @@ private fun runServer() {
         throw e
     }
 }
+
+private fun createArtworkProxyService(
+    plexRuntimeManager: PlexRuntimeManager,
+    userRepository: ExposedUserRepository,
+    externalAvatarClient: io.ktor.client.HttpClient,
+    libraryRepository: ExposedLibraryRepository,
+    sectionAccessChecker: MediaSectionAccessChecker,
+): ArtworkProxyService =
+    ArtworkProxyService(
+        adapter = plexRuntimeManager.adapter,
+        userRepository = userRepository,
+        externalAvatarClient = externalAvatarClient,
+        plexBaseUrlProvider = { plexRuntimeManager.currentBaseUrl() },
+        libraryRepository = libraryRepository,
+        sectionAccessChecker = sectionAccessChecker,
+    )
 
 private fun createTautulliImporterService(
     mediaServerRepository: ExposedMediaServerRepository,

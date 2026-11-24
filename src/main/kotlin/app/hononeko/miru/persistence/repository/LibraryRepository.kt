@@ -12,6 +12,7 @@ import app.hononeko.miru.persistence.model.StaleMediaItemRecord
 import app.hononeko.miru.persistence.model.StaleMediaReportRecord
 import app.hononeko.miru.persistence.model.StaleMediaSort
 import app.hononeko.miru.persistence.model.UserLibraryAccessRecord
+import app.hononeko.miru.persistence.table.ActiveSessionsTable
 import app.hononeko.miru.persistence.table.LibrarySectionsTable
 import app.hononeko.miru.persistence.table.LibrarySnapshotsTable
 import app.hononeko.miru.persistence.table.MediaItemsCacheTable
@@ -104,6 +105,10 @@ interface LibraryRepository {
     suspend fun findAccessibleLibrariesForMediaUsers(
         mediaUserIds: Set<String>,
     ): Either<MiruError.PersistenceError, ResolvedLibraryAccess>
+
+    suspend fun findSectionKeysByRatingKey(
+        ratingKey: String,
+    ): Either<MiruError.PersistenceError, Set<Pair<String, String>>> = Either.Right(emptySet())
 }
 
 class ExposedLibraryRepository(
@@ -542,6 +547,53 @@ class ExposedLibraryRepository(
                 allLibrariesServerIds = allLibrariesServerIds,
                 allowedSections = allowedSections,
             )
+        }
+    }
+
+    override suspend fun findSectionKeysByRatingKey(
+        ratingKey: String,
+    ): Either<MiruError.PersistenceError, Set<Pair<String, String>>> {
+        val trimmedKey = ratingKey.trim()
+        if (trimmedKey.isEmpty()) {
+            return Either.Right(emptySet())
+        }
+        return database.exposedQuery("library_find_sections_by_rating_key") {
+            val result = linkedSetOf<Pair<String, String>>()
+
+            MediaItemsCacheTable
+                .select(MediaItemsCacheTable.serverId, MediaItemsCacheTable.sectionKey)
+                .where { MediaItemsCacheTable.ratingKey eq trimmedKey }
+                .forEach { row ->
+                    val serverId = row[MediaItemsCacheTable.serverId].trim()
+                    val sectionKey = row[MediaItemsCacheTable.sectionKey].trim()
+                    if (serverId.isNotEmpty() && sectionKey.isNotEmpty()) {
+                        result += serverId to sectionKey
+                    }
+                }
+
+            PlaybackHistoryTable
+                .select(PlaybackHistoryTable.serverId, PlaybackHistoryTable.librarySectionKey)
+                .where { PlaybackHistoryTable.ratingKey eq trimmedKey }
+                .forEach { row ->
+                    val serverId = row[PlaybackHistoryTable.serverId].trim()
+                    val sectionKey = row[PlaybackHistoryTable.librarySectionKey]?.trim().orEmpty()
+                    if (serverId.isNotEmpty() && sectionKey.isNotEmpty()) {
+                        result += serverId to sectionKey
+                    }
+                }
+
+            ActiveSessionsTable
+                .select(ActiveSessionsTable.serverId, ActiveSessionsTable.librarySectionKey)
+                .where { ActiveSessionsTable.ratingKey eq trimmedKey }
+                .forEach { row ->
+                    val serverId = row[ActiveSessionsTable.serverId].trim()
+                    val sectionKey = row[ActiveSessionsTable.librarySectionKey]?.trim().orEmpty()
+                    if (serverId.isNotEmpty() && sectionKey.isNotEmpty()) {
+                        result += serverId to sectionKey
+                    }
+                }
+
+            result
         }
     }
 

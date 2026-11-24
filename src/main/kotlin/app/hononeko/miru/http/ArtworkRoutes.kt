@@ -62,9 +62,11 @@ private suspend fun ApplicationCall.handleMediaArtwork(
 
     val result: Either<MiruError, CachedArtwork> =
         either {
+            val principal = requireMiruPrincipal().bind()
             val (width, height) = parseDimensions(widthRaw = widthRaw, heightRaw = heightRaw).bind()
             artworkProxyService
                 .getMediaArtwork(
+                    principal = principal,
                     ratingKey = ratingKey,
                     kind = kind,
                     width = width,

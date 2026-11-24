@@ -116,6 +116,17 @@ test.describe('Libraries browsing, admin-triggered deep sync & media details', (
 		await page.goto(`${miru.baseUrl}/libraries/2`);
 		await expect(page.getByText('Library access unavailable')).toBeVisible();
 
+		// Media details and artwork allow shared section 1 (Movies 101) and forbid unshared section 2 (Episode 202)
+		const allowedDetails = await page.request.get(`${miru.baseUrl}/api/v1/media/101`);
+		expect(allowedDetails.status()).toBe(200);
+		const allowedThumb = await page.request.get(`${miru.baseUrl}/api/v1/media/101/thumb`);
+		expect(allowedThumb.status()).toBe(200);
+
+		const forbiddenDetails = await page.request.get(`${miru.baseUrl}/api/v1/media/202`);
+		expect(forbiddenDetails.status()).toBe(403);
+		const forbiddenThumb = await page.request.get(`${miru.baseUrl}/api/v1/media/202/thumb`);
+		expect(forbiddenThumb.status()).toBe(403);
+
 		// Revoke Bob's shared access and trigger admin sync -> USER now sees empty shared-library state
 		mockPlex.setSharedServers([]);
 		await miru.apiTriggerLibrarySync(adminCookie, false);

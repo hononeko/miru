@@ -116,8 +116,16 @@ test.describe('Responsive mobile viewport: bottom navigation, compact cards & us
 			prefsDialog.getByRole('radiogroup', { name: 'Time format' }).getByRole('radio', { name: '12-hour' })
 		).toHaveAttribute('aria-checked', 'true');
 
-		// Sign out from mobile user menu
-		await prefsDialog.getByRole('button', { name: 'Sign Out' }).click();
+		// Sign out from mobile user menu, which asks first
+		const signOut = prefsDialog.getByRole('button', { name: 'Sign Out' });
+		const confirmation = prefsDialog.getByRole('group', { name: 'Sign out of Miru?' });
+		await signOut.tap();
+		await confirmation.getByRole('button', { name: 'Cancel' }).tap();
+		await expect(confirmation).toBeHidden();
+		await expect(prefsDialog).toBeVisible();
+
+		await signOut.tap();
+		await confirmation.getByRole('button', { name: 'Sign Out' }).tap();
 		await expect(page).toHaveURL(`${miru.baseUrl}/login`);
 	});
 

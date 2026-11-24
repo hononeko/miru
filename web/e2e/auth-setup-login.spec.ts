@@ -65,9 +65,42 @@ test.describe('First-run setup, login, session persistence, sign-out & OIDC SSO'
 		await page.goto(`${miru.baseUrl}/setup`);
 		await expect(page).toHaveURL(`${miru.baseUrl}/`);
 
-		// 7. Sign out returns to /login
-		await page.locator('aside').first().getByRole('button', { name: 'Sign out' }).click();
+		// 7. Sign out asks first; Cancel, Escape and pressing elsewhere keep the session
+		const signOut = page.locator('aside').first().getByRole('button', { name: 'Sign out' });
+		const signOutConfirmation = page.getByRole('dialog', { name: 'Sign out of Miru?' });
+		const dismissals = [
+			() => signOutConfirmation.getByRole('button', { name: 'Cancel' }).click(),
+			() => page.keyboard.press('Escape'),
+			() => page.mouse.click(700, 300)
+		];
+		for (const dismiss of dismissals) {
+			await signOut.click();
+			await expect(signOutConfirmation.getByRole('button', { name: 'Cancel' })).toBeFocused();
+			await dismiss();
+			await expect(signOutConfirmation).toBeHidden();
+			await expect(signOut).toBeFocused();
+			await expect(page).toHaveURL(`${miru.baseUrl}/`);
+		}
+
+		// Reachable by keyboard alone; Tab stays inside
+		await page.keyboard.press('Enter');
+		await expect(signOutConfirmation.getByRole('button', { name: 'Cancel' })).toBeFocused();
+		await page.keyboard.press('Tab');
+		await expect(signOutConfirmation.getByRole('button', { name: 'Sign Out' })).toBeFocused();
+		await page.keyboard.press('Tab');
+		await expect(signOutConfirmation.getByRole('button', { name: 'Cancel' })).toBeFocused();
+
+		// Confirming sends one request and returns to /login
+		let logoutRequests = 0;
+		page.on('request', (request) => {
+			if (/\/auth\/(oidc\/)?logout$/.test(new URL(request.url()).pathname)) logoutRequests++;
+		});
+		// The app shows /login right away; the redirect through the provider then loads it again
+		const redirectedBack = page.waitForEvent('load');
+		await signOutConfirmation.getByRole('button', { name: 'Sign Out' }).dblclick({ noWaitAfter: true }).catch(() => {});
+		await redirectedBack;
 		await expect(page).toHaveURL(`${miru.baseUrl}/login`);
+		expect(logoutRequests).toBe(1);
 		await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
 
 		// 8. Invalid password is rejected on /login
@@ -84,7 +117,10 @@ test.describe('First-run setup, login, session persistence, sign-out & OIDC SSO'
 		await expect(page.getByRole('heading', { name: 'Live Activity' })).toBeVisible();
 
 		// Sign out before testing OIDC SSO
-		await page.locator('aside').first().getByRole('button', { name: 'Sign out' }).click();
+		await signOut.click();
+		const redirectedBackAgain = page.waitForEvent('load');
+		await signOutConfirmation.getByRole('button', { name: 'Sign Out' }).click();
+		await redirectedBackAgain;
 		await expect(page).toHaveURL(`${miru.baseUrl}/login`);
 
 		// 10. OIDC user outside authorized groups is denied and redirected back to /login?error=forbidden

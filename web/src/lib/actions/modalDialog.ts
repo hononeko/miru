@@ -1,5 +1,10 @@
 import { lockPageScroll } from '$lib/scrollLock';
 
+export interface ModalDialogOptions {
+	/** Asked when a press on the backdrop starts. The press does not close the dialog if this returns false. */
+	canDismiss?: () => boolean;
+}
+
 /** Whether a touch on `target` scrolls something inside the dialog, or drags a form control. */
 function scrollsContent(target: EventTarget | null, dialog: HTMLDialogElement): boolean {
 	for (let el = target instanceof Element ? target : null; el && el !== dialog.parentElement; el = el.parentElement) {
@@ -20,7 +25,7 @@ function scrollsContent(target: EventTarget | null, dialog: HTMLDialogElement): 
  * native ones because iOS Safari only sends clicks to elements that have their own listener, and Svelte delegates
  * `onclick` to the app root.
  */
-export function modalDialog(dialog: HTMLDialogElement) {
+export function modalDialog(dialog: HTMLDialogElement, options: ModalDialogOptions = {}) {
 	let pressedBackdrop = false;
 	let touchScrollsContent = false;
 	let unlockScroll: (() => void) | null = null;
@@ -32,7 +37,7 @@ export function modalDialog(dialog: HTMLDialogElement) {
 	}
 
 	function onPointerDown(e: PointerEvent) {
-		pressedBackdrop = isBackdrop(e);
+		pressedBackdrop = isBackdrop(e) && (options.canDismiss?.() ?? true);
 	}
 
 	function onClick(e: MouseEvent) {

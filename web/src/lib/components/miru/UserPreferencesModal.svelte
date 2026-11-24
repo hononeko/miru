@@ -1,9 +1,10 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
+	import { tick } from 'svelte';
 	import { Monitor, Moon, Sun, LogOut } from 'lucide-svelte';
 	import { api, MiruApiError } from '$api/client';
 	import Badge from '$components/ui/Badge.svelte';
 	import Button from '$components/ui/Button.svelte';
+	import SignOutConfirmation from './SignOutConfirmation.svelte';
 	import { authStore } from '$stores/auth.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
 	import { themeStore } from '$stores/theme.svelte';
@@ -18,6 +19,8 @@
 		UpdateUserPreferencesRequest
 	} from '$api/types';
 	import { cn, formatPreferencePreview, safeInitial, validatePassword } from '$lib/utils';
+
+	const signOutTitleId = 'preferences-sign-out-title';
 
 	let dialogEl: HTMLDialogElement | undefined = $state();
 	let draft = $state<UpdateUserPreferencesRequest>({
@@ -37,6 +40,8 @@
 	let passwordError = $state<string | null>(null);
 	let passwordSuccess = $state<string | null>(null);
 	let savedOnClose = false;
+	let confirmingSignOut = $state(false);
+	let signOutFooterEl: HTMLDivElement | undefined = $state();
 
 	const canChangePassword = $derived(
 		authStore.authMode !== 'none' &&
@@ -77,6 +82,16 @@
 				: 'border-transparent text-fg-secondary hover:text-fg-primary'
 		);
 	}
+
+	const hasUnsavedChanges = $derived(
+		draft.theme !== preferencesStore.prefs.theme ||
+			draft.timeFormat !== preferencesStore.prefs.timeFormat ||
+			draft.dateFormat !== preferencesStore.prefs.dateFormat ||
+			draft.defaultStatsRange !== preferencesStore.prefs.defaultStatsRange ||
+			draft.relativeTimestamps !== preferencesStore.prefs.relativeTimestamps ||
+			draft.analyticsMetric !== preferencesStore.prefs.analyticsMetric ||
+			Boolean(currentPassword || newPassword || confirmNewPassword)
+	);
 
 	const previewText = $derived(formatPreferencePreview(draft, previewSampleMs));
 
@@ -129,6 +144,7 @@
 		confirmNewPassword = '';
 		passwordError = null;
 		passwordSuccess = null;
+		confirmingSignOut = false;
 		preferencesStore.closeModal();
 	}
 
@@ -188,23 +204,47 @@
 		}
 	}
 
-	async function handleSignOut() {
-		savedOnClose = false;
-		themeStore.set(preferencesStore.prefs.theme);
-		preferencesStore.closeModal();
-		const redirectsToOidc = authStore.oidcEnabled && Boolean(authStore.oidcLogoutUrl);
-		await authStore.logout();
-		if (!redirectsToOidc) {
-			await goto('/login');
+	// The confirmation replaces the footer: a popover would open below this dialog, which is in the top layer.
+	async function askToSignOut() {
+		confirmingSignOut = true;
+		await tick();
+		signOutFooterEl?.querySelector('button')?.focus();
+	}
+
+	async function cancelSignOut() {
+		if (!confirmingSignOut || authStore.loggingOut) return;
+		confirmingSignOut = false;
+		await tick();
+		// Unless the click that dismissed it has moved the focus to another control
+		if (!document.activeElement || document.activeElement === document.body || document.activeElement === dialogEl) {
+			dialogEl?.querySelector<HTMLElement>('[data-sign-out]')?.focus();
 		}
 	}
+
+	/** Escape and the Android back gesture dismiss the confirmation first, and keep the dialog and its draft. */
+	function handleDialogCancel(e: Event) {
+		if (!confirmingSignOut) return;
+		e.preventDefault();
+		void cancelSignOut();
+	}
+
+	$effect(() => {
+		const dialog = dialogEl;
+		if (!dialog || !confirmingSignOut) return;
+		const dismissOnOutsideClick = (e: MouseEvent) => {
+			if (!(e.target instanceof Node && signOutFooterEl?.contains(e.target))) void cancelSignOut();
+		};
+		dialog.addEventListener('click', dismissOnOutsideClick);
+		return () => dialog.removeEventListener('click', dismissOnOutsideClick);
+	});
 </script>
 
 <dialog
 	bind:this={dialogEl}
 	aria-labelledby="user-preferences-title"
 	onclose={handleDialogClose}
-	use:modalDialog
+	oncancel={handleDialogCancel}
+	use:modalDialog={{ canDismiss: () => !confirmingSignOut }}
 	use:sheetDrag={{ onDismiss: handleCancel }}
 	class="m-0 mt-auto w-full max-w-none rounded-t-2xl border-t border-border-strong bg-surface p-0 text-fg-primary shadow-2xl open:flex open:flex-col max-h-[90dvh] md:m-auto md:w-full md:max-w-lg md:rounded-2xl md:border"
 >
@@ -500,24 +540,41 @@
 		</div>
 
 		<!-- Footer -->
-		<div class="flex flex-wrap items-center justify-between gap-2 border-t border-border px-5 py-3.5 safe-pb">
-			<div>
-				{#if authStore.authMode !== 'none' && authStore.authenticated}
-					<Button variant="destructive" size="sm" onclick={handleSignOut}>
-						<LogOut class="h-3.5 w-3.5" />
-						Sign Out
+		{#if confirmingSignOut}
+			<div
+				bind:this={signOutFooterEl}
+				role="group"
+				aria-labelledby={signOutTitleId}
+				aria-describedby={hasUnsavedChanges ? `${signOutTitleId}-description` : undefined}
+				class="animate-fade-in border-t border-border px-5 py-3.5 safe-pb"
+			>
+				<SignOutConfirmation
+					titleId={signOutTitleId}
+					description={hasUnsavedChanges ? 'Your unsaved changes will be lost.' : undefined}
+					oncancel={() => void cancelSignOut()}
+					onsignedout={handleCancel}
+				/>
+			</div>
+		{:else}
+			<div class="flex flex-wrap items-center justify-between gap-2 border-t border-border px-5 py-3.5 safe-pb">
+				<div>
+					{#if authStore.authMode !== 'none' && authStore.authenticated}
+						<Button variant="destructive" size="sm" data-sign-out onclick={() => void askToSignOut()}>
+							<LogOut class="h-3.5 w-3.5" />
+							Sign Out
+						</Button>
+					{/if}
+				</div>
+				<div class="flex items-center gap-2">
+					<Button variant="ghost" size="sm" onclick={handleCancel}>
+						Cancel
 					</Button>
-				{/if}
+					<Button type="submit" variant="primary" size="sm" disabled={preferencesStore.saving}>
+						{preferencesStore.saving ? 'Saving…' : 'Save Preferences'}
+					</Button>
+				</div>
 			</div>
-			<div class="flex items-center gap-2">
-				<Button variant="ghost" size="sm" onclick={handleCancel}>
-					Cancel
-				</Button>
-				<Button type="submit" variant="primary" size="sm" disabled={preferencesStore.saving}>
-					{preferencesStore.saving ? 'Saving…' : 'Save Preferences'}
-				</Button>
-			</div>
-		</div>
+		{/if}
 	</form>
 </dialog>
 

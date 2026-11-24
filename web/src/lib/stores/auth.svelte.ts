@@ -11,6 +11,7 @@ export class AuthStore {
 	oidcLogoutUrl = $state<string | null>(null);
 	setupRequired = $state(false);
 	principal = $state<PrincipalResponse | null>(null);
+	loggingOut = $state(false);
 	error = $state<string | null>(null);
 
 	get authenticated(): boolean {
@@ -86,6 +87,7 @@ export class AuthStore {
 	}
 
 	async logout(): Promise<void> {
+		if (this.loggingOut) return;
 		if (this.oidcEnabled && this.oidcLogoutUrl) {
 			this.principal = null;
 			if (typeof window !== 'undefined') {
@@ -93,9 +95,11 @@ export class AuthStore {
 			}
 			return;
 		}
+		this.loggingOut = true;
 		try {
 			await api.POST('/api/v1/auth/logout');
 		} finally {
+			this.loggingOut = false;
 			this.principal = null;
 		}
 	}

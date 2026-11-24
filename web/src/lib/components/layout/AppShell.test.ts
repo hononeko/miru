@@ -1,5 +1,6 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/svelte';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { goto } from '$app/navigation';
 import { api } from '$api/client';
 import { authStore } from '$stores/auth.svelte';
 import AppShell from './AppShell.svelte';
@@ -118,5 +119,108 @@ describe('AppShell user avatars', () => {
 		await waitFor(() => {
 			expect(screen.getByText('Miru v1.0.0-rc1')).toBeTruthy();
 		});
+	});
+});
+
+describe('AppShell sign out', () => {
+	beforeEach(() => {
+		vi.mocked(goto).mockClear();
+		authStore.authMode = 'local';
+		authStore.principal = {
+			accountId: 'acc-1',
+			username: 'alice',
+			email: null,
+			role: 'USER',
+			linkedMediaUserIds: [],
+			authSource: 'SESSION_COOKIE',
+			avatarUrl: null
+		};
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+		cleanup();
+		authStore.principal = null;
+		authStore.oidcEnabled = false;
+		authStore.oidcLogoutUrl = null;
+	});
+
+	const trigger = () => screen.getByRole('button', { name: 'Sign out' });
+	const confirmation = () => screen.queryByRole('dialog', { name: 'Sign out of Miru?' });
+	const inConfirmation = (name: string) =>
+		Array.from(confirmation()!.querySelectorAll('button')).find((b) => b.textContent?.trim() === name)!;
+
+	async function openConfirmation() {
+		await fireEvent.click(trigger());
+		await waitFor(() => expect(confirmation()).toBeTruthy());
+	}
+
+	it('asks before signing out and keeps the session when cancelled', async () => {
+		const logout = vi.spyOn(authStore, 'logout');
+		render(AppShell);
+
+		await openConfirmation();
+		expect(trigger().getAttribute('aria-expanded')).toBe('true');
+		await waitFor(() => expect(document.activeElement).toBe(inConfirmation('Cancel')));
+		await fireEvent.click(inConfirmation('Cancel'));
+		await waitFor(() => expect(confirmation()).toBeNull());
+
+		await openConfirmation();
+		await fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+		await waitFor(() => expect(confirmation()).toBeNull());
+
+		expect(logout).not.toHaveBeenCalled();
+		expect(authStore.authenticated).toBe(true);
+		expect(goto).not.toHaveBeenCalled();
+	});
+
+	it('signs out once and goes to the login page when confirmed', async () => {
+		let answer!: (value: unknown) => void;
+		const post = vi.spyOn(api, 'POST').mockReturnValue(new Promise((resolve) => (answer = resolve)) as never);
+		render(AppShell);
+
+		await openConfirmation();
+		await fireEvent.click(inConfirmation('Sign Out'));
+		const pending = await waitFor(() => {
+			const button = inConfirmation('Signing out…');
+			expect(button.disabled).toBe(true);
+			return button;
+		});
+
+		// Neither another press nor dismissing it does anything while the request is in flight
+		pending.disabled = false;
+		await fireEvent.click(pending);
+		await fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		expect(trigger().getAttribute('aria-expanded')).toBe('true');
+		expect(confirmation()).toBeTruthy();
+		expect(goto).not.toHaveBeenCalled();
+
+		answer({ response: new Response(null, { status: 204 }) });
+		await waitFor(() => expect(goto).toHaveBeenCalledWith('/login'));
+		expect(post).toHaveBeenCalledTimes(1);
+		expect(post).toHaveBeenCalledWith('/api/v1/auth/logout');
+		expect(authStore.authenticated).toBe(false);
+		expect(confirmation()).toBeNull();
+	});
+
+	it('leaves the redirect to the identity provider to the server when confirmed', async () => {
+		authStore.oidcEnabled = true;
+		authStore.oidcLogoutUrl = '/api/v1/auth/oidc/logout';
+		const assign = vi.spyOn(window.location, 'assign').mockImplementation(() => {});
+		const post = vi.spyOn(api, 'POST');
+		render(AppShell);
+
+		await openConfirmation();
+		expect(assign).not.toHaveBeenCalled();
+		const confirm = inConfirmation('Sign Out');
+		// Twice before the page has a chance to update
+		confirm.click();
+		confirm.click();
+		await waitFor(() => expect(assign).toHaveBeenCalledWith('/api/v1/auth/oidc/logout'));
+		expect(assign).toHaveBeenCalledTimes(1);
+		expect(post).not.toHaveBeenCalled();
+		expect(goto).not.toHaveBeenCalled();
 	});
 });

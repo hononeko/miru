@@ -2,7 +2,7 @@
 
 Lightweight, security-hardened media server telemetry, live stream monitor, playback history tracker, and library analytics engine for Plex.
 
-Built with **Kotlin 2.4 / JDK 25**, **Ktor 3**, **Arrow-kt**, and dual **SQLite / PostgreSQL** persistence — bundling a decoupled SvelteKit 2 + Svelte 5 PWA and OpenAPI 3.1 API into a **70.7 MiB** shell-less Distroless container.
+Built with **Kotlin 2.4 / JDK 25**, **Ktor 3**, **Arrow-kt**, and dual **SQLite / PostgreSQL** persistence — bundling a decoupled SvelteKit 2 + Svelte 5 PWA and OpenAPI 3.1 API into a **68.0 MiB** shell-less Distroless container.
 
 ## Screenshots
 
@@ -23,15 +23,16 @@ Benchmarked side-by-side against **Tautulli v2.19.1** on a shared **10,000-play*
 
 | Metric | Miru (SQLite) | Miru (PostgreSQL 17) | Tautulli (SQLite) |
 | :--- | :---: | :---: | :---: |
-| **Live UI update latency** *(start/pause/stop)* | **`526–528 ms`** *(WS + SSE)* | — | `9.5 s` *(10 s poll)* |
+| **Live UI update latency** *(start/pause/stop)* | **`526–532 ms`** *(WS + SSE)* | — | `9.5 s` *(10 s poll)* |
 | **30s live traffic** *(3 active streams)* | **`0 reqs / 8.7 KiB`** | — | `3 reqs / 64.7 KiB` |
-| **History p.1 (`c=10`, p50 / p99)** | `41.8 / 128.9 ms` (`192 req/s`) | **`11.0 / 77.0 ms`** (`642 req/s`) | `164.7 / 1,276.7 ms` (`53 req/s`) |
-| **30d stats (`c=10`, p50)** | `207.2 ms` (`47 req/s`) | **`76.3 ms`** (`129 req/s`) | `701.7 ms` (`15 req/s`) |
-| **Cached artwork (`c=10`, p50)** | **`1.56 ms`** (`5,482 req/s`) | — | `29.3 ms` (`370 req/s`) |
-| **Cold start / 10k Tautulli import** | **`1.23 s`** / **`651 ms`** | **`1.34 s`** / **`1.92 s`** | `1.48 s` / — |
-| **Image size (`amd64`, compressed / unpacked)** | **`70.7 MiB` / `181.0 MiB`** | **`70.7 MiB` / `181.0 MiB`** *(+ PG)* | `72.8 MiB` / `296.1 MiB` |
+| **History p.1 (`c=10`, p50 / p99)** | `34.9 / 87.8 ms` (`232 req/s`) | **`11.5 / 22.8 ms`** (`802 req/s`) | `184.5 / 289.0 ms` (`58 req/s`) |
+| **30d stats (`c=10`, p50)** | `134.7 ms` (`71 req/s`) | **`15.5 ms`** (`598 req/s`) | `712.8 ms` (`14 req/s`) |
+| **All-time stats (`c=10`, p50)** | `329.0 ms` (`29 req/s`) | **`80.7 ms`** (`120 req/s`) | `2,029.0 ms` (`5 req/s`) |
+| **Cached artwork (`c=10`, p50)** | **`1.67 ms`** (`5,489 req/s`) | — | `11.6 ms` (`785 req/s`) |
+| **Cold start / 10k Tautulli import** | **`1.16 s`** / **`731 ms`** | **`1.23 s`** / **`2.03 s`** | `1.50 s` / — |
+| **Image size (`amd64`, compressed / unpacked)** | **`68.0 MiB` / `175.5 MiB`** | **`68.0 MiB` / `175.5 MiB`** *(+ PG)* | `72.8 MiB` / `296.1 MiB` |
 
-Miru delivers **18× faster live UI updates** with **7.4× less live traffic**, **8.6×–12.2× higher concurrent query throughput** on PostgreSQL, **14.8× higher cached artwork throughput**, **17% faster cold startup**, and a **39% smaller unpacked Distroless image** (while Tautulli keeps a smaller idle RAM footprint at `82 MiB` vs Miru's `232–241 MiB` JVM baseline). See [`docs/benchmarks.md`](docs/benchmarks.md) for full methodology and trade-offs.
+Miru delivers **18× faster live UI updates** with **7.4× less live traffic**, **13.9×–43.3× higher concurrent query throughput** on PostgreSQL, **7.0× higher cached artwork throughput**, **23% faster cold startup**, and a **41% smaller unpacked Distroless image** (while Tautulli keeps a smaller idle RAM footprint at `82 MiB` vs Miru's `163–183 MiB` working set under load, settling to `148 MiB` idle). See [`docs/benchmarks.md`](docs/benchmarks.md) for full methodology and trade-offs.
 
 ## Security
 

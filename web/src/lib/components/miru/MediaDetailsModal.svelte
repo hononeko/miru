@@ -246,8 +246,9 @@
 			</div>
 		</div>
 	{:else if data}
-		<!-- Scrollable Body -->
-		<div class="flex-1 overflow-y-auto">
+		<!-- Scrollable body: flex-auto, not flex-1, because WebKit before 26.4 resolves a 0% basis to 0px in an
+		auto-height dialog and collapses the modal -->
+		<div data-modal-body class="min-h-0 flex-auto overflow-y-auto">
 			<!-- Hero Banner -->
 			<div class="relative overflow-hidden border-b border-border bg-elevated">
 				<!-- Mobile drag indicator sits inside the hero so art reaches the top edge without floating over scrolled content -->
@@ -619,7 +620,7 @@
 		</div>
 
 		<!-- Footer -->
-		<footer class="flex items-center justify-between gap-3 border-t border-border bg-surface px-5 py-3.5 safe-pb">
+		<footer class="flex shrink-0 items-center justify-between gap-3 border-t border-border bg-surface px-5 py-3.5 safe-pb">
 			<a
 				href={historyHref}
 				onclick={() => mediaDetailsModal.close()}

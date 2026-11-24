@@ -194,9 +194,10 @@
 		</div>
 	</div>
 
-	<!-- Preferences Form -->
-	<form onsubmit={handleSave} class="flex min-h-0 flex-1 flex-col">
-		<div class="flex flex-col gap-5 overflow-y-auto px-5 py-4">
+	<!-- Preferences form: flex-auto, not flex-1, because WebKit before 26.4 resolves a 0% basis to 0px in an
+	auto-height dialog and collapses the modal -->
+	<form onsubmit={handleSave} class="flex min-h-0 flex-auto flex-col">
+		<div data-modal-body class="flex min-h-0 flex-col gap-5 overflow-y-auto px-5 py-4">
 			{#if saveError}
 				<div class="rounded-xl border border-danger/50 bg-danger-soft px-3.5 py-2.5 text-xs text-danger">
 					{saveError}

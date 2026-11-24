@@ -14,18 +14,9 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.java.Java
 import io.ktor.client.plugins.HttpTimeout
-import io.ktor.client.plugins.ResponseException
-import io.ktor.client.request.get
-import io.ktor.client.request.header
-import io.ktor.client.statement.HttpResponse
-import io.ktor.client.statement.bodyAsBytes
 import io.ktor.http.ContentType
-import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
-import io.ktor.http.contentLength
-import io.ktor.http.contentType
 import io.ktor.http.isSuccess
-import kotlinx.coroutines.CancellationException
 import java.net.URI
 
 private const val DEFAULT_AVATAR_REQUEST_TIMEOUT_MS = 10_000L
@@ -49,7 +40,6 @@ private val AVATAR_REDIRECT_STATUS_CODES =
 private const val ASCII_SPACE = 0x20
 private const val ASCII_DEL = 0x7F
 
-private const val ARTWORK_ACCEPT_HEADER = "image/*, */*;q=0.8"
 private const val DEFAULT_CONTENT_TYPE = "application/octet-stream"
 
 val DEFAULT_ALLOWED_AVATAR_HOSTS: Set<String> =
@@ -107,22 +97,28 @@ sealed interface AvatarTarget {
 class ArtworkProxyService(
     private val adapter: MediaServerAdapter,
     private val userRepository: UserRepository,
-    private val externalAvatarClient: HttpClient,
+    externalAvatarClient: HttpClient? = null,
     private val cache: BoundedArtworkCache = BoundedArtworkCache(),
     allowedAvatarHosts: Set<String> = DEFAULT_ALLOWED_AVATAR_HOSTS,
     private val plexBaseUrlProvider: () -> String? = { null },
     libraryRepository: LibraryRepository? = null,
     private val sectionAccessChecker: MediaSectionAccessChecker =
         MediaSectionAccessChecker(libraryRepository = libraryRepository, adapter = adapter),
+    private val dnsResolver: DnsResolver = SystemDnsResolver,
+    private val externalAvatarFetcher: ExternalAvatarFetcher =
+        externalAvatarClient?.let(::HttpClientExternalAvatarFetcher) ?: PinnedHttpsAvatarFetcher(),
 ) {
     constructor(
         adapter: MediaServerAdapter,
         userRepository: UserRepository,
-        externalAvatarClient: HttpClient,
+        externalAvatarClient: HttpClient? = null,
         cache: BoundedArtworkCache = BoundedArtworkCache(),
         allowedAvatarHosts: Set<String> = DEFAULT_ALLOWED_AVATAR_HOSTS,
         plexBaseUrl: String?,
         libraryRepository: LibraryRepository? = null,
+        dnsResolver: DnsResolver = SystemDnsResolver,
+        externalAvatarFetcher: ExternalAvatarFetcher =
+            externalAvatarClient?.let(::HttpClientExternalAvatarFetcher) ?: PinnedHttpsAvatarFetcher(),
     ) : this(
         adapter = adapter,
         userRepository = userRepository,
@@ -131,6 +127,8 @@ class ArtworkProxyService(
         allowedAvatarHosts = allowedAvatarHosts,
         plexBaseUrlProvider = { plexBaseUrl },
         libraryRepository = libraryRepository,
+        dnsResolver = dnsResolver,
+        externalAvatarFetcher = externalAvatarFetcher,
     )
 
     private val normalizedAllowedHosts: Set<String> =
@@ -293,30 +291,30 @@ class ArtworkProxyService(
         cacheKey: String,
     ): Either<MiruError, CachedArtwork> =
         either {
-            val response = executeExternalAvatarGetWithRedirects(initialUrl = url, userId = userId).bind()
+            val response = executeExternalAvatarGetWithRedirects(initialUrl = url).bind()
 
-            val status = response.status
-            if (status == HttpStatusCode.NotFound) {
+            val statusCode = response.statusCode
+            if (statusCode == HttpStatusCode.NotFound.value) {
                 raise(MiruError.NotFound(resource = "User avatar", id = userId))
             }
-            if (status.value in REDIRECT_STATUS_MIN..REDIRECT_STATUS_MAX) {
+            if (statusCode in REDIRECT_STATUS_MIN..REDIRECT_STATUS_MAX) {
                 raise(
                     MiruError.UpstreamUnavailable(
                         provider = EXTERNAL_AVATAR_PROVIDER,
-                        message = "External avatar host attempted redirect (HTTP ${status.value})",
+                        message = "External avatar host attempted redirect (HTTP $statusCode)",
                     ),
                 )
             }
-            if (!status.isSuccess()) {
+            if (!HttpStatusCode.fromValue(statusCode).isSuccess()) {
                 raise(
                     MiruError.UpstreamUnavailable(
                         provider = EXTERNAL_AVATAR_PROVIDER,
-                        message = "External avatar host returned HTTP ${status.value}",
+                        message = "External avatar host returned HTTP $statusCode",
                     ),
                 )
             }
 
-            val declaredLength = response.contentLength()
+            val declaredLength = response.contentLength
             ensure(declaredLength == null || declaredLength <= MAX_ARTWORK_BYTES) {
                 MiruError.UpstreamUnavailable(
                     provider = EXTERNAL_AVATAR_PROVIDER,
@@ -324,21 +322,7 @@ class ArtworkProxyService(
                 )
             }
 
-            val bytes =
-                try {
-                    response.bodyAsBytes()
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    raise(
-                        MiruError.UpstreamUnavailable(
-                            provider = EXTERNAL_AVATAR_PROVIDER,
-                            message = "Failed to read external avatar response bytes",
-                            cause = e,
-                        ),
-                    )
-                }
-
+            val bytes = response.bytes
             ensure(bytes.isNotEmpty()) {
                 MiruError.UpstreamUnavailable(
                     provider = EXTERNAL_AVATAR_PROVIDER,
@@ -352,25 +336,24 @@ class ArtworkProxyService(
                 )
             }
 
-            val sanitizedType = sanitizeImageContentType(response.contentType()?.toString())
+            val sanitizedType = sanitizeImageContentType(response.contentType)
             cache.put(key = cacheKey, bytes = bytes, contentType = sanitizedType)
         }
 
     private suspend fun executeExternalAvatarGetWithRedirects(
         initialUrl: String,
-        userId: String,
-    ): Either<MiruError, HttpResponse> =
+    ): Either<MiruError, ExternalAvatarHttpResponse> =
         either {
             var currentUrl = initialUrl
             repeat(MAX_AVATAR_REDIRECT_HOPS) {
-                val response = executeSingleExternalGet(url = currentUrl, userId = userId).bind()
-                if (response.status.value !in AVATAR_REDIRECT_STATUS_CODES) {
+                val response = executeSingleExternalGet(url = currentUrl).bind()
+                if (response.statusCode !in AVATAR_REDIRECT_STATUS_CODES) {
                     return@either response
                 }
                 currentUrl = resolveAndValidateRedirectTarget(currentUrl = currentUrl, response = response).bind()
             }
-            val finalResponse = executeSingleExternalGet(url = currentUrl, userId = userId).bind()
-            ensure(finalResponse.status.value !in AVATAR_REDIRECT_STATUS_CODES) {
+            val finalResponse = executeSingleExternalGet(url = currentUrl).bind()
+            ensure(finalResponse.statusCode !in AVATAR_REDIRECT_STATUS_CODES) {
                 MiruError.UpstreamUnavailable(
                     provider = EXTERNAL_AVATAR_PROVIDER,
                     message = "External avatar redirect chain exceeded $MAX_AVATAR_REDIRECT_HOPS hops",
@@ -381,44 +364,29 @@ class ArtworkProxyService(
 
     private suspend fun executeSingleExternalGet(
         url: String,
-        userId: String,
-    ): Either<MiruError, HttpResponse> =
+    ): Either<MiruError, ExternalAvatarHttpResponse> =
         either {
-            try {
-                externalAvatarClient.get(url) {
-                    header(HttpHeaders.Accept, ARTWORK_ACCEPT_HEADER)
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: ResponseException) {
-                if (e.response.status == HttpStatusCode.NotFound) {
-                    raise(MiruError.NotFound(resource = "User avatar", id = userId))
-                }
-                raise(
-                    MiruError.UpstreamUnavailable(
-                        provider = EXTERNAL_AVATAR_PROVIDER,
-                        message = "External avatar host returned HTTP ${e.response.status.value}",
-                        cause = e,
-                    ),
-                )
-            } catch (e: Exception) {
-                raise(
-                    MiruError.UpstreamUnavailable(
-                        provider = EXTERNAL_AVATAR_PROVIDER,
-                        message = "Failed to fetch external user avatar",
-                        cause = e,
-                    ),
-                )
-            }
+            val host =
+                runCatching { URI(url).host?.lowercase()?.trimEnd('.') }
+                    .getOrNull()
+                    ?.takeIf { it.isNotEmpty() }
+                    ?: raise(
+                        MiruError.UpstreamUnavailable(
+                            provider = EXTERNAL_AVATAR_PROVIDER,
+                            message = "External avatar URL is missing a host",
+                        ),
+                    )
+            val pinnedAddresses = IpAddressSafety.resolveAndValidatePublicIps(host = host, dnsResolver = dnsResolver).bind()
+            externalAvatarFetcher.get(url = url, pinnedAddresses = pinnedAddresses).bind()
         }
 
     private fun resolveAndValidateRedirectTarget(
         currentUrl: String,
-        response: HttpResponse,
+        response: ExternalAvatarHttpResponse,
     ): Either<MiruError.UpstreamUnavailable, String> =
         either {
             val location =
-                response.headers[HttpHeaders.Location]
+                response.locationHeader
                     ?.trim()
                     ?.takeIf { it.isNotEmpty() }
                     ?: raise(

@@ -6,7 +6,6 @@ import app.hononeko.miru.adapter.plex.PlexRuntimeManager
 import app.hononeko.miru.adapter.plex.RealtimeLifecycle
 import app.hononeko.miru.adapter.plex.createPlexHttpClient
 import app.hononeko.miru.artwork.ArtworkProxyService
-import app.hononeko.miru.artwork.createAvatarHttpClient
 import app.hononeko.miru.auth.Argon2idPasswordHasher
 import app.hononeko.miru.auth.AuthRateLimiter
 import app.hononeko.miru.auth.AuthService
@@ -146,9 +145,8 @@ private fun runServer() {
             libraryRepository = libraryRepository,
             adapter = plexRuntimeManager.adapter,
         )
-    val externalAvatarClient = createClientOrCleanup(plexRuntimeManager, databaseHandle, oidcClient) { createAvatarHttpClient() }
     val plexOAuthHttpClient =
-        createClientOrCleanup(plexRuntimeManager, databaseHandle, externalAvatarClient, oidcClient) { createPlexHttpClient() }
+        createClientOrCleanup(plexRuntimeManager, databaseHandle, oidcClient) { createPlexHttpClient() }
     val plexOAuthService =
         PlexOAuthService(
             plexConfig = appConfig.plex,
@@ -157,7 +155,7 @@ private fun runServer() {
             runtimeManager = plexRuntimeManager,
         )
     val artworkProxyService =
-        createArtworkProxyService(plexRuntimeManager, userRepository, externalAvatarClient, libraryRepository, sectionAccessChecker)
+        createArtworkProxyService(plexRuntimeManager, userRepository, libraryRepository, sectionAccessChecker)
     val activeSessionRepository = ExposedActiveSessionRepository(databaseHandle)
     val streamsAndUsersService =
         createStreamsAndUsersService(activeSessionRepository, userRepository, playbackHistoryRepository, plexRuntimeManager)
@@ -193,7 +191,6 @@ private fun runServer() {
                 syncServices = syncServices,
                 databaseHandle = databaseHandle,
                 plexOAuthHttpClient,
-                externalAvatarClient,
                 oidcClient,
             )
             miruModule(
@@ -229,7 +226,6 @@ private fun runServer() {
             plexRuntimeManager = plexRuntimeManager,
             databaseHandle = databaseHandle,
             plexOAuthHttpClient,
-            externalAvatarClient,
             oidcClient,
         )
         throw e
@@ -239,14 +235,12 @@ private fun runServer() {
 internal fun createArtworkProxyService(
     plexRuntimeManager: PlexRuntimeManager,
     userRepository: ExposedUserRepository,
-    externalAvatarClient: io.ktor.client.HttpClient,
     libraryRepository: ExposedLibraryRepository,
     sectionAccessChecker: MediaSectionAccessChecker,
 ): ArtworkProxyService =
     ArtworkProxyService(
         adapter = plexRuntimeManager.adapter,
         userRepository = userRepository,
-        externalAvatarClient = externalAvatarClient,
         plexBaseUrlProvider = { plexRuntimeManager.currentBaseUrl() },
         libraryRepository = libraryRepository,
         sectionAccessChecker = sectionAccessChecker,

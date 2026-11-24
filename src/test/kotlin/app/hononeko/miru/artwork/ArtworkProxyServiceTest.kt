@@ -29,6 +29,9 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.mockk.mockk
 import java.io.IOException
+import java.net.InetAddress
+
+private val publicTestDns = DnsResolver { listOf(InetAddress.getByName("93.184.216.34")) }
 
 private class InMemoryUserRepository(
     users: List<UserRecord>,
@@ -90,6 +93,7 @@ private fun userWithThumb(
 private fun createService(
     users: List<UserRecord>,
     plexBaseUrl: String? = "http://plex.local:32400",
+    dnsResolver: DnsResolver = publicTestDns,
     handler: suspend MockRequestHandleScope.(HttpRequestData) -> HttpResponseData,
 ): Pair<ArtworkProxyService, MutableList<HttpRequestData>> {
     val requests = mutableListOf<HttpRequestData>()
@@ -109,6 +113,7 @@ private fun createService(
             externalAvatarClient = client,
             cache = BoundedArtworkCache(),
             plexBaseUrl = plexBaseUrl,
+            dnsResolver = dnsResolver,
         )
     return service to requests
 }
@@ -384,6 +389,7 @@ class ArtworkProxyServiceTest :
                         ),
                     externalAvatarClient = strictClient,
                     cache = BoundedArtworkCache(),
+                    dnsResolver = publicTestDns,
                 )
 
             strictService.getUserAvatar(adminPrincipal, "u-404").shouldBeLeft().shouldBeInstanceOf<MiruError.NotFound>()
@@ -393,5 +399,52 @@ class ArtworkProxyServiceTest :
                 .shouldBeInstanceOf<MiruError.UpstreamUnavailable>()
                 .toProblemDetails()
                 .status shouldBe 502
+        }
+
+        test("blocks external avatar when allowlisted host resolves to loopback, metadata, or ULA IP without sending HTTP request") {
+            val blockedIps = listOf("127.0.0.1", "169.254.169.254", "fd00::1")
+            blockedIps.forEach { ip ->
+                val (service, requests) =
+                    createService(
+                        users = listOf(userWithThumb("u-dns", "https://plex.tv/avatar.png")),
+                        dnsResolver = DnsResolver { listOf(InetAddress.getByName(ip)) },
+                    ) {
+                        error("Should not contact external avatar host when DNS resolves to $ip")
+                    }
+
+                val err = service.getUserAvatar(adminPrincipal, "u-dns").shouldBeLeft()
+                err.shouldBeInstanceOf<MiruError.UpstreamUnavailable>().toProblemDetails().status shouldBe 502
+                requests shouldHaveSize 0
+            }
+        }
+
+        test("blocks external avatar 302 redirect when redirect target host resolves to non-public IP") {
+            val rebindingDns =
+                DnsResolver { host ->
+                    when (host) {
+                        "plex.tv" -> listOf(InetAddress.getByName("93.184.216.34"))
+                        "secure.gravatar.com" -> listOf(InetAddress.getByName("169.254.169.254"))
+                        else -> error("Unexpected DNS query for $host")
+                    }
+                }
+            val (service, requests) =
+                createService(
+                    users = listOf(userWithThumb("u-redir", "https://plex.tv/users/1/avatar")),
+                    dnsResolver = rebindingDns,
+                ) { request ->
+                    when (request.url.host) {
+                        "plex.tv" ->
+                            respond(
+                                content = ByteArray(0),
+                                status = HttpStatusCode.Found,
+                                headers = headersOf(HttpHeaders.Location, "https://secure.gravatar.com/avatar/secret"),
+                            )
+                        else -> error("Should not contact redirect target ${request.url}")
+                    }
+                }
+
+            val err = service.getUserAvatar(adminPrincipal, "u-redir").shouldBeLeft()
+            err.shouldBeInstanceOf<MiruError.UpstreamUnavailable>().toProblemDetails().status shouldBe 502
+            requests shouldHaveSize 1
         }
     })

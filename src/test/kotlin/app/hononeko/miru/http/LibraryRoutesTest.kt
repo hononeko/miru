@@ -370,6 +370,7 @@ class LibraryRoutesTest :
                     val windowStats = MiruJson.decodeFromString<LibraryStatsResponse>(windowResp.bodyAsText())
                     windowStats.snapshots.map { it.id } shouldContainExactly listOf("snap-1")
                     windowStats.byResolution shouldContainExactly mapOf("4K" to 40, "1080p" to 80)
+                    windowStats.growth.shouldBeEmpty()
 
                     // Recent endpoint maps thumbPath to artwork proxy URL and omits internal Plex paths/tokens
                     val recentResp =

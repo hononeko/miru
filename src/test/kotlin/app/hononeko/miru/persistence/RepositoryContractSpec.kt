@@ -1000,6 +1000,20 @@ private fun FunSpecRootScope.libraryGrowthTests(ctxProvider: () -> ContractConte
             ctx.library
                 .findDailyGrowth("srv-1", "sec-1", limit = 10, fromMs = 102L * dayMs, toMs = 103L * dayMs - 1L)
                 .shouldBeRight() shouldContainExactly listOf(day102)
+            ctx.library
+                .findDailyGrowth("srv-1", "sec-1", limit = 10, fromMs = 104L * dayMs)
+                .shouldBeRight() shouldContainExactly listOf(day105)
+            ctx.library
+                .findDailyGrowth("srv-1", "sec-1", limit = 10, toMs = 104L * dayMs)
+                .shouldBeRight() shouldContainExactly listOf(day102)
+            // Windows starting before the first snapshot, inside a day, and after the last one
+            ctx.library.findDailyGrowth("srv-1", "sec-1", limit = 10, fromMs = 0L).shouldBeRight() shouldContainExactly
+                listOf(day105, day102)
+            ctx.library
+                .findDailyGrowth("srv-1", "sec-1", limit = 10, fromMs = 102L * dayMs + 1L, toMs = 103L * dayMs - 1L)
+                .shouldBeRight() shouldContainExactly
+                listOf(LibraryGrowthDayRecord(epochDay = 102L, added = 0L, removed = 1L, sizeDeltaBytes = -100L))
+            ctx.library.findDailyGrowth("srv-1", "sec-1", limit = 10, fromMs = 106L * dayMs).shouldBeRight().shouldBeEmpty()
 
             // The service returns days oldest first
             val admin = MiruPrincipal(accountId = "acc-admin", username = "admin", role = MiruRole.ADMIN)

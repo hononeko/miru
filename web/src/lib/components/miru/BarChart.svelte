@@ -67,7 +67,8 @@
 		{emptyMessage}
 	</div>
 {:else}
-	<div bind:this={scrollEl} class={cn('w-full overflow-x-auto pb-1', className)}>
+	<!-- p-1: the scroll container clips the ring around an open bar without it -->
+	<div bind:this={scrollEl} class={cn('w-full overflow-x-auto p-1', className)}>
 		<div class={cn('flex items-end gap-1.5 sm:gap-2', heightClass)}>
 			{#each points as point, idx (pointKey(point, idx))}
 				{@const key = pointKey(point, idx)}

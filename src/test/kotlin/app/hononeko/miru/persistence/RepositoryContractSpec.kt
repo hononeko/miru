@@ -134,6 +134,7 @@ fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
         playbackHistoryTests { ctx }
         playbackHistorySummaryTests { ctx }
         mediaPlaySummaryTests { ctx }
+        playbackHistorySortTieTests { ctx }
         playbackHistorySortAndStatsTests { ctx }
         libraryTests { ctx }
         libraryGrowthTests { ctx }
@@ -634,6 +635,43 @@ private fun contractMediaPlay(
             streamTech = it.streamTech.copy(streamDecision = decision),
         )
     }
+
+private fun FunSpecRootScope.playbackHistorySortTieTests(ctxProvider: () -> ContractContext) {
+    context("PlaybackHistoryRepository sorting ties") {
+        test("lists plays that tie on the sorted column newest first, in either direction and whatever their ids") {
+            val ctx = ctxProvider()
+            ctx.servers.upsert(sampleServer(id = "srv-1")).shouldBeRight()
+            ctx.users.upsert(sampleUser(id = "u-1", serverId = "srv-1", externalUserId = "1", username = "alice")).shouldBeRight()
+            listOf("t-a" to 30_000L, "t-c" to 32_000L, "t-b" to 31_000L).forEach { (id, stoppedAtMs) ->
+                ctx.history
+                    .insert(
+                        contractMediaPlay(
+                            id = id,
+                            userId = "u-1",
+                            ratingKey = "m-1",
+                            mediaType = "movie",
+                            title = "Rewatched",
+                            startedAtMs = 25_000L,
+                            stoppedAtMs = stoppedAtMs,
+                            watchedDurationSec = 600,
+                            completionPercent = 100.0,
+                            decision = "direct_play",
+                        ),
+                    ).shouldBeRight()
+            }
+
+            for (sortBy in HistorySortField.entries.filter { it != HistorySortField.STOPPED_AT }) {
+                for (sortDir in HistorySortDirection.entries) {
+                    ctx.history
+                        .query(HistoryFilter(sortBy = sortBy, sortDir = sortDir))
+                        .shouldBeRight()
+                        .items
+                        .map { it.id } shouldContainExactly listOf("t-c", "t-b", "t-a")
+                }
+            }
+        }
+    }
+}
 
 private fun FunSpecRootScope.playbackHistorySortAndStatsTests(ctxProvider: () -> ContractContext) {
     context("PlaybackHistoryRepository sorting and stats") {

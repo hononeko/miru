@@ -195,6 +195,11 @@
 		min-height: 100dvh;
 	}
 
+	/* bits-ui dialogs set pointer-events: none on the body, which a native dialog would inherit */
+	dialog:modal {
+		pointer-events: auto;
+	}
+
 	/* Set by lockPageScroll() while a native modal dialog is open */
 	body[data-scroll-locked] {
 		overflow: hidden;

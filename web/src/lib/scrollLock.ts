@@ -7,8 +7,10 @@ let activeLocks = 0;
  */
 export function lockPageScroll(): () => void {
 	if (activeLocks === 0) {
-		// Hiding a classic scrollbar widens the page, so pad the body by the same amount.
-		const gutter = Math.max(0, window.innerWidth - document.documentElement.clientWidth);
+		// Hiding a classic scrollbar widens the page, so pad the body by the same amount. A bits-ui dialog that is
+		// closing may have hidden it already; it leaves the width on the body until it takes its own padding off.
+		const hiddenByBitsUi = Number.parseFloat(document.body.style.getPropertyValue('--scrollbar-width')) || 0;
+		const gutter = Math.max(hiddenByBitsUi, window.innerWidth - document.documentElement.clientWidth, 0);
 		document.body.style.setProperty('--scroll-lock-gutter', `${gutter}px`);
 		document.body.setAttribute('data-scroll-locked', '');
 	}

@@ -3,14 +3,17 @@ import { startMockPlexServer, type MockPlexServer } from './helpers/mock-plex';
 import {
 	E2E_ADMIN_PASSWORD,
 	E2E_ADMIN_USERNAME,
-	loginViaUi,
 	startMiruServer,
 	type MiruServer
 } from './helpers/miru-server';
 import { createTautulliFixture, type TautulliFixture } from './helpers/tautulli-fixture';
 
-// Measure settled layout rather than entrance animation frames.
-test.use({ contextOptions: { reducedMotion: 'reduce' } });
+test.use({
+	// Measure settled layout rather than entrance animation frames.
+	contextOptions: { reducedMotion: 'reduce' },
+	// Headless Chromium hides scrollbars, which would hide the page shifting when one disappears.
+	launchOptions: { ignoreDefaultArgs: ['--hide-scrollbars'] }
+});
 
 type ModalCase = {
 	name: string;
@@ -59,6 +62,18 @@ const MODALS: ModalCase[] = [
 		}
 	}
 ];
+
+const openPlayDetails = MODALS[2].open;
+
+/** Opens media details from the play details sheet, which makes way for it. */
+async function openMediaDetailsFromSheet(page: Page): Promise<Locator> {
+	const sheet = await openPlayDetails(page);
+	await sheet.getByRole('button', { name: 'Media info →' }).click();
+	const dialog = page.locator('dialog.media-details-dialog');
+	await expect(dialog.getByRole('link', { name: 'Filter in History' })).toBeVisible();
+	await expect(page.locator('[role="dialog"]')).toHaveCount(0);
+	return dialog;
+}
 
 /** Counts pointer presses and clicks that land on the page behind the modal. */
 async function recordBackgroundClicks(page: Page) {
@@ -111,13 +126,22 @@ test.describe('Modals block the page behind them', () => {
 	let mockPlex: MockPlexServer;
 	let miru: MiruServer;
 	let fixture: TautulliFixture;
+	let cookie: string;
+
+	/** One session for every test: logging in for each would run into the login rate limit. */
+	async function openHistory(page: Page) {
+		const [name, value] = cookie.split(/=(.*)/s);
+		await page.context().addCookies([{ name, value, url: miru.baseUrl }]);
+		await page.goto(`${miru.baseUrl}/history`);
+		await expect(page.getByText('30 PLAYS')).toBeVisible();
+	}
 
 	test.beforeAll(async () => {
 		mockPlex = await startMockPlexServer();
 		miru = await startMiruServer({ mockPlex });
 		fixture = createTautulliFixture();
 
-		const cookie = await miru.apiLogin(E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
+		cookie = await miru.apiLogin(E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
 		await miru.waitForUsers(cookie, 2);
 		await miru.waitForLibraries(cookie, 2);
 		await miru.apiTriggerLibrarySync(cookie, true);
@@ -136,9 +160,7 @@ test.describe('Modals block the page behind them', () => {
 
 			for (const modal of MODALS) {
 				test(`${modal.name}: pressing the backdrop closes it without activating the page behind`, async ({ page }) => {
-					await loginViaUi(page, miru.baseUrl, E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
-					await page.goto(`${miru.baseUrl}/history`);
-					await expect(page.getByText('30 PLAYS')).toBeVisible();
+					await openHistory(page);
 
 					const dialog = await modal.open(page);
 					const point = await backdropPoint(page, dialog);
@@ -158,9 +180,7 @@ test.describe('Modals block the page behind them', () => {
 
 				test(`${modal.name}: the page behind does not scroll`, async ({ page, browserName }) => {
 					test.skip(device.hasTouch && browserName !== 'chromium', 'Touch scrolling is synthesized over CDP');
-					await loginViaUi(page, miru.baseUrl, E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
-					await page.goto(`${miru.baseUrl}/history`);
-					await expect(page.getByText('30 PLAYS')).toBeVisible();
+					await openHistory(page);
 
 					const widthBefore = await page.evaluate(() => document.querySelector('main')!.getBoundingClientRect().width);
 					const dialog = await modal.open(page);
@@ -197,6 +217,69 @@ test.describe('Modals block the page behind them', () => {
 					await expect.poll(() => scrollY(page)).toBeGreaterThan(before);
 				});
 			}
+
+			test('media details opened from play details: every way to close it works', async ({ page }) => {
+				await openHistory(page);
+				const mainWidth = () => page.evaluate(() => document.querySelector('main')!.getBoundingClientRect().width);
+				const widthBefore = await mainWidth();
+				const press = (point: { x: number; y: number }) =>
+					device.hasTouch ? page.touchscreen.tap(point.x, point.y) : page.mouse.click(point.x, point.y);
+
+				const closings: Array<(dialog: Locator) => Promise<void>> = [
+					async (dialog) => {
+						const box = (await dialog.getByRole('button', { name: 'Close', exact: true }).boundingBox())!;
+						await press({ x: box.x + box.width / 2, y: box.y + box.height / 2 });
+					},
+					async (dialog) => press(await backdropPoint(page, dialog)),
+					async () => page.keyboard.press('Escape')
+				];
+				for (const close of closings) {
+					const dialog = await openMediaDetailsFromSheet(page);
+					// Past the sheet's own cleanup, the page is still locked and has not shifted
+					await page.waitForTimeout(300);
+					await expect(page.locator('body')).toHaveCSS('overflow-y', 'hidden');
+					expect(await mainWidth()).toBe(widthBefore);
+
+					// Pressing the content keeps it open
+					const box = (await dialog.boundingBox())!;
+					await press({ x: box.x + box.width / 2, y: box.y + box.height / 2 });
+					await page.waitForTimeout(200);
+					await expect(dialog).toBeVisible();
+
+					await close(dialog);
+					await expect(dialog).not.toBeVisible();
+					await page.waitForTimeout(300);
+					await expect(page.locator('dialog[open], [role="dialog"]')).toHaveCount(0);
+					await expect(page.locator('body')).not.toHaveCSS('overflow-y', 'hidden');
+					await expect(page.locator('body')).toHaveCSS('pointer-events', 'auto');
+					expect(await mainWidth()).toBe(widthBefore);
+				}
+			});
+
+			test('media details opened from play details: filtering in history shows the filtered list', async ({ page }) => {
+				await openHistory(page);
+
+				const dialog = await openMediaDetailsFromSheet(page);
+				await dialog.getByRole('link', { name: 'Filter in History' }).click();
+				await expect(page).toHaveURL(/\/history\?q=/);
+				await expect(dialog).not.toBeVisible();
+				await expect(page.getByLabel('Search playback history')).not.toHaveValue('');
+			});
+
+			test('a dialog stays usable while the body ignores pointer events, as it does under a bits-ui dialog', async ({ page }) => {
+				await openHistory(page);
+				const dialog = await MODALS[0].open(page);
+				await page.evaluate(() => (document.body.style.pointerEvents = 'none'));
+				const close = (await dialog.getByRole('button', { name: 'Close', exact: true }).boundingBox())!;
+				const point = { x: close.x + close.width / 2, y: close.y + close.height / 2 };
+				if (device.hasTouch) {
+					await page.touchscreen.tap(point.x, point.y);
+				} else {
+					await page.mouse.click(point.x, point.y);
+				}
+				await expect(dialog).not.toBeVisible();
+			});
+
 		});
 	}
 });

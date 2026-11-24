@@ -48,6 +48,7 @@ private val MiruAuthPlugin =
                         username = "local-dev",
                         role = MiruRole.ADMIN,
                         authSource = AuthSource.DEV_BYPASS,
+                        authProvider = "NONE",
                     ),
                 )
                 return@onCall

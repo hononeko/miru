@@ -57,8 +57,28 @@ data class PrincipalResponse(
     val role: MiruRole,
     val linkedMediaUserIds: List<String>,
     val authSource: AuthSource,
+    val authProvider: String = "LOCAL",
     val avatarUrl: String? = null,
 )
+
+@Serializable
+data class ChangePasswordRequest(
+    val currentPassword: String,
+    val newPassword: String,
+) {
+    override fun toString(): String =
+        "ChangePasswordRequest(currentPassword=***, newPassword=***)"
+}
+
+@Serializable
+data class UpdateAccountRequest(
+    val role: String? = null,
+    val disabled: Boolean? = null,
+    val password: String? = null,
+) {
+    override fun toString(): String =
+        "UpdateAccountRequest(role=$role, disabled=$disabled, password=${if (password != null) "***" else "null"})"
+}
 
 @Serializable
 data class AccountResponse(
@@ -168,6 +188,7 @@ internal fun MiruPrincipal.toResponse(avatarUrl: String? = null): PrincipalRespo
         role = role,
         linkedMediaUserIds = linkedMediaUserIds.sorted(),
         authSource = authSource,
+        authProvider = authProvider,
         avatarUrl = avatarUrl,
     )
 

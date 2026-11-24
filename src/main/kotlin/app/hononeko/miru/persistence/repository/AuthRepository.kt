@@ -55,6 +55,22 @@ interface AuthAccountRepository {
 
     suspend fun countAdmins(): Either<MiruError.PersistenceError, Long>
 
+    suspend fun countActiveAdmins(): Either<MiruError.PersistenceError, Long>
+
+    suspend fun updatePasswordHash(
+        id: String,
+        passwordHash: String,
+        updatedAtMs: Long,
+    ): Either<MiruError.PersistenceError, AuthAccountRecord?>
+
+    suspend fun updateAccount(
+        id: String,
+        role: String,
+        disabled: Boolean,
+        passwordHash: String? = null,
+        updatedAtMs: Long,
+    ): Either<MiruError.PersistenceError, AuthAccountRecord?>
+
     suspend fun delete(id: String): Either<MiruError.PersistenceError, Boolean>
 
     suspend fun findLinkedMediaUserIds(accountId: String): Either<MiruError.PersistenceError, Set<String>>
@@ -213,11 +229,7 @@ class ExposedAuthAccountRepository(
             if (updated <= 0) {
                 null
             } else {
-                AuthAccountsTable
-                    .selectAll()
-                    .where { AuthAccountsTable.id eq id }
-                    .singleOrNull()
-                    ?.toAuthAccountRecord()
+                findAccountByIdInTx(id)
             }
         }
 
@@ -235,6 +247,48 @@ class ExposedAuthAccountRepository(
                 .selectAll()
                 .where { AuthAccountsTable.role eq "ADMIN" }
                 .count()
+        }
+
+    override suspend fun countActiveAdmins(): Either<MiruError.PersistenceError, Long> =
+        database.exposedQuery("auth_account_count_active_admins") {
+            AuthAccountsTable
+                .selectAll()
+                .where { (AuthAccountsTable.role eq "ADMIN") and (AuthAccountsTable.disabled eq false) }
+                .count()
+        }
+
+    override suspend fun updatePasswordHash(
+        id: String,
+        passwordHash: String,
+        updatedAtMs: Long,
+    ): Either<MiruError.PersistenceError, AuthAccountRecord?> =
+        database.exposedQuery("auth_account_update_password_hash") {
+            val updated =
+                AuthAccountsTable.update({ AuthAccountsTable.id eq id }) {
+                    it[AuthAccountsTable.passwordHash] = passwordHash
+                    it[AuthAccountsTable.updatedAtMs] = updatedAtMs
+                }
+            if (updated <= 0) null else findAccountByIdInTx(id)
+        }
+
+    override suspend fun updateAccount(
+        id: String,
+        role: String,
+        disabled: Boolean,
+        passwordHash: String?,
+        updatedAtMs: Long,
+    ): Either<MiruError.PersistenceError, AuthAccountRecord?> =
+        database.exposedQuery("auth_account_update") {
+            val updated =
+                AuthAccountsTable.update({ AuthAccountsTable.id eq id }) {
+                    it[AuthAccountsTable.role] = role
+                    it[AuthAccountsTable.disabled] = disabled
+                    if (passwordHash != null) {
+                        it[AuthAccountsTable.passwordHash] = passwordHash
+                    }
+                    it[AuthAccountsTable.updatedAtMs] = updatedAtMs
+                }
+            if (updated <= 0) null else findAccountByIdInTx(id)
         }
 
     override suspend fun delete(id: String): Either<MiruError.PersistenceError, Boolean> =
@@ -319,13 +373,16 @@ class ExposedAuthAccountRepository(
             if (updated <= 0) {
                 null
             } else {
-                AuthAccountsTable
-                    .selectAll()
-                    .where { AuthAccountsTable.id eq id }
-                    .singleOrNull()
-                    ?.toAuthAccountRecord()
+                findAccountByIdInTx(id)
             }
         }
+
+    private fun findAccountByIdInTx(id: String): AuthAccountRecord? =
+        AuthAccountsTable
+            .selectAll()
+            .where { AuthAccountsTable.id eq id }
+            .singleOrNull()
+            ?.toAuthAccountRecord()
 }
 
 class ExposedAuthSessionRepository(

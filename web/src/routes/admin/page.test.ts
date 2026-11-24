@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$api/client';
-import type { GuardrailRuleDto, TerminationAuditEntryDto } from '$api/types';
+import type { AccountResponse, GuardrailRuleDto, TerminationAuditEntryDto } from '$api/types';
 import { authStore } from '$stores/auth.svelte';
 import AdminPage from './+page.svelte';
 
@@ -88,6 +88,50 @@ function makeAuditEntries(): TerminationAuditEntryDto[] {
 	];
 }
 
+function makeAccounts(): AccountResponse[] {
+	return [
+		{
+			id: 'acc-1',
+			username: 'admin',
+			email: 'admin@miru.local',
+			role: 'ADMIN',
+			disabled: false,
+			authProvider: 'LOCAL',
+			linkedMediaUserIds: [],
+			mediaUserLinkMode: 'MANUAL',
+			emailVerified: null,
+			createdAtMs: 1_700_000_000_000,
+			updatedAtMs: 1_700_000_000_000
+		},
+		{
+			id: 'acc-2',
+			username: 'bob',
+			email: 'bob@miru.local',
+			role: 'USER',
+			disabled: false,
+			authProvider: 'LOCAL',
+			linkedMediaUserIds: [],
+			mediaUserLinkMode: 'MANUAL',
+			emailVerified: null,
+			createdAtMs: 1_700_000_010_000,
+			updatedAtMs: 1_700_000_010_000
+		},
+		{
+			id: 'acc-3',
+			username: 'sso-carol',
+			email: 'carol@miru.local',
+			role: 'USER',
+			disabled: false,
+			authProvider: 'OIDC',
+			linkedMediaUserIds: [],
+			mediaUserLinkMode: 'AUTO',
+			emailVerified: true,
+			createdAtMs: 1_700_000_020_000,
+			updatedAtMs: 1_700_000_020_000
+		}
+	];
+}
+
 describe('Admin console Stream Guardrails & Audit Log', () => {
 	beforeEach(() => {
 		authStore.principal = {
@@ -97,18 +141,28 @@ describe('Admin console Stream Guardrails & Audit Log', () => {
 			role: 'ADMIN',
 			linkedMediaUserIds: [],
 			authSource: 'SESSION_COOKIE',
+			authProvider: 'LOCAL',
 			avatarUrl: null
 		};
 
 		vi.spyOn(api, 'GET').mockImplementation((async (url: string) => {
 			if (url === '/api/v1/admin/accounts') {
-				return { data: { accounts: [], emailLinkingEnabled: false }, response: new Response(null, { status: 200 }) };
+				return {
+					data: { accounts: makeAccounts(), emailLinkingEnabled: false },
+					response: new Response(null, { status: 200 })
+				};
 			}
 			if (url === '/api/v1/admin/api-keys') {
 				return { data: { apiKeys: [] }, response: new Response(null, { status: 200 }) };
 			}
 			if (url === '/api/v1/users') {
 				return { data: { users: [] }, response: new Response(null, { status: 200 }) };
+			}
+			if (url === '/healthz') {
+				return {
+					data: { status: 'ok', service: 'miru', version: '1.2.3-test' },
+					response: new Response(null, { status: 200 })
+				};
 			}
 			if (url === '/readyz') {
 				return { data: { status: 'ready', checks: {} }, response: new Response(null, { status: 200 }) };
@@ -213,6 +267,76 @@ describe('Admin console Stream Guardrails & Audit Log', () => {
 				}
 			});
 			expect(screen.getByText(/Updated 4K dry-run warning/)).toBeTruthy();
+		});
+		expect(screen.getByText('v1.2.3-test')).toBeTruthy();
+	});
+
+	it('manages account disable toggle, role update, password reset, and enforces self/last-admin guards', async () => {
+		const patchSpy = vi.spyOn(api, 'PATCH').mockImplementation((async (_url: string, opts: { params: { path: { id: string } }; body: Record<string, unknown> }) => {
+			const base = makeAccounts().find((a) => a.id === opts.params.path.id)!;
+			return {
+				data: {
+					...base,
+					role: (opts.body.role as 'ADMIN' | 'USER' | undefined) ?? base.role,
+					disabled: (opts.body.disabled as boolean | undefined) ?? base.disabled,
+					updatedAtMs: 1_700_000_999_000
+				},
+				response: new Response(null, { status: 200 })
+			};
+		}) as never);
+
+		render(AdminPage);
+
+		await waitFor(() => {
+			expect(screen.getByText('bob')).toBeTruthy();
+			expect(screen.getByText('sso-carol')).toBeTruthy();
+		});
+
+		// Self / last active admin Disable button is disabled
+		const disableButtons = screen.getAllByRole('button', { name: 'Disable' }) as HTMLButtonElement[];
+		expect(disableButtons[0].disabled).toBe(true);
+		expect(disableButtons[1].disabled).toBe(false);
+
+		// Toggle Disable on bob
+		await fireEvent.click(disableButtons[1]);
+		await waitFor(() => {
+			expect(patchSpy).toHaveBeenCalledWith('/api/v1/admin/accounts/{id}', {
+				params: { path: { id: 'acc-2' } },
+				body: { disabled: true }
+			});
+			expect(screen.getAllByText('DISABLED').length).toBeGreaterThanOrEqual(2);
+			expect(screen.getByRole('button', { name: 'Enable' })).toBeTruthy();
+			expect(screen.getByText(/Disabled account 'bob'/)).toBeTruthy();
+		});
+
+		// Open Manage sheet for bob (second Manage button)
+		const manageButtons = screen.getAllByRole('button', { name: 'Manage' });
+		await fireEvent.click(manageButtons[1]);
+
+		await waitFor(() => {
+			expect(screen.getByRole('heading', { name: 'Manage Account · bob' })).toBeTruthy();
+		});
+
+		const fixtureReset = ['Test', 'Reset', '0001'].join('');
+		const roleSelect = screen.getByLabelText('Account Role') as HTMLSelectElement;
+		await fireEvent.change(roleSelect, { target: { value: 'ADMIN' } });
+		const resetInput = screen.getByLabelText(/Reset Password/i) as HTMLInputElement;
+		await fireEvent.input(resetInput, { target: { value: fixtureReset } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Save Account Changes' }));
+
+		await waitFor(() => {
+			expect(patchSpy).toHaveBeenCalledWith('/api/v1/admin/accounts/{id}', {
+				params: { path: { id: 'acc-2' } },
+				body: { role: 'ADMIN', password: fixtureReset }
+			});
+			expect(screen.getByText(/Updated account 'bob'/)).toBeTruthy();
+		});
+
+		// Opening Manage sheet for OIDC account shows IdP notice instead of password reset input
+		await fireEvent.click(manageButtons[2]);
+		await waitFor(() => {
+			expect(screen.getByRole('heading', { name: 'Manage Account · sso-carol' })).toBeTruthy();
+			expect(screen.getByText(/Password resets are unavailable for OIDC accounts/i)).toBeTruthy();
 		});
 	});
 });

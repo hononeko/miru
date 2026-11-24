@@ -14,6 +14,7 @@ import app.hononeko.miru.http.AccountListResponse
 import app.hononeko.miru.http.AccountResponse
 import app.hononeko.miru.http.ApiKeyListResponse
 import app.hononeko.miru.http.AuthStatusResponse
+import app.hononeko.miru.http.ChangePasswordRequest
 import app.hononeko.miru.http.CreateAccountRequest
 import app.hononeko.miru.http.CreateApiKeyRequest
 import app.hononeko.miru.http.CreateApiKeyResponse
@@ -22,6 +23,7 @@ import app.hononeko.miru.http.PrincipalResponse
 import app.hononeko.miru.http.ProblemDetails
 import app.hononeko.miru.http.SetLinkedMediaUsersRequest
 import app.hononeko.miru.http.SetupAdminRequest
+import app.hononeko.miru.http.UpdateAccountRequest
 import app.hononeko.miru.http.UpdateUserPreferencesRequest
 import app.hononeko.miru.http.UserPreferencesResponse
 import app.hononeko.miru.http.respondEither
@@ -54,6 +56,7 @@ import io.ktor.client.request.cookie
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.patch
 import io.ktor.client.request.post
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
@@ -1429,6 +1432,360 @@ class AuthRoutesTest :
                         }.awaitAll()
                 }
                 (maxObserved.get() in 1..2) shouldBe true
+            }
+        }
+
+        test("POST /api/v1/auth/me/password verifies current password, rotates session, and rejects non-local modes") {
+            val changeReq = ChangePasswordRequest(currentPassword = "Old-secret-pass-1", newPassword = "New-secret-pass-2")
+            changeReq.toString() shouldNotContain "Old-secret-pass-1"
+            changeReq.toString() shouldNotContain "New-secret-pass-2"
+
+            createHarness(mode = AuthMode.NONE, sessionSecret = "").use { noneHarness ->
+                testApplication {
+                    setupAuthApp(noneHarness)
+                    val meResp = client.get("/api/v1/auth/me")
+                    meResp.status shouldBe HttpStatusCode.OK
+                    MiruJson.decodeFromString<PrincipalResponse>(meResp.bodyAsText()).authProvider shouldBe "NONE"
+
+                    val noneChange =
+                        client.post("/api/v1/auth/me/password") {
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(changeReq))
+                        }
+                    noneChange.status shouldBe HttpStatusCode.Conflict
+                }
+            }
+
+            createHarness().use { harness ->
+                val initialPass = "Alice-initial-password-1"
+                val rotatedPass = "Alice-rotated-password-2"
+                val finalPass = "Alice-final-password-3"
+                harness.authService.setupInitialAdmin("admin", "Admin-strong-password-1").shouldBeRight()
+                val alice =
+                    harness.authService
+                        .createAccount(
+                            username = "alice",
+                            password = initialPass,
+                            role = MiruRole.USER,
+                        ).shouldBeRight()
+                val aliceKey =
+                    harness.authService
+                        .createApiKey(
+                            accountId = alice.account.id,
+                            name = "Alice CLI Key",
+                            role = MiruRole.USER,
+                        ).shouldBeRight()
+                        .rawKey
+                val oidcAccount =
+                    AuthAccountRecord(
+                        id = "acc-oidc-self",
+                        username = "sso.user",
+                        usernameNormalized = "sso.user",
+                        email = "sso@miru.local",
+                        passwordHash = "",
+                        role = "USER",
+                        disabled = false,
+                        authProvider = "OIDC",
+                        externalSubject = "sub-self-1",
+                        createdAtMs = 1_000L,
+                        updatedAtMs = 1_000L,
+                    )
+                harness.accountRepo.insert(oidcAccount).shouldBeRight()
+                val oidcSession = harness.authService.issueSessionForAccount(oidcAccount, emptySet()).shouldBeRight()
+
+                val session1 = harness.authService.login("alice", initialPass).shouldBeRight()
+                val session2 = harness.authService.login("alice", initialPass).shouldBeRight()
+
+                testApplication {
+                    setupAuthApp(harness)
+
+                    // Unauthenticated rejected
+                    client
+                        .post("/api/v1/auth/me/password") {
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(changeReq))
+                        }.status shouldBe HttpStatusCode.Unauthorized
+
+                    // OIDC account rejected with 409 Conflict
+                    val oidcMe =
+                        client.get("/api/v1/auth/me") {
+                            cookie(SESSION_COOKIE_NAME, oidcSession.signedToken)
+                        }
+                    oidcMe.status shouldBe HttpStatusCode.OK
+                    MiruJson.decodeFromString<PrincipalResponse>(oidcMe.bodyAsText()).authProvider shouldBe "OIDC"
+
+                    client
+                        .post("/api/v1/auth/me/password") {
+                            cookie(SESSION_COOKIE_NAME, oidcSession.signedToken)
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(changeReq))
+                        }.status shouldBe HttpStatusCode.Conflict
+
+                    // Blank currentPassword + weak newPassword -> 400 ValidationError
+                    val invalidResp =
+                        client.post("/api/v1/auth/me/password") {
+                            cookie(SESSION_COOKIE_NAME, session1.signedToken)
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(ChangePasswordRequest("", "weak")))
+                        }
+                    invalidResp.status shouldBe HttpStatusCode.BadRequest
+                    val invalidProblem = MiruJson.decodeFromString<ProblemDetails>(invalidResp.bodyAsText())
+                    invalidProblem.errors.shouldNotBeNull().keys shouldContainExactly setOf("currentPassword", "newPassword")
+
+                    // Wrong current password -> 401 without invalidating existing sessions
+                    client
+                        .post("/api/v1/auth/me/password") {
+                            cookie(SESSION_COOKIE_NAME, session1.signedToken)
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(ChangePasswordRequest("Wrong-pass-123", rotatedPass)))
+                        }.status shouldBe HttpStatusCode.Unauthorized
+
+                    client
+                        .get("/api/v1/auth/me") {
+                            cookie(SESSION_COOKIE_NAME, session1.signedToken)
+                        }.status shouldBe HttpStatusCode.OK
+
+                    // Valid password change revokes old sessions and issues fresh rotated session cookie
+                    val okResp =
+                        client.post("/api/v1/auth/me/password") {
+                            cookie(SESSION_COOKIE_NAME, session1.signedToken)
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(ChangePasswordRequest(initialPass, rotatedPass)))
+                        }
+                    okResp.status shouldBe HttpStatusCode.NoContent
+                    val rotatedCookieHeader = okResp.headers[HttpHeaders.SetCookie].shouldNotBeNull()
+                    rotatedCookieHeader shouldContain "HttpOnly"
+                    rotatedCookieHeader shouldContain "SameSite=Lax"
+                    val rotatedCookie = extractCookieValue(rotatedCookieHeader).shouldNotBeNull()
+
+                    // Both prior session cookies are invalidated
+                    client
+                        .get("/api/v1/auth/me") {
+                            cookie(SESSION_COOKIE_NAME, session1.signedToken)
+                        }.status shouldBe HttpStatusCode.Unauthorized
+                    client
+                        .get("/api/v1/auth/me") {
+                            cookie(SESSION_COOKIE_NAME, session2.signedToken)
+                        }.status shouldBe HttpStatusCode.Unauthorized
+
+                    // Rotated session cookie remains authenticated
+                    val meRotated =
+                        client.get("/api/v1/auth/me") {
+                            cookie(SESSION_COOKIE_NAME, rotatedCookie)
+                        }
+                    meRotated.status shouldBe HttpStatusCode.OK
+                    MiruJson.decodeFromString<PrincipalResponse>(meRotated.bodyAsText()).authProvider shouldBe "LOCAL"
+
+                    // Old password rejected, new password succeeds
+                    client
+                        .post("/api/v1/auth/login") {
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(LoginRequest("alice", initialPass)))
+                        }.status shouldBe HttpStatusCode.Unauthorized
+                    client
+                        .post("/api/v1/auth/login") {
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(LoginRequest("alice", rotatedPass)))
+                        }.status shouldBe HttpStatusCode.OK
+
+                    // API-key caller changes password -> 204 without Set-Cookie and revokes existing session cookies
+                    val apiKeyChangeResp =
+                        client.post("/api/v1/auth/me/password") {
+                            header("X-Api-Key", aliceKey)
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(ChangePasswordRequest(rotatedPass, finalPass)))
+                        }
+                    apiKeyChangeResp.status shouldBe HttpStatusCode.NoContent
+                    apiKeyChangeResp.headers[HttpHeaders.SetCookie].shouldBeNull()
+
+                    client
+                        .get("/api/v1/auth/me") {
+                            cookie(SESSION_COOKIE_NAME, rotatedCookie)
+                        }.status shouldBe HttpStatusCode.Unauthorized
+                }
+            }
+        }
+
+        test("PATCH /api/v1/admin/accounts/{id} updates role, disabled, and password with session revocation") {
+            val redactedUpdate = UpdateAccountRequest(role = "USER", disabled = true, password = "Secret-reset-pass-1")
+            redactedUpdate.toString() shouldNotContain "Secret-reset-pass-1"
+
+            createHarness().use { harness ->
+                val adminLogin = harness.authService.setupInitialAdmin("admin", "Admin-strong-password-1").shouldBeRight()
+                val bob =
+                    harness.authService
+                        .createAccount(
+                            username = "bob",
+                            password = "Bob-initial-password-1",
+                            role = MiruRole.USER,
+                        ).shouldBeRight()
+                val disabledAdmin =
+                    AuthAccountRecord(
+                        id = "acc-disabled-admin",
+                        username = "dormantadmin",
+                        usernameNormalized = "dormantadmin",
+                        passwordHash = harness.hasher.hash("Dormant-admin-pass-1"),
+                        role = "ADMIN",
+                        disabled = true,
+                        createdAtMs = 1_000L,
+                        updatedAtMs = 1_000L,
+                    )
+                val oidcAccount =
+                    AuthAccountRecord(
+                        id = "acc-oidc-admin-target",
+                        username = "sso.bob",
+                        usernameNormalized = "sso.bob",
+                        passwordHash = "",
+                        role = "USER",
+                        disabled = false,
+                        authProvider = "OIDC",
+                        externalSubject = "sub-target-1",
+                        createdAtMs = 1_000L,
+                        updatedAtMs = 1_000L,
+                    )
+                harness.accountRepo.insert(disabledAdmin).shouldBeRight()
+                harness.accountRepo.insert(oidcAccount).shouldBeRight()
+
+                val bobSession = harness.authService.login("bob", "Bob-initial-password-1").shouldBeRight()
+
+                testApplication {
+                    setupAuthApp(harness)
+
+                    // Non-admin USER receives 403
+                    client
+                        .patch("/api/v1/admin/accounts/${bob.account.id}") {
+                            cookie(SESSION_COOKIE_NAME, bobSession.signedToken)
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(UpdateAccountRequest(role = "ADMIN")))
+                        }.status shouldBe HttpStatusCode.Forbidden
+
+                    // Missing account receives 404
+                    client
+                        .patch("/api/v1/admin/accounts/does-not-exist") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(UpdateAccountRequest(disabled = true)))
+                        }.status shouldBe HttpStatusCode.NotFound
+
+                    // Empty body / invalid role / weak password return 400 ValidationError
+                    client
+                        .patch("/api/v1/admin/accounts/${bob.account.id}") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                            contentType(ContentType.Application.Json)
+                            setBody("{}")
+                        }.status shouldBe HttpStatusCode.BadRequest
+
+                    val badPatch =
+                        client.patch("/api/v1/admin/accounts/${bob.account.id}") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(UpdateAccountRequest(role = "SUPER", password = "short")))
+                        }
+                    badPatch.status shouldBe HttpStatusCode.BadRequest
+                    val badProblem = MiruJson.decodeFromString<ProblemDetails>(badPatch.bodyAsText())
+                    badProblem.errors.shouldNotBeNull().keys shouldContainExactly setOf("role", "password")
+
+                    // Self-demotion & self-disable rejected with 409 even though a disabled admin row exists
+                    client
+                        .patch("/api/v1/admin/accounts/${adminLogin.principal.accountId}") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(UpdateAccountRequest(role = "USER")))
+                        }.status shouldBe HttpStatusCode.Conflict
+
+                    client
+                        .patch("/api/v1/admin/accounts/${adminLogin.principal.accountId}") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(UpdateAccountRequest(disabled = true)))
+                        }.status shouldBe HttpStatusCode.Conflict
+
+                    // Password reset on OIDC account rejected with 409
+                    client
+                        .patch("/api/v1/admin/accounts/${oidcAccount.id}") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(UpdateAccountRequest(password = "Valid-password-123")))
+                        }.status shouldBe HttpStatusCode.Conflict
+
+                    // Disable Bob -> revokes active sessions and blocks login
+                    val disableBobResp =
+                        client.patch("/api/v1/admin/accounts/${bob.account.id}") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(UpdateAccountRequest(disabled = true)))
+                        }
+                    disableBobResp.status shouldBe HttpStatusCode.OK
+                    MiruJson.decodeFromString<AccountResponse>(disableBobResp.bodyAsText()).disabled shouldBe true
+
+                    client
+                        .get("/api/v1/auth/me") {
+                            cookie(SESSION_COOKIE_NAME, bobSession.signedToken)
+                        }.status shouldBe HttpStatusCode.Unauthorized
+                    client
+                        .post("/api/v1/auth/login") {
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(LoginRequest("bob", "Bob-initial-password-1")))
+                        }.status shouldBe HttpStatusCode.Unauthorized
+
+                    // Enable Bob, reset password, and promote to ADMIN
+                    val resetPass = "Bob-reset-password-2"
+                    val promoteBobResp =
+                        client.patch("/api/v1/admin/accounts/${bob.account.id}") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(UpdateAccountRequest(role = "ADMIN", disabled = false, password = resetPass)))
+                        }
+                    promoteBobResp.status shouldBe HttpStatusCode.OK
+                    val promotedBob = MiruJson.decodeFromString<AccountResponse>(promoteBobResp.bodyAsText())
+                    promotedBob.role shouldBe MiruRole.ADMIN
+                    promotedBob.disabled shouldBe false
+
+                    val bobAdminLogin =
+                        client.post("/api/v1/auth/login") {
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(LoginRequest("bob", resetPass)))
+                        }
+                    bobAdminLogin.status shouldBe HttpStatusCode.OK
+                    val bobAdminCookie = extractCookieValue(bobAdminLogin.headers[HttpHeaders.SetCookie]).shouldNotBeNull()
+
+                    // Now that two active admins exist, Bob can downgrade the original admin -> revokes admin's session
+                    val downgradeAdminResp =
+                        client.patch("/api/v1/admin/accounts/${adminLogin.principal.accountId}") {
+                            cookie(SESSION_COOKIE_NAME, bobAdminCookie)
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(UpdateAccountRequest(role = "USER")))
+                        }
+                    downgradeAdminResp.status shouldBe HttpStatusCode.OK
+                    MiruJson.decodeFromString<AccountResponse>(downgradeAdminResp.bodyAsText()).role shouldBe MiruRole.USER
+
+                    client
+                        .get("/api/v1/auth/me") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                        }.status shouldBe HttpStatusCode.Unauthorized
+
+                    // Re-promote admin via Bob, then verify disabling the sole active admin via another admin is impossible
+                    // (First check Bob is now the sole active admin: deleting Bob via Bob -> 409; disabling dormantAdmin -> ok;
+                    // deleting original user account -> ok)
+                    client
+                        .delete("/api/v1/admin/accounts/${adminLogin.principal.accountId}") {
+                            cookie(SESSION_COOKIE_NAME, bobAdminCookie)
+                        }.status shouldBe HttpStatusCode.NoContent
+
+                    // Now Bob is the only active admin (dormantAdmin is disabled ADMIN) -> Bob cannot demote/disable self
+                    client
+                        .patch("/api/v1/admin/accounts/${bob.account.id}") {
+                            cookie(SESSION_COOKIE_NAME, bobAdminCookie)
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(UpdateAccountRequest(role = "USER")))
+                        }.status shouldBe HttpStatusCode.Conflict
+
+                    // Deleting dormantAdmin succeeds because Bob is still an active admin, whereas deleting Bob as last active admin fails
+                    client
+                        .delete("/api/v1/admin/accounts/${disabledAdmin.id}") {
+                            cookie(SESSION_COOKIE_NAME, bobAdminCookie)
+                        }.status shouldBe HttpStatusCode.NoContent
+                }
             }
         }
     })

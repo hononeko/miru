@@ -10,6 +10,7 @@ import app.hononeko.miru.auth.Argon2idPasswordHasher
 import app.hononeko.miru.auth.AuthRateLimiter
 import app.hononeko.miru.auth.AuthService
 import app.hononeko.miru.auth.EmailMediaUserLinker
+import app.hononeko.miru.auth.SessionCleanupService
 import app.hononeko.miru.auth.oidc.OidcAuthService
 import app.hononeko.miru.auth.oidc.OidcClient
 import app.hononeko.miru.config.AppConfig
@@ -39,6 +40,7 @@ import app.hononeko.miru.library.LibraryStatsCollector
 import app.hononeko.miru.persistence.DatabaseFactory
 import app.hononeko.miru.persistence.DatabaseHandle
 import app.hononeko.miru.persistence.DatabaseReadinessCheck
+import app.hononeko.miru.persistence.repository.AuthSessionRepository
 import app.hononeko.miru.persistence.repository.ExposedActiveSessionRepository
 import app.hononeko.miru.persistence.repository.ExposedApiKeyRepository
 import app.hononeko.miru.persistence.repository.ExposedAuthAccountRepository
@@ -67,6 +69,7 @@ import app.hononeko.miru.webhook.WebhookDispatcher
 import app.hononeko.miru.webhook.WebhookEventEvaluator
 import app.hononeko.miru.webhook.WebhookRunner
 import app.hononeko.miru.webhook.createWebhookHttpClient
+import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.serialization.kotlinx.json.json
@@ -80,6 +83,12 @@ import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.BadRequestException
 import io.ktor.server.plugins.calllogging.CallLogging
+import io.ktor.server.plugins.compression.Compression
+import io.ktor.server.plugins.compression.condition
+import io.ktor.server.plugins.compression.deflate
+import io.ktor.server.plugins.compression.excludeContentType
+import io.ktor.server.plugins.compression.gzip
+import io.ktor.server.plugins.compression.minimumSize
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.cors.routing.CORS
 import io.ktor.server.plugins.statuspages.StatusPages
@@ -104,6 +113,7 @@ import kotlin.time.Duration.Companion.seconds
 private val logger = LoggerFactory.getLogger("app.hononeko.miru.Application")
 private val REALTIME_SHUTDOWN_TIMEOUT = 5.seconds
 private val DEFAULT_SSE_KEEPALIVE_INTERVAL = 15.seconds
+private const val COMPRESSION_MIN_SIZE_BYTES = 1024L
 
 val MiruJson: Json =
     Json {
@@ -131,8 +141,9 @@ private fun runServer() {
     val userRepository = ExposedUserRepository(databaseHandle)
     val playbackHistoryRepository = ExposedPlaybackHistoryRepository(databaseHandle)
     val accountRepository = ExposedAuthAccountRepository(databaseHandle)
+    val sessionRepository = ExposedAuthSessionRepository(databaseHandle)
     val emailLinker = EmailMediaUserLinker(accountRepository, userRepository, appConfig.auth)
-    val authService = initAuthService(appConfig, databaseHandle, accountRepository, userRepository, emailLinker)
+    val authService = initAuthService(appConfig, databaseHandle, accountRepository, sessionRepository, userRepository, emailLinker)
     val (oidcClient, oidcAuthService) =
         initOidcServices(appConfig, authService, accountRepository, emailLinker)
     val historyAndStatsService =
@@ -171,6 +182,7 @@ private fun runServer() {
             webhookRunner = webhookBundle.runner,
             webhookDispatcher = webhookBundle.dispatcher,
             webhookScope = webhookBundle.scope,
+            sessionRepository = sessionRepository,
         ) {
             emailLinker.relinkAll().onLeft { error ->
                 logger.warn("Linking SSO accounts by email after the user sync failed: {}", error.message)
@@ -351,6 +363,8 @@ internal data class SyncServices(
     val webhookScope: CoroutineScope? = null,
     val webhookDispatcher: WebhookDispatcher? = null,
     val webhookRunner: WebhookRunner? = null,
+    val sessionCleanupScope: CoroutineScope? = null,
+    val sessionCleanupService: SessionCleanupService? = null,
 )
 
 @Suppress("LongParameterList")
@@ -362,6 +376,7 @@ internal fun createSyncServices(
     webhookRunner: WebhookRunner? = null,
     webhookDispatcher: WebhookDispatcher? = null,
     webhookScope: CoroutineScope? = null,
+    sessionRepository: AuthSessionRepository? = null,
     afterUserSync: suspend () -> Unit = {},
 ): SyncServices {
     val libraryCollectorScope =
@@ -397,6 +412,19 @@ internal fun createSyncServices(
         } else {
             null
         }
+    val sessionCleanupScope =
+        sessionRepository?.let {
+            CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("auth-session-cleanup"))
+        }
+    val sessionCleanupService =
+        if (sessionRepository != null && sessionCleanupScope != null) {
+            SessionCleanupService(
+                sessionRepository = sessionRepository,
+                scope = sessionCleanupScope,
+            )
+        } else {
+            null
+        }
     plexRuntimeManager.setOnReloadLibrarySync {
         libraryStatsCollector.syncFastCounts()
         plexUserSyncService.syncOnce().onLeft { error ->
@@ -413,6 +441,8 @@ internal fun createSyncServices(
         webhookScope = webhookScope,
         webhookDispatcher = webhookDispatcher,
         webhookRunner = webhookRunner,
+        sessionCleanupScope = sessionCleanupScope,
+        sessionCleanupService = sessionCleanupService,
     )
 }
 
@@ -422,15 +452,16 @@ internal fun Application.registerLifecycleHandlers(
     vararg clients: AutoCloseable?,
 ) {
     monitor.subscribe(ApplicationStarted) {
-        logger.info("Starting library stats collector and Plex user sync")
+        logger.info("Starting library stats collector, Plex user sync, webhooks, and session cleanup")
         syncServices.libraryStatsCollector.start()
         syncServices.plexUserSyncService.start()
         syncServices.streamGuardrailRunner?.start()
         syncServices.webhookDispatcher?.start()
         syncServices.webhookRunner?.start()
+        syncServices.sessionCleanupService?.start()
     }
     monitor.subscribe(ApplicationStopping) {
-        logger.info("Stopping library stats collector and Plex user sync")
+        logger.info("Stopping library stats collector, Plex user sync, webhooks, and session cleanup")
         runBlocking {
             withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { syncServices.libraryStatsCollector.stop() }
                 ?: logger.warn("Library stats collector did not stop within {}", REALTIME_SHUTDOWN_TIMEOUT)
@@ -448,11 +479,16 @@ internal fun Application.registerLifecycleHandlers(
                 withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { dispatcher.stop() }
                     ?: logger.warn("Webhook dispatcher did not stop within {}", REALTIME_SHUTDOWN_TIMEOUT)
             }
+            syncServices.sessionCleanupService?.let { cleanup ->
+                withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { cleanup.stop() }
+                    ?: logger.warn("Auth session cleanup service did not stop within {}", REALTIME_SHUTDOWN_TIMEOUT)
+            }
         }
         syncServices.libraryCollectorScope.cancel()
         syncServices.userSyncScope.cancel()
         syncServices.guardrailScope?.cancel()
         syncServices.webhookScope?.cancel()
+        syncServices.sessionCleanupScope?.cancel()
     }
     monitor.subscribe(ApplicationStopped) {
         logger.info("Closing external HTTP clients and database handle")
@@ -485,12 +521,16 @@ internal fun cleanupOnStartupFailure(
         syncServices.webhookDispatcher?.let { dispatcher ->
             withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { dispatcher.stop() }
         }
+        syncServices.sessionCleanupService?.let { cleanup ->
+            withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { cleanup.stop() }
+        }
         withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { plexRuntimeManager.stop() }
     }
     syncServices.libraryCollectorScope.cancel()
     syncServices.userSyncScope.cancel()
     syncServices.guardrailScope?.cancel()
     syncServices.webhookScope?.cancel()
+    syncServices.sessionCleanupScope?.cancel()
     clients.forEach { client ->
         if (client != null) {
             runCatching { client.close() }
@@ -541,13 +581,14 @@ private fun initAuthService(
     appConfig: AppConfig,
     databaseHandle: DatabaseHandle,
     accountRepository: ExposedAuthAccountRepository,
+    sessionRepository: ExposedAuthSessionRepository,
     userRepository: ExposedUserRepository,
     emailLinker: EmailMediaUserLinker,
 ): AuthService {
     val authService =
         AuthService(
             accountRepository = accountRepository,
-            sessionRepository = ExposedAuthSessionRepository(databaseHandle),
+            sessionRepository = sessionRepository,
             apiKeyRepository = ExposedApiKeyRepository(databaseHandle),
             userRepository = userRepository,
             passwordHasher = Argon2idPasswordHasher(),
@@ -623,6 +664,8 @@ fun Application.miruModule(
     install(ContentNegotiation) {
         json(MiruJson)
     }
+
+    installResponseCompression()
 
     install(SSE)
 
@@ -721,6 +764,27 @@ fun Application.miruModule(
     }
 }
 
+private fun Application.installResponseCompression() {
+    install(Compression) {
+        gzip {
+            priority = 1.0
+            minimumSize(COMPRESSION_MIN_SIZE_BYTES)
+        }
+        deflate {
+            priority = 0.9
+            minimumSize(COMPRESSION_MIN_SIZE_BYTES)
+        }
+        excludeContentType(
+            ContentType.Text.EventStream,
+            ContentType.Image.Any,
+        )
+        condition {
+            request.path() != "/api/v1/streams/events" &&
+                !response.headers.contains(HttpHeaders.ContentEncoding)
+        }
+    }
+}
+
 private fun Application.installConfiguredCors(allowedOrigins: List<String>) {
     if (allowedOrigins.isEmpty()) return
     install(CORS) {
@@ -790,5 +854,16 @@ internal class LazyCloseableHttpClient(
     }
 }
 
-private fun resolveAppVersion(): String =
-    object {}::class.java.`package`?.implementationVersion ?: "0.1.0-dev"
+internal fun resolveAppVersion(): String =
+    resolveAppVersion(
+        envVersion = System.getenv("MIRU_VERSION"),
+        manifestVersion = object {}::class.java.`package`?.implementationVersion,
+    )
+
+internal fun resolveAppVersion(
+    envVersion: String?,
+    manifestVersion: String?,
+): String =
+    envVersion?.trim()?.takeIf { it.isNotEmpty() }
+        ?: manifestVersion?.trim()?.takeIf { it.isNotEmpty() }
+        ?: "dev"

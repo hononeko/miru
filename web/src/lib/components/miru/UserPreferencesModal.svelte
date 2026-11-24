@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { Monitor, Moon, Sun, LogOut } from 'lucide-svelte';
+	import { api, MiruApiError } from '$api/client';
 	import Badge from '$components/ui/Badge.svelte';
 	import Button from '$components/ui/Button.svelte';
 	import { authStore } from '$stores/auth.svelte';
@@ -15,7 +16,7 @@
 		TimeFormatPreference,
 		UpdateUserPreferencesRequest
 	} from '$api/types';
-	import { cn, formatPreferencePreview, safeInitial } from '$lib/utils';
+	import { cn, formatPreferencePreview, safeInitial, validatePassword } from '$lib/utils';
 
 	let dialogEl: HTMLDialogElement | undefined = $state();
 	let draft = $state<UpdateUserPreferencesRequest>({
@@ -28,8 +29,21 @@
 	});
 	let previewSampleMs = $state(Date.now());
 	let saveError = $state<string | null>(null);
+	let currentPassword = $state('');
+	let newPassword = $state('');
+	let confirmNewPassword = $state('');
+	let passwordSubmitting = $state(false);
+	let passwordError = $state<string | null>(null);
+	let passwordSuccess = $state<string | null>(null);
 	let savedOnClose = false;
 	let pressedOutside = false;
+
+	const canChangePassword = $derived(
+		authStore.authMode !== 'none' &&
+			authStore.authenticated &&
+			authStore.principal?.authSource !== 'API_KEY' &&
+			authStore.principal?.authProvider === 'LOCAL'
+	);
 
 	const THEME_OPTIONS: { value: ThemePreference; label: string; icon: typeof Monitor }[] = [
 		{ value: 'system', label: 'System', icon: Monitor },
@@ -68,6 +82,11 @@
 		};
 		previewSampleMs = Date.now();
 		saveError = null;
+		currentPassword = '';
+		newPassword = '';
+		confirmNewPassword = '';
+		passwordError = null;
+		passwordSuccess = null;
 	}
 
 	$effect(() => {
@@ -96,6 +115,11 @@
 			themeStore.set(preferencesStore.prefs.theme);
 		}
 		saveError = null;
+		currentPassword = '';
+		newPassword = '';
+		confirmNewPassword = '';
+		passwordError = null;
+		passwordSuccess = null;
 		preferencesStore.closeModal();
 	}
 
@@ -132,6 +156,44 @@
 			preferencesStore.closeModal();
 		} catch (err) {
 			saveError = err instanceof Error ? err.message : 'Failed to save preferences';
+		}
+	}
+
+	async function handleChangePassword() {
+		passwordError = null;
+		passwordSuccess = null;
+		if (!currentPassword) {
+			passwordError = 'Current password is required.';
+			return;
+		}
+		const validationMsg = validatePassword(newPassword);
+		if (validationMsg) {
+			passwordError = validationMsg;
+			return;
+		}
+		if (newPassword !== confirmNewPassword) {
+			passwordError = 'New passwords do not match.';
+			return;
+		}
+		passwordSubmitting = true;
+		try {
+			const res = await api.POST('/api/v1/auth/me/password', {
+				body: {
+					currentPassword,
+					newPassword
+				}
+			});
+			if (res.error) {
+				throw new MiruApiError(res.response.status, res.error);
+			}
+			currentPassword = '';
+			newPassword = '';
+			confirmNewPassword = '';
+			passwordSuccess = 'Password updated. Other active sessions have been signed out.';
+		} catch (err) {
+			passwordError = err instanceof MiruApiError ? err.detail : 'Failed to update password';
+		} finally {
+			passwordSubmitting = false;
 		}
 	}
 
@@ -398,6 +460,74 @@
 					</button>
 				</div>
 			</section>
+
+			{#if canChangePassword}
+				<section aria-label="Change Password" class="flex flex-col gap-3 border-t border-border pt-4">
+					<div class="flex items-center justify-between gap-2">
+						<span class="font-heading text-xs font-semibold uppercase tracking-wider text-fg-secondary">
+							Change Password
+						</span>
+						<span class="font-mono text-[10px] text-fg-muted">Local account</span>
+					</div>
+
+					{#if passwordError}
+						<div role="alert" class="rounded-xl border border-danger/50 bg-danger-soft px-3.5 py-2.5 text-xs text-danger">
+							{passwordError}
+						</div>
+					{/if}
+					{#if passwordSuccess}
+						<div role="status" class="rounded-xl border border-direct-play/50 bg-direct-play-soft px-3.5 py-2.5 text-xs text-direct-play">
+							{passwordSuccess}
+						</div>
+					{/if}
+
+					<div class="flex flex-col gap-2.5 rounded-xl border border-border bg-elevated p-3.5">
+						<label class="flex flex-col gap-1">
+							<span class="text-xs font-medium text-fg-secondary">Current Password</span>
+							<input
+								type="password"
+								autocomplete="current-password"
+								bind:value={currentPassword}
+								class="rounded-lg border border-input-border bg-canvas px-3 py-2 font-mono text-xs text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
+							/>
+						</label>
+						<div class="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+							<label class="flex flex-col gap-1">
+								<span class="text-xs font-medium text-fg-secondary">New Password</span>
+								<input
+									type="password"
+									autocomplete="new-password"
+									bind:value={newPassword}
+									class="rounded-lg border border-input-border bg-canvas px-3 py-2 font-mono text-xs text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
+								/>
+							</label>
+							<label class="flex flex-col gap-1">
+								<span class="text-xs font-medium text-fg-secondary">Confirm New Password</span>
+								<input
+									type="password"
+									autocomplete="new-password"
+									bind:value={confirmNewPassword}
+									class="rounded-lg border border-input-border bg-canvas px-3 py-2 font-mono text-xs text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
+								/>
+							</label>
+						</div>
+						<div class="flex flex-wrap items-center justify-between gap-2 pt-0.5">
+							<span class="text-[10px] text-fg-muted">
+								Min 12 chars with lowercase, uppercase, and digit
+							</span>
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								disabled={passwordSubmitting}
+								onclick={handleChangePassword}
+							>
+								{passwordSubmitting ? 'Updating…' : 'Update Password'}
+							</Button>
+						</div>
+					</div>
+				</section>
+			{/if}
 		</div>
 
 		<!-- Footer -->

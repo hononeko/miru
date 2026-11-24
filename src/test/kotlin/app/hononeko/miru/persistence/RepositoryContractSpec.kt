@@ -136,6 +136,7 @@ fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
         staleMediaTests { ctx }
         cascadeTests { ctx }
         authAccountTests { ctx }
+        authAccountLifecycleTests { ctx }
         authAccountLinkModeTests { ctx }
         authSessionTests { ctx }
         apiKeyTests { ctx }
@@ -1311,6 +1312,105 @@ private fun FunSpecRootScope.authAccountTests(ctxProvider: () -> ContractContext
             ctx.authAccounts.findById("acc-local-3").shouldBeRight().shouldNotBeNull().emailVerified shouldBe false
             ctx.authAccounts.findById("acc-local-1").shouldBeRight().shouldNotBeNull().emailVerified shouldBe null
             ctx.authAccounts.countAdmins().shouldBeRight() shouldBe 2L
+        }
+    }
+}
+
+private fun FunSpecRootScope.authAccountLifecycleTests(ctxProvider: () -> ContractContext) {
+    context("AuthAccountRepository lifecycle updates") {
+        test("counts active admins separately and updates password hash, role, and disabled status") {
+            val ctx = ctxProvider()
+            val admin1 =
+                AuthAccountRecord(
+                    id = "acc-active-admin",
+                    username = "activeadmin",
+                    usernameNormalized = "activeadmin",
+                    passwordHash = "hash-1",
+                    role = "ADMIN",
+                    disabled = false,
+                    createdAtMs = 1_000L,
+                    updatedAtMs = 1_000L,
+                )
+            val admin2 =
+                AuthAccountRecord(
+                    id = "acc-oidc-admin",
+                    username = "oidcadmin",
+                    usernameNormalized = "oidcadmin",
+                    passwordHash = "",
+                    role = "ADMIN",
+                    disabled = false,
+                    authProvider = "OIDC",
+                    externalSubject = "sub-active-1",
+                    createdAtMs = 1_100L,
+                    updatedAtMs = 1_100L,
+                )
+            val viewer =
+                AuthAccountRecord(
+                    id = "acc-local-viewer",
+                    username = "localviewer",
+                    usernameNormalized = "localviewer",
+                    passwordHash = "hash-2",
+                    role = "USER",
+                    disabled = false,
+                    createdAtMs = 1_200L,
+                    updatedAtMs = 1_200L,
+                )
+            ctx.authAccounts.insert(admin1).shouldBeRight()
+            ctx.authAccounts.insert(admin2).shouldBeRight()
+            ctx.authAccounts.insert(viewer).shouldBeRight()
+
+            ctx.authAccounts.countAdmins().shouldBeRight() shouldBe 2L
+            ctx.authAccounts.countActiveAdmins().shouldBeRight() shouldBe 2L
+
+            val updatedPassword =
+                ctx.authAccounts
+                    .updatePasswordHash("acc-active-admin", "updated-hash-1", updatedAtMs = 6_000L)
+                    .shouldBeRight()
+                    .shouldNotBeNull()
+            updatedPassword.passwordHash shouldBe "updated-hash-1"
+            updatedPassword.updatedAtMs shouldBe 6_000L
+            ctx.authAccounts.updatePasswordHash("missing-id", "x", updatedAtMs = 6_000L).shouldBeRight().shouldBeNull()
+
+            val disabledAdmin =
+                ctx.authAccounts
+                    .updateAccount(
+                        id = "acc-oidc-admin",
+                        role = "ADMIN",
+                        disabled = true,
+                        passwordHash = null,
+                        updatedAtMs = 7_000L,
+                    ).shouldBeRight()
+                    .shouldNotBeNull()
+            disabledAdmin.disabled shouldBe true
+            disabledAdmin.role shouldBe "ADMIN"
+            disabledAdmin.updatedAtMs shouldBe 7_000L
+            ctx.authAccounts.countAdmins().shouldBeRight() shouldBe 2L
+            ctx.authAccounts.countActiveAdmins().shouldBeRight() shouldBe 1L
+
+            val promotedWithReset =
+                ctx.authAccounts
+                    .updateAccount(
+                        id = "acc-local-viewer",
+                        role = "ADMIN",
+                        disabled = false,
+                        passwordHash = "reset-hash-2",
+                        updatedAtMs = 8_000L,
+                    ).shouldBeRight()
+                    .shouldNotBeNull()
+            promotedWithReset.role shouldBe "ADMIN"
+            promotedWithReset.disabled shouldBe false
+            promotedWithReset.passwordHash shouldBe "reset-hash-2"
+            ctx.authAccounts.countActiveAdmins().shouldBeRight() shouldBe 2L
+
+            ctx.authAccounts
+                .updateAccount(
+                    id = "missing-id",
+                    role = "USER",
+                    disabled = false,
+                    passwordHash = null,
+                    updatedAtMs = 9_000L,
+                ).shouldBeRight()
+                .shouldBeNull()
         }
     }
 }

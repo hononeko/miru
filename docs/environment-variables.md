@@ -17,6 +17,7 @@ For examples, see [`docker-compose.yml`](docker-compose.yml), the [Kubernetes ma
 | `MIRU_CORS_ALLOWED_ORIGINS` | *(none)* | Comma-separated origins allowed to call the API from another origin with credentials, for example `http://localhost:5173` for the Vite dev server. An origin given without a scheme allows both `http` and `https`. Leave unset when the web UI is served by Miru itself. |
 | `MIRU_TRUST_PROXY_HEADERS` | `false` | Set `true` only behind a single trusted reverse proxy. When enabled, Miru honors the rightmost entry in `X-Forwarded-For` (falling back to `X-Real-IP`) for authentication rate limiting. Leave `false` when Miru is exposed directly so clients cannot spoof forwarding headers. |
 | `STATIC_WEB_DIR` | *(none)*; `/opt/miru/static` in the container image | Directory of the built web UI (`web/build`) to serve, with SPA fallback to `index.html`. When unset, Miru serves only the API. |
+| `MIRU_VERSION` | JAR manifest `Implementation-Version`, else `dev`; `VERSION` build arg in container image | Overrides the application version string reported by `GET /healthz` and sent in `X-Plex-Version` during Plex OAuth. |
 
 ## Database
 
@@ -126,6 +127,9 @@ Miru logs JSON lines to standard output.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `JDK_JAVA_OPTIONS` | `-XX:MaxRAMPercentage=50.0 -XX:MinRAMPercentage=25.0 -XX:ReservedCodeCacheSize=64m -XX:MaxDirectMemorySize=64m -XX:+ExitOnOutOfMemoryError` | Standard JVM environment variable read directly by the Java launcher (no shell required). Setting it replaces the defaults, so repeat any you want to keep. |
+| `JDK_JAVA_OPTIONS` | `-XX:+UseCompactObjectHeaders -XX:+UseG1GC -XX:InitialRAMPercentage=10.0 -XX:MaxRAMPercentage=50.0 -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=25 -XX:G1PeriodicGCInterval=30000 -XX:-G1PeriodicGCInvokesConcurrent -XX:G1PeriodicGCSystemLoadThreshold=0.0 -XX:ReservedCodeCacheSize=48m -XX:MaxDirectMemorySize=48m -XX:+ExitOnOutOfMemoryError` | Standard JVM environment variable read directly by the Java launcher (no shell required), tuned with JDK 25 Compact Object Headers and G1 periodic heap uncommit. Setting it replaces the defaults, so repeat any you want to keep. |
+| `MALLOC_ARENA_MAX` | `2` | Caps glibc malloc arenas to limit off-heap native memory fragmentation under concurrent requests. |
+| `MALLOC_TRIM_THRESHOLD_` | `65536` | Encourages glibc `malloc` to return freed native memory pages to the OS sooner. |
+| `MIRU_VERSION` | `${VERSION}` build arg (`dev` by default) | Container image version label (`org.opencontainers.image.version`) baked into runtime `ENV` so `/healthz` reports the image version while preserving build layer caching. |
 
 The container image pairs a trimmed `jlink` Java runtime with Google Distroless `base-nossl-debian13:nonroot` (no shell, package manager, coreutils, or OpenSSL). The JRE, application JAR, static web assets, and pre-extracted SQLite native library (`/opt/miru/native/libsqlitejdbc.so`) are owned by `root` and read-only to the runtime user (`10001:10001`), which only owns `/data`. Because `libsqlitejdbc.so` is pre-extracted at build time rather than unpacked into `/tmp` at startup, `/tmp` can be mounted non-executable (`--read-only --tmpfs /tmp:noexec,nosuid,nodev`).

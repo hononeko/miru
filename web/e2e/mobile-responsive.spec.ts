@@ -58,6 +58,11 @@ test.describe('Responsive mobile viewport: bottom navigation, compact cards & us
 		// On mobile (< md), desktop table is hidden and compact cards + Details button are visible
 		await expect(page.locator('table')).toBeHidden();
 		await expect(page.getByText('30 PLAYS')).toBeVisible();
+		// The cards have no column headers, so sorting stays available as a menu
+		await page.getByLabel('Sort by').selectOption('title');
+		await expect(page.getByRole('button', { name: 'Sorted ascending, switch to descending' })).toBeVisible();
+		await expect(page.locator('main').getByRole('button', { name: 'Akira' }).filter({ visible: true }).first()).toBeVisible();
+
 		await page.getByRole('button', { name: 'Details', exact: true }).first().click();
 		const sheetDialog = page.getByRole('dialog');
 		await expect(sheetDialog.getByText('Play Details')).toBeVisible();

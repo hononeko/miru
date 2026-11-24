@@ -2093,6 +2093,7 @@ paths:
         - name: sortBy
           in: query
           required: false
+          description: Sort field; title orders episodes by show, then season and episode number
           schema:
             type: string
             enum: [stopped_at, started_at, watched_duration, completion_percent, title]

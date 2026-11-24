@@ -296,6 +296,14 @@ data class LibrarySnapshotRecord(
     val aggregatesJson: String? = null,
 )
 
+/** Items added to and removed from a library section during one UTC day. */
+data class LibraryGrowthDayRecord(
+    val epochDay: Long,
+    val added: Long,
+    val removed: Long,
+    val sizeDeltaBytes: Long,
+)
+
 data class MediaItemTechRecord(
     val fileSizeBytes: Long? = null,
     val videoResolution: String? = null,

@@ -4633,9 +4633,28 @@ components:
           type: integer
           format: int64
 
+    LibraryGrowthDayResponse:
+      type: object
+      description: Items (movies, episodes or tracks) added to and removed from a section on one UTC day
+      required: [date, added, removed, sizeDeltaBytes]
+      properties:
+        date:
+          type: string
+          format: date
+        added:
+          type: integer
+          format: int64
+        removed:
+          type: integer
+          format: int64
+        sizeDeltaBytes:
+          type: integer
+          format: int64
+          description: Change in total section size over the day; negative when it shrank
+
     LibraryStatsResponse:
       type: object
-      required: [section, byResolution, byVideoCodec, byAudioCodec, snapshots]
+      required: [section, byResolution, byVideoCodec, byAudioCodec, snapshots, growth]
       properties:
         section:
           $ref: '#/components/schemas/LibrarySectionResponse'
@@ -4655,6 +4674,13 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/LibrarySnapshotResponse'
+        growth:
+          type: array
+          description: >-
+            The most recent days with additions or removals, oldest first. Derived from changes between consecutive
+            snapshots, so days without a change are left out.
+          items:
+            $ref: '#/components/schemas/LibraryGrowthDayResponse'
 
     RecentMediaItemResponse:
       type: object

@@ -2,6 +2,7 @@ package app.hononeko.miru.http
 
 import app.hononeko.miru.library.LibrarySyncMode
 import app.hononeko.miru.library.LibrarySyncSummary
+import app.hononeko.miru.persistence.model.LibraryGrowthDayRecord
 import app.hononeko.miru.persistence.model.LibrarySectionRecord
 import app.hononeko.miru.persistence.model.LibrarySnapshotRecord
 import app.hononeko.miru.persistence.model.MediaItemCacheRecord
@@ -10,6 +11,7 @@ import app.hononeko.miru.service.LibraryRecentResult
 import app.hononeko.miru.service.LibraryStaleResult
 import app.hononeko.miru.service.LibraryStatsResult
 import kotlinx.serialization.Serializable
+import java.time.LocalDate
 
 @Serializable
 data class LibrarySectionResponse(
@@ -43,6 +45,15 @@ data class LibrarySnapshotResponse(
     val totalDurationMs: Long,
 )
 
+/** Items (movies, episodes or tracks) added and removed on one UTC day. */
+@Serializable
+data class LibraryGrowthDayResponse(
+    val date: String,
+    val added: Long,
+    val removed: Long,
+    val sizeDeltaBytes: Long,
+)
+
 @Serializable
 data class LibraryStatsResponse(
     val section: LibrarySectionResponse,
@@ -50,6 +61,8 @@ data class LibraryStatsResponse(
     val byVideoCodec: Map<String, Int>,
     val byAudioCodec: Map<String, Int>,
     val snapshots: List<LibrarySnapshotResponse>,
+    /** Days with additions or removals, oldest first. */
+    val growth: List<LibraryGrowthDayResponse>,
 )
 
 @Serializable
@@ -145,6 +158,14 @@ internal fun LibrarySnapshotRecord.toResponse(): LibrarySnapshotResponse =
         totalDurationMs = totalDurationMs,
     )
 
+internal fun LibraryGrowthDayRecord.toResponse(): LibraryGrowthDayResponse =
+    LibraryGrowthDayResponse(
+        date = LocalDate.ofEpochDay(epochDay).toString(),
+        added = added,
+        removed = removed,
+        sizeDeltaBytes = sizeDeltaBytes,
+    )
+
 internal fun LibraryStatsResult.toResponse(): LibraryStatsResponse =
     LibraryStatsResponse(
         section = section.toResponse(),
@@ -152,6 +173,7 @@ internal fun LibraryStatsResult.toResponse(): LibraryStatsResponse =
         byVideoCodec = aggregates.byVideoCodec,
         byAudioCodec = aggregates.byAudioCodec,
         snapshots = snapshots.map { it.toResponse() },
+        growth = growth.map { it.toResponse() },
     )
 
 internal fun MediaItemCacheRecord.toRecentResponse(): RecentMediaItemResponse =

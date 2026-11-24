@@ -91,4 +91,44 @@ describe('BarChart', () => {
 			expect(screen.queryByText('2026-11-18: 5 total')).toBeNull();
 		});
 	});
+
+	it('draws negative values below a shared baseline on the same scale and keeps positive-only charts full height', () => {
+		const { container, unmount } = render(BarChart, {
+			props: {
+				points: [
+					{
+						id: 'a',
+						label: '20',
+						value: 30,
+						segments: [{ label: 'Added', value: 30, colorClass: 'bg-chart-1' }],
+						negative: { label: 'Removed', value: 10, colorClass: 'bg-chart-2' }
+					},
+					{
+						id: 'b',
+						label: '21',
+						value: 0,
+						segments: [{ label: 'Added', value: 0, colorClass: 'bg-chart-1' }],
+						negative: { label: 'Removed', value: 20, colorClass: 'bg-chart-2' }
+					}
+				]
+			}
+		});
+
+		const added = container.querySelectorAll<HTMLElement>('.rounded-t-sm');
+		const removed = container.querySelectorAll<HTMLElement>('.rounded-b-sm');
+		// The day without additions has no bar above the baseline
+		expect(added).toHaveLength(1);
+		expect(added[0].style.bottom).toBe('40%');
+		expect(added[0].style.height).toBe('60%');
+		expect(Array.from(removed, (bar) => [bar.style.top, bar.style.height])).toEqual([
+			['60%', '20%'],
+			['60%', '40%']
+		]);
+		unmount();
+
+		const plain = render(BarChart, { props: { points: [{ id: 'a', label: '20', value: 5 }] } });
+		const bar = plain.container.querySelector<HTMLElement>('.rounded-t-sm')!;
+		expect([bar.style.bottom, bar.style.height]).toEqual(['0%', '100%']);
+		expect(plain.container.querySelector('.rounded-b-sm')).toBeNull();
+	});
 });

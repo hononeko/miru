@@ -5,6 +5,7 @@ import app.hononeko.miru.auth.MiruPrincipal
 import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.library.LibraryAggregates
 import app.hononeko.miru.library.LibrarySyncSummary
+import app.hononeko.miru.persistence.model.LibraryGrowthDayRecord
 import app.hononeko.miru.persistence.model.LibrarySectionRecord
 import app.hononeko.miru.persistence.model.LibrarySnapshotRecord
 import app.hononeko.miru.persistence.model.MediaItemCacheRecord
@@ -28,6 +29,7 @@ data class LibraryStatsResult(
     val section: LibrarySectionRecord,
     val aggregates: LibraryAggregates,
     val snapshots: List<LibrarySnapshotRecord>,
+    val growth: List<LibraryGrowthDayRecord>,
 )
 
 data class LibraryRecentResult(
@@ -121,11 +123,21 @@ class LibraryQueryService(
                 }
 
             val aggregates = decodeAggregates(latestSnapshot?.aggregatesJson, section.sectionKey)
+            val newestGrowthFirst =
+                libraryRepository
+                    .findDailyGrowth(
+                        serverId = section.serverId,
+                        sectionKey = section.sectionKey,
+                        limit = GROWTH_DAYS_LIMIT,
+                        fromMs = fromMs,
+                        toMs = toMs,
+                    ).bind()
 
             LibraryStatsResult(
                 section = section,
                 aggregates = aggregates,
                 snapshots = snapshots,
+                growth = newestGrowthFirst.asReversed(),
             )
         }
 
@@ -341,6 +353,7 @@ class LibraryQueryService(
     companion object {
         const val DEFAULT_STATS_LIMIT = 90
         const val MAX_STATS_LIMIT = 365
+        const val GROWTH_DAYS_LIMIT = 90
         const val DEFAULT_RECENT_LIMIT = 25
         const val MAX_RECENT_LIMIT = 100
         const val DEFAULT_STALE_UNWATCHED_DAYS = 180

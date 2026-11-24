@@ -17,11 +17,14 @@
 		tooltip?: string;
 		ariaLabel?: string;
 		segments?: BarSegment[];
+		/** Drawn below the baseline, on the same scale as `value`. */
+		negative?: BarSegment;
 	}
 
 	type Props = {
 		points: BarPoint[];
 		heightClass?: string;
+		barClass?: string;
 		emptyMessage?: string;
 		highlightPeak?: boolean;
 		class?: string;
@@ -31,6 +34,7 @@
 	let {
 		points,
 		heightClass = 'h-32',
+		barClass = '',
 		emptyMessage = 'No data in this range',
 		highlightPeak = true,
 		class: className = '',
@@ -40,8 +44,28 @@
 	let openKey = $state<string | null>(null);
 	let scrollEl: HTMLDivElement | undefined = $state();
 
+	const MIN_SIDE_PCT = 12;
+
 	const maxValue = $derived(Math.max(...points.map((p) => p.value), 0));
+	const maxNegative = $derived(Math.max(...points.map((p) => p.negative?.value ?? 0), 0));
+	// Height of the area below the baseline, leaving room for the smallest bar on either side.
+	const baselinePct = $derived.by(() => {
+		if (maxNegative === 0) return 0;
+		if (maxValue === 0) return 100;
+		const proportional = (maxNegative / (maxValue + maxNegative)) * 100;
+		return Math.min(100 - MIN_SIDE_PCT, Math.max(MIN_SIDE_PCT, proportional));
+	});
+	const pctPerUnit = $derived(
+		Math.min(
+			maxValue > 0 ? (100 - baselinePct) / maxValue : Infinity,
+			maxNegative > 0 ? baselinePct / maxNegative : Infinity
+		)
+	);
 	const hasSubLabels = $derived(points.some((p) => Boolean(p.subLabel)));
+
+	function barHeightPct(value: number): number {
+		return value > 0 ? Math.max(8, Math.round(value * pctPerUnit)) : 4;
+	}
 
 	function pointKey(point: BarPoint, idx: number): string {
 		return point.id ?? `${idx}:${point.label}`;
@@ -56,7 +80,7 @@
 	});
 </script>
 
-{#if points.length === 0 || maxValue === 0}
+{#if points.length === 0 || (maxValue === 0 && maxNegative === 0)}
 	<div
 		class={cn(
 			'flex items-center justify-center rounded-lg bg-elevated/50 text-xs text-fg-muted',
@@ -73,10 +97,12 @@
 			{#each points as point, idx (pointKey(point, idx))}
 				{@const key = pointKey(point, idx)}
 				{@const isOpen = openKey === key}
-				{@const ratio = maxValue > 0 ? point.value / maxValue : 0}
 				{@const isPeak = highlightPeak && point.value === maxValue && point.value > 0}
-				{@const barHeightPct = point.value > 0 ? Math.max(8, Math.round(ratio * 100)) : 4}
 				{@const activeSegments = point.segments?.filter((s) => s.value > 0) ?? []}
+				{@const ringClass = cn(
+					'group-focus-visible:ring-2 group-focus-visible:ring-fg-primary/80 group-focus-visible:ring-offset-1 group-focus-visible:ring-offset-surface',
+					isOpen && 'ring-2 ring-fg-primary/80 ring-offset-1 ring-offset-surface'
+				)}
 				<Popover.Root
 					open={isOpen}
 					onOpenChange={(next) => {
@@ -90,16 +116,20 @@
 					<Popover.Trigger
 						type="button"
 						aria-label={point.ariaLabel ?? point.tooltip ?? `${point.label}: ${point.value}`}
-						class="group flex h-full min-w-[22px] flex-1 cursor-pointer flex-col items-center justify-end gap-1 focus-visible:outline-none sm:min-w-[26px]"
+						class={cn(
+							'group flex h-full min-w-[22px] flex-1 cursor-pointer flex-col items-center justify-end gap-1 focus-visible:outline-none sm:min-w-[26px]',
+							barClass
+						)}
 					>
-						<div class="flex w-full flex-1 items-end">
+						<div class="relative w-full flex-1">
 							{#if activeSegments.length > 0}
 								<div
 									class={cn(
-										'flex w-full flex-col-reverse gap-[2px] overflow-hidden rounded-t-sm transition-[height,opacity,box-shadow] duration-300 ease-[var(--ease-out-quart)] group-focus-visible:ring-2 group-focus-visible:ring-fg-primary/80 group-focus-visible:ring-offset-1 group-focus-visible:ring-offset-surface',
-										isOpen && 'ring-2 ring-fg-primary/80 ring-offset-1 ring-offset-surface'
+										'absolute inset-x-0 flex flex-col-reverse gap-[2px] overflow-hidden rounded-t-sm transition-[height,opacity,box-shadow] duration-300 ease-[var(--ease-out-quart)]',
+										ringClass
 									)}
-									style:height={`${barHeightPct}%`}
+									style:bottom={`${baselinePct}%`}
+									style:height={`${barHeightPct(point.value)}%`}
 								>
 									{#each activeSegments as seg (seg.label)}
 										{@const segPct = point.value > 0 ? (seg.value / point.value) * 100 : 0}
@@ -112,18 +142,36 @@
 										></div>
 									{/each}
 								</div>
-							{:else}
+							{:else if point.value > 0 || !point.negative?.value}
 								<div
 									class={cn(
-										'w-full rounded-t-sm transition-[height,background-color,opacity,box-shadow] duration-300 ease-[var(--ease-out-quart)] group-focus-visible:ring-2 group-focus-visible:ring-fg-primary/80 group-focus-visible:ring-offset-1 group-focus-visible:ring-offset-surface',
+										'absolute inset-x-0 rounded-t-sm transition-[height,background-color,opacity,box-shadow] duration-300 ease-[var(--ease-out-quart)]',
+										ringClass,
 										point.value <= 0
 											? 'bg-subtle/80 group-hover:bg-border-strong'
 											: isPeak
 												? 'bg-primary group-hover:bg-primary/85'
-												: 'bg-cyan/85 group-hover:bg-cyan-hi',
-										isOpen && 'ring-2 ring-fg-primary/80 ring-offset-1 ring-offset-surface'
+												: 'bg-cyan/85 group-hover:bg-cyan-hi'
 									)}
-									style:height={`${barHeightPct}%`}
+									style:bottom={`${baselinePct}%`}
+									style:height={`${barHeightPct(point.value)}%`}
+								></div>
+							{/if}
+							{#if maxNegative > 0}
+								<div
+									class="absolute -inset-x-[3px] h-px bg-border-strong sm:-inset-x-1"
+									style:bottom={`${baselinePct}%`}
+								></div>
+							{/if}
+							{#if point.negative && point.negative.value > 0}
+								<div
+									class={cn(
+										'absolute inset-x-0 rounded-b-sm transition-[height,opacity,box-shadow] duration-300 ease-[var(--ease-out-quart)] group-hover:opacity-90',
+										point.negative.colorClass,
+										ringClass
+									)}
+									style:top={`${100 - baselinePct}%`}
+									style:height={`${barHeightPct(point.negative.value)}%`}
 								></div>
 							{/if}
 						</div>

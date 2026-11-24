@@ -63,7 +63,8 @@ test.describe('Libraries browsing, admin-triggered deep sync & media details', (
 		// Movies section breakdown, snapshot badge & Recently Added grid populated
 		await page.getByRole('button', { name: /Movies/ }).click();
 		await expect(page.getByRole('heading', { name: 'Movies · Technical Breakdown' })).toBeVisible();
-		await expect(page.getByText('1 SNAPS')).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Growth History' })).toBeVisible();
+		await expect(page.getByText('No additions or removals recorded yet')).toBeVisible();
 		await expect(page.getByRole('heading', { name: 'Recently Added · Movies' })).toBeVisible();
 		await expect(page.getByRole('button', { name: /Spirited Away/ })).toBeVisible();
 		await expect(page.getByRole('button', { name: /Akira/ })).toBeVisible();

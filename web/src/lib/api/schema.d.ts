@@ -1750,6 +1750,20 @@ export interface components {
             /** Format: int64 */
             totalDurationMs: number;
         };
+        /** @description Items (movies, episodes or tracks) added to and removed from a section on one UTC day */
+        LibraryGrowthDayResponse: {
+            /** Format: date */
+            date: string;
+            /** Format: int64 */
+            added: number;
+            /** Format: int64 */
+            removed: number;
+            /**
+             * Format: int64
+             * @description Change in total section size over the day; negative when it shrank
+             */
+            sizeDeltaBytes: number;
+        };
         LibraryStatsResponse: {
             section: components["schemas"]["LibrarySectionResponse"];
             byResolution: {
@@ -1762,6 +1776,8 @@ export interface components {
                 [key: string]: number;
             };
             snapshots: components["schemas"]["LibrarySnapshotResponse"][];
+            /** @description The most recent days with additions or removals, oldest first. Derived from changes between consecutive snapshots, so days without a change are left out. */
+            growth: components["schemas"]["LibraryGrowthDayResponse"][];
         };
         RecentMediaItemResponse: {
             ratingKey: string;

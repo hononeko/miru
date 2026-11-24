@@ -219,6 +219,36 @@ data class PlaybackHistoryStatsRow(
     val subtitleDecision: String? = null,
 )
 
+data class OverviewStatsRow(
+    val userId: String,
+    val mediaType: String,
+    val ratingKey: String,
+    val title: String,
+    val grandparentTitle: String?,
+    val thumbPath: String?,
+    val watchedDurationSec: Int,
+    val streamDecision: String,
+    val hwTranscode: Boolean,
+    val stoppedAtMs: Long,
+)
+
+data class ClientStatsRow(
+    val watchedDurationSec: Int,
+    val streamDecision: String,
+    val videoDecision: String?,
+    val audioDecision: String?,
+    val subtitleDecision: String?,
+    val videoCodec: String?,
+    val audioCodec: String?,
+    val transcodeVideoCodec: String?,
+    val transcodeAudioCodec: String?,
+    val container: String?,
+    val transcodeContainer: String?,
+    val playerProduct: String?,
+    val playerName: String?,
+    val playerPlatform: String?,
+)
+
 enum class StaleMediaSort {
     SIZE_DESC,
     SIZE_ASC,

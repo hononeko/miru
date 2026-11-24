@@ -2,12 +2,14 @@ package app.hononeko.miru.persistence.repository
 
 import app.hononeko.miru.MiruJson
 import app.hononeko.miru.persistence.model.ActiveSessionRecord
+import app.hononeko.miru.persistence.model.ClientStatsRow
 import app.hononeko.miru.persistence.model.LibrarySectionRecord
 import app.hononeko.miru.persistence.model.LibrarySnapshotRecord
 import app.hononeko.miru.persistence.model.MediaItemCacheRecord
 import app.hononeko.miru.persistence.model.MediaItemTechRecord
 import app.hononeko.miru.persistence.model.MediaMetadataRecord
 import app.hononeko.miru.persistence.model.MediaServerRecord
+import app.hononeko.miru.persistence.model.OverviewStatsRow
 import app.hononeko.miru.persistence.model.PlaybackHistoryRecord
 import app.hononeko.miru.persistence.model.PlaybackHistoryStatsRow
 import app.hononeko.miru.persistence.model.PlayerRecord
@@ -193,6 +195,38 @@ internal fun ResultRow.toPlaybackHistoryStatsRow(): PlaybackHistoryStatsRow =
         container = this[PlaybackHistoryTable.container],
         transcodeContainer = this[PlaybackHistoryTable.transcodeContainer],
         subtitleDecision = this[PlaybackHistoryTable.subtitleDecision],
+    )
+
+internal fun ResultRow.toOverviewStatsRow(): OverviewStatsRow =
+    OverviewStatsRow(
+        userId = this[PlaybackHistoryTable.userId],
+        mediaType = this[PlaybackHistoryTable.mediaType],
+        ratingKey = this[PlaybackHistoryTable.ratingKey],
+        title = this[PlaybackHistoryTable.title],
+        grandparentTitle = this[PlaybackHistoryTable.grandparentTitle],
+        thumbPath = this[PlaybackHistoryTable.thumbPath],
+        watchedDurationSec = this[PlaybackHistoryTable.watchedDurationSec],
+        streamDecision = this[PlaybackHistoryTable.streamDecision],
+        hwTranscode = this[PlaybackHistoryTable.hwTranscode],
+        stoppedAtMs = this[PlaybackHistoryTable.stoppedAtMs],
+    )
+
+internal fun ResultRow.toClientStatsRow(): ClientStatsRow =
+    ClientStatsRow(
+        watchedDurationSec = this[PlaybackHistoryTable.watchedDurationSec],
+        streamDecision = this[PlaybackHistoryTable.streamDecision],
+        videoDecision = this[PlaybackHistoryTable.videoDecision],
+        audioDecision = this[PlaybackHistoryTable.audioDecision],
+        subtitleDecision = this[PlaybackHistoryTable.subtitleDecision],
+        videoCodec = this[PlaybackHistoryTable.videoCodec],
+        audioCodec = this[PlaybackHistoryTable.audioCodec],
+        transcodeVideoCodec = this[PlaybackHistoryTable.transcodeVideoCodec],
+        transcodeAudioCodec = this[PlaybackHistoryTable.transcodeAudioCodec],
+        container = this[PlaybackHistoryTable.container],
+        transcodeContainer = this[PlaybackHistoryTable.transcodeContainer],
+        playerProduct = this[PlaybackHistoryTable.playerProduct],
+        playerName = this[PlaybackHistoryTable.playerName],
+        playerPlatform = this[PlaybackHistoryTable.playerPlatform],
     )
 
 internal fun ResultRow.toLibrarySectionRecord(): LibrarySectionRecord =

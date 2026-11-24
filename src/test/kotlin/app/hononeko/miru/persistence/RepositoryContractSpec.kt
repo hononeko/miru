@@ -685,6 +685,26 @@ private fun FunSpecRootScope.playbackHistorySortAndStatsTests(ctxProvider: () ->
                         toMs = 19_000L,
                     ).shouldBeRight()
             filteredStats.map { it.ratingKey } shouldContainExactly listOf("e-1")
+
+            // Streaming stats projections match listForStats and skip empty userIds
+            val overviewKeys = mutableListOf<String>()
+            ctx.history.forEachOverviewStatsRow(serverId = "srv-1") { overviewKeys += it.ratingKey }.shouldBeRight()
+            overviewKeys shouldContainExactly listOf("m-1", "e-1", "m-2")
+
+            val clientPlatforms = mutableListOf<String?>()
+            ctx.history.forEachClientStatsRow(serverId = "srv-1") { clientPlatforms += it.playerPlatform }.shouldBeRight()
+            clientPlatforms.toSet() shouldBe allStats.map { it.playerPlatform }.toSet()
+
+            val heatmapSamples = mutableListOf<Pair<Long, Int>>()
+            ctx.history.forEachHeatmapSample(serverId = "srv-1") { ts, dur -> heatmapSamples += ts to dur }.shouldBeRight()
+            heatmapSamples.toSet() shouldBe allStats.map { it.stoppedAtMs to it.watchedDurationSec }.toSet()
+
+            var emptyCallbackCalls = 0
+            ctx.history.forEachStatsRow(userIds = emptySet()) { emptyCallbackCalls++ }.shouldBeRight()
+            ctx.history.forEachOverviewStatsRow(userIds = emptySet()) { emptyCallbackCalls++ }.shouldBeRight()
+            ctx.history.forEachClientStatsRow(userIds = emptySet()) { emptyCallbackCalls++ }.shouldBeRight()
+            ctx.history.forEachHeatmapSample(userIds = emptySet()) { _, _ -> emptyCallbackCalls++ }.shouldBeRight()
+            emptyCallbackCalls shouldBe 0
         }
     }
 }

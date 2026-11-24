@@ -4,147 +4,211 @@ import app.hononeko.miru.http.DailyMediaPlayDto
 import app.hononeko.miru.http.DailyPlayStatDto
 import app.hononeko.miru.http.DailyUserPlayDto
 import app.hononeko.miru.http.normalizedDisplayName
-import app.hononeko.miru.persistence.model.PlaybackHistoryStatsRow
 import app.hononeko.miru.persistence.model.UserRecord
-import java.time.Instant
-import java.time.ZoneOffset
+import java.time.LocalDate
 
 private const val DAILY_MEDIA_LIMIT = 10
 
-internal fun aggregatePlaysPerDay(
-    rows: List<PlaybackHistoryStatsRow>,
-    usersById: Map<String, UserRecord>,
-    metric: AnalyticsMetric,
-    includeBreakdowns: Boolean = true,
-): List<DailyPlayStatDto> {
-    if (rows.isEmpty()) return emptyList()
-    return rows
-        .groupBy { row -> Instant.ofEpochMilli(row.stoppedAtMs).atZone(ZoneOffset.UTC).toLocalDate().toString() }
-        .entries
-        .sortedBy { it.key }
-        .map { (date, dayRows) ->
-            val playCount = dayRows.size.toLong()
-            val watchDurationSec = dayRows.sumOf { it.watchedDurationSec.toLong() }
+internal class DailyStatsAccumulator(
+    private val includeBreakdowns: Boolean = true,
+) {
+    private val bucketsByDay = HashMap<Long, DailyBucket>()
+
+    val activeDaysCount: Int
+        get() = bucketsByDay.size
+
+    fun distinctEpochDays(): Set<Long> = bucketsByDay.keys
+
+    fun record(
+        epochDay: Long,
+        userId: String,
+        mediaType: String,
+        ratingKey: String,
+        title: String,
+        grandparentTitle: String?,
+        thumbPath: String?,
+        watchedDurationSec: Long,
+    ) {
+        val day = bucketsByDay.getOrPut(epochDay) { DailyBucket(includeBreakdowns) }
+        day.playCount++
+        day.watchDurationSec += watchedDurationSec
+        if (!includeBreakdowns) return
+
+        val mediaMap = day.media ?: return
+        val usersMap = day.users ?: return
+
+        val isEpisode = mediaType.equals("episode", ignoreCase = true)
+        val trimmedGrandparent = grandparentTitle?.trim()?.takeIf { it.isNotEmpty() }
+        val mediaKey =
+            if (isEpisode) {
+                val showTitle = trimmedGrandparent ?: title
+                "show:${showTitle.lowercase()}"
+            } else {
+                "${mediaType.lowercase()}:$ratingKey"
+            }
+
+        val mediaBucket =
+            mediaMap.getOrPut(mediaKey) {
+                DailyMediaBucket(
+                    isEpisode = isEpisode,
+                    mediaType = if (isEpisode) "show" else mediaType.lowercase(),
+                    firstRatingKey = ratingKey,
+                    firstGrandparentTitle = trimmedGrandparent,
+                    lastRatingKey = ratingKey,
+                    lastTitle = title,
+                )
+            }
+        mediaBucket.playCount++
+        mediaBucket.watchDurationSec += watchedDurationSec
+        mediaBucket.lastRatingKey = ratingKey
+        mediaBucket.lastTitle = title
+        if (mediaBucket.firstThumbRatingKey == null && !thumbPath.isNullOrBlank()) {
+            mediaBucket.firstThumbRatingKey = ratingKey
+        }
+        mediaBucket.userStats.getOrPut(userId) { CountDuration() }.add(watchedDurationSec)
+        usersMap.getOrPut(userId) { CountDuration() }.add(watchedDurationSec)
+    }
+
+    fun toDailyPlayStats(
+        usersById: Map<String, UserRecord>,
+        metric: AnalyticsMetric,
+    ): List<DailyPlayStatDto> {
+        if (bucketsByDay.isEmpty()) return emptyList()
+        val sortedDays = bucketsByDay.keys.sorted()
+        return sortedDays.map { epochDay ->
+            val day = bucketsByDay.getValue(epochDay)
+            val date = LocalDate.ofEpochDay(epochDay).toString()
             if (!includeBreakdowns) {
                 DailyPlayStatDto(
                     date = date,
-                    playCount = playCount,
-                    watchDurationSec = watchDurationSec,
+                    playCount = day.playCount,
+                    watchDurationSec = day.watchDurationSec,
                 )
             } else {
                 DailyPlayStatDto(
                     date = date,
-                    playCount = playCount,
-                    watchDurationSec = watchDurationSec,
-                    media = aggregateDailyMedia(dayRows, usersById, metric),
-                    users = aggregateDailyUsers(dayRows, usersById, metric),
+                    playCount = day.playCount,
+                    watchDurationSec = day.watchDurationSec,
+                    media = buildDailyMedia(day.media.orEmpty(), usersById, metric),
+                    users = buildDailyUsers(day.users.orEmpty(), usersById, metric),
                 )
             }
         }
+    }
+
+    private fun buildDailyMedia(
+        mediaBuckets: Map<String, DailyMediaBucket>,
+        usersById: Map<String, UserRecord>,
+        metric: AnalyticsMetric,
+    ): List<DailyMediaPlayDto> =
+        mediaBuckets.values
+            .map { bucket ->
+                val resolvedTitle =
+                    if (bucket.isEpisode) {
+                        bucket.firstGrandparentTitle ?: bucket.lastTitle
+                    } else {
+                        bucket.lastTitle
+                    }
+                val resolvedRatingKey =
+                    if (bucket.isEpisode) {
+                        bucket.firstThumbRatingKey ?: bucket.lastRatingKey
+                    } else {
+                        bucket.firstRatingKey
+                    }
+                val viewers =
+                    bucket.userStats.entries
+                        .map { (userId, stats) ->
+                            Triple(resolveViewerLabel(usersById, userId), stats.playCount, stats.watchDurationSec)
+                        }.sortedWith(viewerComparator(metric))
+                        .map { it.first }
+                        .distinct()
+                DailyMediaPlayDto(
+                    ratingKey = resolvedRatingKey,
+                    mediaType = bucket.mediaType,
+                    title = resolvedTitle,
+                    playCount = bucket.playCount,
+                    watchDurationSec = bucket.watchDurationSec,
+                    users = viewers,
+                )
+            }.sortedWith(dailyMediaComparator(metric))
+            .take(DAILY_MEDIA_LIMIT)
+
+    private fun buildDailyUsers(
+        userBuckets: Map<String, CountDuration>,
+        usersById: Map<String, UserRecord>,
+        metric: AnalyticsMetric,
+    ): List<DailyUserPlayDto> =
+        userBuckets.entries
+            .map { (userId, stats) ->
+                val user = usersById[userId]
+                DailyUserPlayDto(
+                    userId = userId,
+                    username = user?.username ?: userId,
+                    displayName = user?.displayName.normalizedDisplayName(),
+                    playCount = stats.playCount,
+                    watchDurationSec = stats.watchDurationSec,
+                )
+            }.sortedWith(dailyUserComparator(metric))
+
+    private class DailyBucket(
+        includeBreakdowns: Boolean,
+    ) {
+        var playCount: Long = 0L
+        var watchDurationSec: Long = 0L
+        val media: HashMap<String, DailyMediaBucket>? = if (includeBreakdowns) HashMap() else null
+        val users: HashMap<String, CountDuration>? = if (includeBreakdowns) HashMap() else null
+    }
+
+    private class DailyMediaBucket(
+        val isEpisode: Boolean,
+        val mediaType: String,
+        val firstRatingKey: String,
+        val firstGrandparentTitle: String?,
+        var lastRatingKey: String,
+        var lastTitle: String,
+    ) {
+        var firstThumbRatingKey: String? = null
+        var playCount: Long = 0L
+        var watchDurationSec: Long = 0L
+        val userStats: HashMap<String, CountDuration> = HashMap()
+    }
 }
 
-private fun aggregateDailyMedia(
-    dayRows: List<PlaybackHistoryStatsRow>,
-    usersById: Map<String, UserRecord>,
-    metric: AnalyticsMetric,
-): List<DailyMediaPlayDto> =
-    dayRows
-        .groupBy { row ->
-            if (row.mediaType.equals("episode", ignoreCase = true)) {
-                val showTitle = row.grandparentTitle?.trim()?.takeIf { it.isNotEmpty() } ?: row.title
-                "show:${showTitle.lowercase()}"
-            } else {
-                "${row.mediaType.lowercase()}:${row.ratingKey}"
-            }
-        }.values
-        .map { group ->
-            val first = group.first()
-            val isEpisode = first.mediaType.equals("episode", ignoreCase = true)
-            val mediaType = if (isEpisode) "show" else first.mediaType.lowercase()
-            val title =
-                if (isEpisode) {
-                    first.grandparentTitle?.trim()?.takeIf { it.isNotEmpty() } ?: group.last().title
-                } else {
-                    group.last().title
-                }
-            val ratingKey =
-                if (isEpisode) {
-                    (group.firstOrNull { !it.thumbPath.isNullOrBlank() } ?: group.last()).ratingKey
-                } else {
-                    first.ratingKey
-                }
-            val viewers =
-                group
-                    .groupBy { it.userId }
-                    .entries
-                    .map { (userId, userRows) ->
-                        Triple(
-                            resolveViewerLabel(usersById, userId),
-                            userRows.size.toLong(),
-                            userRows.sumOf { it.watchedDurationSec.toLong() },
-                        )
-                    }.sortedWith(
-                        when (metric) {
-                            AnalyticsMetric.PLAYS ->
-                                compareByDescending<Triple<String, Long, Long>> { it.second }
-                                    .thenByDescending { it.third }
-                                    .thenBy { it.first.lowercase() }
-                            AnalyticsMetric.DURATION ->
-                                compareByDescending<Triple<String, Long, Long>> { it.third }
-                                    .thenByDescending { it.second }
-                                    .thenBy { it.first.lowercase() }
-                        },
-                    ).map { it.first }
-                    .distinct()
-            DailyMediaPlayDto(
-                ratingKey = ratingKey,
-                mediaType = mediaType,
-                title = title,
-                playCount = group.size.toLong(),
-                watchDurationSec = group.sumOf { it.watchedDurationSec.toLong() },
-                users = viewers,
-            )
-        }.sortedWith(
-            when (metric) {
-                AnalyticsMetric.PLAYS ->
-                    compareByDescending<DailyMediaPlayDto> { it.playCount }
-                        .thenByDescending { it.watchDurationSec }
-                        .thenBy { it.title.lowercase() }
-                AnalyticsMetric.DURATION ->
-                    compareByDescending<DailyMediaPlayDto> { it.watchDurationSec }
-                        .thenByDescending { it.playCount }
-                        .thenBy { it.title.lowercase() }
-            },
-        ).take(DAILY_MEDIA_LIMIT)
+private fun viewerComparator(metric: AnalyticsMetric): Comparator<Triple<String, Long, Long>> =
+    when (metric) {
+        AnalyticsMetric.PLAYS ->
+            compareByDescending<Triple<String, Long, Long>> { it.second }
+                .thenByDescending { it.third }
+                .thenBy { it.first.lowercase() }
+        AnalyticsMetric.DURATION ->
+            compareByDescending<Triple<String, Long, Long>> { it.third }
+                .thenByDescending { it.second }
+                .thenBy { it.first.lowercase() }
+    }
 
-private fun aggregateDailyUsers(
-    dayRows: List<PlaybackHistoryStatsRow>,
-    usersById: Map<String, UserRecord>,
-    metric: AnalyticsMetric,
-): List<DailyUserPlayDto> =
-    dayRows
-        .groupBy { it.userId }
-        .map { (userId, userRows) ->
-            val user = usersById[userId]
-            DailyUserPlayDto(
-                userId = userId,
-                username = user?.username ?: userId,
-                displayName = user?.displayName.normalizedDisplayName(),
-                playCount = userRows.size.toLong(),
-                watchDurationSec = userRows.sumOf { it.watchedDurationSec.toLong() },
-            )
-        }.sortedWith(
-            when (metric) {
-                AnalyticsMetric.PLAYS ->
-                    compareByDescending<DailyUserPlayDto> { it.playCount }
-                        .thenByDescending { it.watchDurationSec }
-                        .thenBy { (it.displayName ?: it.username).lowercase() }
-                AnalyticsMetric.DURATION ->
-                    compareByDescending<DailyUserPlayDto> { it.watchDurationSec }
-                        .thenByDescending { it.playCount }
-                        .thenBy { (it.displayName ?: it.username).lowercase() }
-            },
-        )
+private fun dailyMediaComparator(metric: AnalyticsMetric): Comparator<DailyMediaPlayDto> =
+    when (metric) {
+        AnalyticsMetric.PLAYS ->
+            compareByDescending<DailyMediaPlayDto> { it.playCount }
+                .thenByDescending { it.watchDurationSec }
+                .thenBy { it.title.lowercase() }
+        AnalyticsMetric.DURATION ->
+            compareByDescending<DailyMediaPlayDto> { it.watchDurationSec }
+                .thenByDescending { it.playCount }
+                .thenBy { it.title.lowercase() }
+    }
+
+private fun dailyUserComparator(metric: AnalyticsMetric): Comparator<DailyUserPlayDto> =
+    when (metric) {
+        AnalyticsMetric.PLAYS ->
+            compareByDescending<DailyUserPlayDto> { it.playCount }
+                .thenByDescending { it.watchDurationSec }
+                .thenBy { (it.displayName ?: it.username).lowercase() }
+        AnalyticsMetric.DURATION ->
+            compareByDescending<DailyUserPlayDto> { it.watchDurationSec }
+                .thenByDescending { it.playCount }
+                .thenBy { (it.displayName ?: it.username).lowercase() }
+    }
 
 private fun resolveViewerLabel(
     usersById: Map<String, UserRecord>,

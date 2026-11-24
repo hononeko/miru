@@ -23,6 +23,7 @@ import app.hononeko.miru.http.artworkRoutes
 import app.hononeko.miru.http.authRoutes
 import app.hononeko.miru.http.healthRoutes
 import app.hononeko.miru.http.historyStatsRoutes
+import app.hononeko.miru.http.installRequestLogging
 import app.hononeko.miru.http.installSecurityHeaders
 import app.hononeko.miru.http.libraryRoutes
 import app.hononeko.miru.http.mediaDetailsRoutes
@@ -82,7 +83,6 @@ import io.ktor.server.config.ApplicationConfig
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.BadRequestException
-import io.ktor.server.plugins.calllogging.CallLogging
 import io.ktor.server.plugins.compression.Compression
 import io.ktor.server.plugins.compression.condition
 import io.ktor.server.plugins.compression.deflate
@@ -669,10 +669,7 @@ fun Application.miruModule(
 
     install(SSE)
 
-    install(CallLogging) {
-        disableDefaultColors()
-        filter { call -> call.request.path() != "/healthz" }
-    }
+    installRequestLogging()
 
     installSecurityHeaders(resolveWebContentSecurityPolicy(config.server.staticWebDir))
     installConfiguredCors(config.server.corsAllowedOrigins)

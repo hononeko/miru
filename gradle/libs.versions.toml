@@ -6,6 +6,7 @@ arrow = "2.3.0"
 ktor = "3.6.1"
 logback = "1.6.7"
 logstash-logback = "9.0"
+jackson-bom = "3.1.8"
 slf4j = "2.0.20"
 kotest = "6.2.7"
 mockk = "1.14.12"
@@ -58,6 +59,7 @@ slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 jul-to-slf4j = { module = "org.slf4j:jul-to-slf4j", version.ref = "slf4j" }
 logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
 logstash-logback-encoder = { module = "net.logstash.logback:logstash-logback-encoder", version.ref = "logstash-logback" }
+jackson-bom = { module = "tools.jackson:jackson-bom", version.ref = "jackson-bom" }
 
 # Persistence & Migrations
 hikaricp = { module = "com.zaxxer:HikariCP", version.ref = "hikaricp" }

@@ -73,3 +73,14 @@ jobs:
             AUTH_MODE=none
             DB_ENGINE=sqlite
             SQLITE_PATH=/data/miru.db
+
+      - name: Scan image for CVEs (Trivy)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ inputs.push && format('ghcr.io/{0}/miru@{1}', github.repository_owner, steps.build.outputs.digest) || format('smoke-miru:{0}', matrix.arch) }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH

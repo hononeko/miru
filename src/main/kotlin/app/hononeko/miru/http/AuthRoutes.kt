@@ -1,5 +1,6 @@
 package app.hononeko.miru.http
 
+import app.hononeko.miru.auth.AuthRateLimiter
 import app.hononeko.miru.auth.AuthService
 import app.hononeko.miru.auth.MiruRole
 import app.hononeko.miru.auth.SESSION_COOKIE_NAME
@@ -36,6 +37,8 @@ fun Route.authRoutes(
     authMode: AuthMode,
     sessionMaxAgeSeconds: Int = DEFAULT_COOKIE_MAX_AGE_SECONDS,
     cookieSecureMode: CookieSecureMode = CookieSecureMode.AUTO,
+    authRateLimiter: AuthRateLimiter = AuthRateLimiter(),
+    trustProxyHeaders: Boolean = false,
     oidcAuthService: OidcAuthService? = null,
 ) {
     route("/api/v1/auth") {
@@ -43,6 +46,8 @@ fun Route.authRoutes(
             authService = authService,
             sessionMaxAgeSeconds = sessionMaxAgeSeconds,
             cookieSecureMode = cookieSecureMode,
+            authRateLimiter = authRateLimiter,
+            trustProxyHeaders = trustProxyHeaders,
             oidcAuthService = oidcAuthService,
         )
         authenticated(authService = authService, authMode = authMode) {
@@ -89,6 +94,8 @@ private fun Route.publicAuthRoutes(
     authService: AuthService,
     sessionMaxAgeSeconds: Int,
     cookieSecureMode: CookieSecureMode,
+    authRateLimiter: AuthRateLimiter,
+    trustProxyHeaders: Boolean,
     oidcAuthService: OidcAuthService?,
 ) {
     get("/status") {
@@ -111,6 +118,12 @@ private fun Route.publicAuthRoutes(
     }
 
     post("/setup") {
+        val clientIp = AuthRateLimiter.resolveClientIp(call, trustProxyHeaders)
+        authRateLimiter.checkAndConsumeSetupAttempt(clientIp).onLeft { err ->
+            call.respondError(err)
+            return@post
+        }
+
         val request = call.receive<SetupAdminRequest>()
         val result =
             authService.setupInitialAdmin(
@@ -129,7 +142,19 @@ private fun Route.publicAuthRoutes(
     }
 
     post("/login") {
+        val clientIp = AuthRateLimiter.resolveClientIp(call, trustProxyHeaders)
+        authRateLimiter.checkAndConsumeLoginIpAttempt(clientIp).onLeft { err ->
+            call.respondError(err)
+            return@post
+        }
+
         val request = call.receive<LoginRequest>()
+        val normalizedUsername = request.username.trim().lowercase()
+        authRateLimiter.checkLoginAccountAllowed(normalizedUsername).onLeft { err ->
+            call.respondError(err)
+            return@post
+        }
+
         val result =
             either {
                 val loginResult = authService.login(username = request.username, password = request.password).bind()
@@ -137,8 +162,14 @@ private fun Route.publicAuthRoutes(
                 loginResult to loginResult.principal.toResponse(avatarUrl = avatarUrl)
             }
         result.fold(
-            ifLeft = { call.respondError(it) },
+            ifLeft = { err ->
+                if (err is MiruError.Unauthorized) {
+                    authRateLimiter.recordLoginFailure(normalizedUsername)
+                }
+                call.respondError(err)
+            },
             ifRight = { (loginResult, response) ->
+                authRateLimiter.recordLoginSuccess(normalizedUsername)
                 val secure = call.shouldUseSecureCookies(cookieSecureMode)
                 call.appendSessionCookie(loginResult.signedToken, sessionMaxAgeSeconds, secure = secure)
                 call.respond(HttpStatusCode.OK, response)

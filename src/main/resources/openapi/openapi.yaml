@@ -228,6 +228,16 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+        '429':
+          description: Rate limit exceeded for initial setup attempts
+          headers:
+            Retry-After:
+              schema:
+                type: string
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
 
   /api/v1/auth/login:
     post:
@@ -255,6 +265,16 @@ paths:
                 $ref: '#/components/schemas/ProblemDetails'
         '409':
           description: Local authentication is disabled
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '429':
+          description: Rate limit exceeded for authentication attempts
+          headers:
+            Retry-After:
+              schema:
+                type: string
           content:
             application/problem+json:
               schema:

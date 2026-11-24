@@ -15,6 +15,7 @@ For examples, see [`docker-compose.yml`](docker-compose.yml), the [Kubernetes ma
 | `MIRU_HOST` | `0.0.0.0` | Address the HTTP server binds to. |
 | `MIRU_PORT` | `8080` | Port the HTTP server listens on, from 1 to 65535. Falls back to `PORT` when unset. |
 | `MIRU_CORS_ALLOWED_ORIGINS` | *(none)* | Comma-separated origins allowed to call the API from another origin with credentials, for example `http://localhost:5173` for the Vite dev server. An origin given without a scheme allows both `http` and `https`. Leave unset when the web UI is served by Miru itself. |
+| `MIRU_TRUST_PROXY_HEADERS` | `false` | Set `true` only behind a single trusted reverse proxy. When enabled, Miru honors the rightmost entry in `X-Forwarded-For` (falling back to `X-Real-IP`) for authentication rate limiting. Leave `false` when Miru is exposed directly so clients cannot spoof forwarding headers. |
 | `STATIC_WEB_DIR` | *(none)*; `/opt/miru/static` in the container image | Directory of the built web UI (`web/build`) to serve, with SPA fallback to `index.html`. When unset, Miru serves only the API. |
 
 ## Database
@@ -85,6 +86,11 @@ Automated stream guardrails default to `disabled`. Setting a rule's mode to `war
 | `MIRU_ADMIN_USERNAME` | *(none)* | Creates this admin account on startup if no admin exists yet, as an alternative to the first-run setup page. Set it together with `MIRU_ADMIN_PASSWORD`. Ignored when local logins are off. |
 | `MIRU_ADMIN_PASSWORD` 🔒 | *(none)* | Password for `MIRU_ADMIN_USERNAME`: at least 12 characters, with an uppercase letter, a lowercase letter and a digit. Used only to create the account; changing it later has no effect. |
 | `AUTH_COOKIE_SECURE` | `auto` | Controls the `Secure` attribute on session and OIDC cookies (`COOKIE_SECURE` fallback also accepted). `auto` sets `Secure` when the request arrives over TLS or includes `X-Forwarded-Proto=https` / `Forwarded: proto=https`; `true` (`always`) always sets `Secure`; `false` (`never`) omits `Secure` (only for plain-HTTP local development). |
+| `AUTH_RATE_LIMIT_ENABLED` | `true` | Enables fixed-window rate limiting on `/api/v1/auth/login` and `/api/v1/auth/setup` (`429 Too Many Requests` + `Retry-After`). |
+| `AUTH_RATE_LIMIT_WINDOW_SECONDS` | `60` | Rate-limit fixed window duration in seconds. |
+| `AUTH_RATE_LIMIT_LOGIN_MAX_ATTEMPTS` | `20` | Maximum `/api/v1/auth/login` requests per client IP within `AUTH_RATE_LIMIT_WINDOW_SECONDS`. |
+| `AUTH_RATE_LIMIT_ACCOUNT_MAX_FAILURES` | `10` | Maximum failed password attempts per username within `AUTH_RATE_LIMIT_WINDOW_SECONDS`. |
+| `AUTH_RATE_LIMIT_SETUP_MAX_ATTEMPTS` | `10` | Maximum `/api/v1/auth/setup` attempts per client IP within `AUTH_RATE_LIMIT_WINDOW_SECONDS`. |
 
 When `AUTH_MODE` is not `none`, at least one login method (local or single sign-on) must be enabled.
 

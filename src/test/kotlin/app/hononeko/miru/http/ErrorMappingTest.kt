@@ -19,6 +19,7 @@ import io.kotest.matchers.string.shouldNotContain
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.plugins.BadRequestException
@@ -51,6 +52,7 @@ class ErrorMappingTest :
                     MiruError.Forbidden() to HttpStatusCode.Forbidden,
                     MiruError.NotFound("User", "42") to HttpStatusCode.NotFound,
                     MiruError.Conflict("already exists") to HttpStatusCode.Conflict,
+                    MiruError.TooManyRequests("slow down", 15L) to HttpStatusCode.TooManyRequests,
                     MiruError.UpstreamAuthError("plex", "invalid token") to HttpStatusCode.BadGateway,
                     MiruError.UpstreamUnavailable("plex", "connection refused") to HttpStatusCode.BadGateway,
                     MiruError.PersistenceError("insert", "constraint violation") to HttpStatusCode.InternalServerError,
@@ -101,6 +103,11 @@ class ErrorMappingTest :
                         get("/test/crash") {
                             throw IllegalStateException("super-secret-stack-detail")
                         }
+                        get("/test/rate-limit") {
+                            val err: Either<MiruError, SamplePayload> =
+                                MiruError.TooManyRequests("Too many requests", retryAfterSeconds = 42L).left()
+                            call.respondEither(err)
+                        }
                     }
                 }
 
@@ -134,6 +141,11 @@ class ErrorMappingTest :
                 val crashResponse = client.get("/test/crash")
                 crashResponse.status shouldBe HttpStatusCode.InternalServerError
                 crashResponse.bodyAsText() shouldNotContain "super-secret-stack-detail"
+
+                val rateLimitResp = client.get("/test/rate-limit")
+                rateLimitResp.status shouldBe HttpStatusCode.TooManyRequests
+                rateLimitResp.headers[HttpHeaders.RetryAfter] shouldBe "42"
+                rateLimitResp.contentType()?.withoutParameters() shouldBe ContentType.Application.ProblemJson
             }
         }
     })

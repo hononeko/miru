@@ -1007,6 +1007,10 @@ private fun FunSpecRootScope.libraryGrowthTests(ctxProvider: () -> ContractConte
                 .getLibraryStats(principal = admin, sectionId = "sec-1")
                 .shouldBeRight()
                 .growth shouldContainExactly listOf(day102, day105)
+            LibraryQueryService(ctx.library)
+                .getLibraryStats(principal = admin, sectionId = "sec-1", limit = 1)
+                .shouldBeRight()
+                .growth shouldContainExactly listOf(day105)
         }
     }
 }

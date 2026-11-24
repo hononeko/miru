@@ -142,7 +142,7 @@
 			class={cn(
 				'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-heading text-xs font-semibold transition-colors cursor-pointer',
 				activeTab === 'hygiene'
-					? 'bg-primary-soft text-primary-hover border border-primary/50'
+					? 'bg-primary-soft text-primary-text border border-primary/50'
 					: 'text-fg-secondary hover:text-fg-primary border border-transparent'
 			)}
 		>
@@ -348,7 +348,7 @@
 								class={cn(
 									'rounded-md px-2.5 py-1 font-heading text-[11px] font-semibold transition-colors cursor-pointer',
 									active
-										? 'bg-primary-soft text-primary-hover border border-primary/50'
+										? 'bg-primary-soft text-primary-text border border-primary/50'
 										: 'text-fg-secondary hover:text-fg-primary border border-transparent'
 								)}
 							>
@@ -391,7 +391,7 @@
 									<p class="truncate font-heading text-xs font-semibold text-fg-primary group-hover:text-cyan-hi">
 										{item.grandparentTitle ? `${item.grandparentTitle} · ${item.title}` : item.title}
 									</p>
-									<span class="shrink-0 font-mono text-xs font-bold text-primary-hover tabular-nums">
+									<span class="shrink-0 font-mono text-xs font-bold text-primary-text tabular-nums">
 										{formatBytes(item.fileSizeBytes)}
 									</span>
 								</div>

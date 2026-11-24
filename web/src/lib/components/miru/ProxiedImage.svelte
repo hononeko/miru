@@ -39,7 +39,7 @@
 	<span
 		aria-label={safeSrc ? undefined : alt}
 		class={cn(
-			'relative inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full border border-primary/70 bg-primary-soft font-heading font-bold text-primary-hover',
+			'relative inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full border border-primary/70 bg-primary-soft font-heading font-bold text-primary-text',
 			className
 		)}
 	>

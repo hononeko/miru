@@ -235,7 +235,7 @@
 									: 'text-fg-secondary hover:text-fg-primary border border-transparent'
 							)}
 						>
-							<Icon class={cn('h-3.5 w-3.5', active ? 'text-primary-hover' : 'text-fg-muted')} />
+							<Icon class={cn('h-3.5 w-3.5', active ? 'text-primary-text' : 'text-fg-muted')} />
 							{opt.label}
 						</button>
 					{/each}

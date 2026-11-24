@@ -29,7 +29,7 @@
 	--subtle-fg: #57695f;
 
 	--primary: #e07a2c;
-	--primary-hover: #a84b18;
+	--primary-text: #a84b18;
 	--primary-soft: #fdf0e3;
 	--primary-fg: #16302a;
 
@@ -80,7 +80,7 @@
 	--subtle-fg: #7d9186;
 
 	--primary: #f08a3c;
-	--primary-hover: #f4a259;
+	--primary-text: #f4a259;
 	--primary-soft: #311602;
 	--primary-fg: #1a0e05;
 
@@ -132,7 +132,7 @@
 	--color-fg-muted: var(--subtle-fg);
 
 	--color-primary: var(--primary);
-	--color-primary-hover: var(--primary-hover);
+	--color-primary-text: var(--primary-text);
 	--color-primary-soft: var(--primary-soft);
 	--color-primary-fg: var(--primary-fg);
 

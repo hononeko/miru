@@ -729,7 +729,7 @@
 	<section class="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
 		<div class="flex flex-wrap items-center justify-between gap-2">
 			<div class="flex items-center gap-2">
-				<Server class="h-4 w-4 text-primary-hover" />
+				<Server class="h-4 w-4 text-primary-text" />
 				<h2 class="font-heading text-sm font-semibold text-fg-primary">
 					Media Server · Plex Connection
 				</h2>
@@ -830,7 +830,7 @@
 						<div class="flex items-center gap-3">
 							<div
 								class={acc.role === 'ADMIN'
-									? 'flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary bg-primary-soft font-heading text-xs font-bold text-primary-hover'
+									? 'flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary bg-primary-soft font-heading text-xs font-bold text-primary-text'
 									: 'flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-cyan bg-cyan-soft font-heading text-xs font-bold text-cyan-hi'}
 							>
 								{safeInitial(acc.username)}
@@ -1276,7 +1276,7 @@
 
 		{#if wizardStep === 'starting' || wizardStep === 'discovering' || wizardStep === 'saving'}
 			<div class="flex flex-col items-center justify-center gap-3 py-8 text-center">
-				<Loader2 class="h-6 w-6 animate-spin text-primary-hover" />
+				<Loader2 class="h-6 w-6 animate-spin text-primary-text" />
 				<p class="font-heading text-sm font-semibold text-fg-primary">
 					{#if wizardStep === 'starting'}
 						Creating Plex OAuth PIN…

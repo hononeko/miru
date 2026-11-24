@@ -118,7 +118,7 @@
 										point.value <= 0
 											? 'bg-subtle/80 group-hover:bg-border-strong'
 											: isPeak
-												? 'bg-primary group-hover:bg-primary-hover'
+												? 'bg-primary group-hover:bg-primary/85'
 												: 'bg-cyan/85 group-hover:bg-cyan-hi',
 										isOpen && 'ring-2 ring-fg-primary/80 ring-offset-1 ring-offset-surface'
 									)}
@@ -131,7 +131,7 @@
 							<span
 								class={cn(
 									'truncate font-mono text-[9px] tabular-nums',
-									isOpen || isPeak ? 'font-semibold text-primary-hover' : 'text-fg-muted'
+									isOpen || isPeak ? 'font-semibold text-primary-text' : 'text-fg-muted'
 								)}
 							>
 								{point.label}

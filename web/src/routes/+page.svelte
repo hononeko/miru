@@ -571,7 +571,7 @@
 						</p>
 					</div>
 					{#if peakDay && (analyticsMetric === 'duration' ? peakDay.watchDurationSec > 0 : peakDay.playCount > 0)}
-						<span class="font-mono text-[11px] font-medium text-primary-hover">
+						<span class="font-mono text-[11px] font-medium text-primary-text">
 							Peak: {analyticsMetric === 'duration' ? formatDurationSec(peakDay.watchDurationSec) : `${peakDay.playCount} plays`} ({peakDay.date})
 						</span>
 					{/if}
@@ -690,7 +690,7 @@
 								<div class="flex min-w-0 items-center gap-2.5">
 									<span
 										class={idx === 0
-											? 'font-mono text-xs font-bold text-primary-hover'
+											? 'font-mono text-xs font-bold text-primary-text'
 											: 'font-mono text-xs font-bold text-cyan-hi'}
 									>
 										{String(idx + 1).padStart(2, '0')}

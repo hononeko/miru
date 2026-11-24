@@ -110,7 +110,7 @@
 						)}
 					>
 						<span class="flex items-center gap-2.5">
-							<Icon class={cn('h-4 w-4', active ? 'text-primary-hover' : 'text-fg-muted')} />
+							<Icon class={cn('h-4 w-4', active ? 'text-primary-text' : 'text-fg-muted')} />
 							{item.label}
 						</span>
 						{#if item.badge}
@@ -217,7 +217,7 @@
 						<span
 							class={cn(
 								'flex h-8 w-14 items-center justify-center rounded-full transition-colors',
-								active ? 'bg-primary-soft text-primary-hover' : 'text-fg-muted hover:bg-elevated hover:text-fg-primary'
+								active ? 'bg-primary-soft text-primary-text' : 'text-fg-muted hover:bg-elevated hover:text-fg-primary'
 							)}
 						>
 							<Icon class="h-4 w-4" />
@@ -318,7 +318,7 @@
 					<span
 						class={cn(
 							'relative flex h-7 w-13 items-center justify-center rounded-full transition-colors',
-							active ? 'bg-primary-soft text-primary-hover' : 'text-fg-muted'
+							active ? 'bg-primary-soft text-primary-text' : 'text-fg-muted'
 						)}
 					>
 						<Icon class="h-4 w-4" />

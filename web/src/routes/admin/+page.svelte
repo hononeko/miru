@@ -42,6 +42,7 @@
 	import Badge from '$components/ui/Badge.svelte';
 	import Button from '$components/ui/Button.svelte';
 	import Sheet from '$components/ui/Sheet.svelte';
+	import WebhooksPanel from '$components/miru/WebhooksPanel.svelte';
 	import { authStore } from '$stores/auth.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
 	import { streamsStore } from '$stores/streams.svelte';
@@ -1110,6 +1111,9 @@
 			{/if}
 		</div>
 	</section>
+
+	<!-- Outbound Webhooks -->
+	<WebhooksPanel />
 
 	<!-- Data Import (Tautulli) -->
 	<section class="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">

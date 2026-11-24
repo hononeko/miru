@@ -35,6 +35,11 @@ import app.hononeko.miru.persistence.model.UserLibraryAccessRecord
 import app.hononeko.miru.persistence.model.UserPlaybackSummary
 import app.hononeko.miru.persistence.model.UserPreferencesRecord
 import app.hononeko.miru.persistence.model.UserRecord
+import app.hononeko.miru.persistence.model.WebhookDeliveryFilter
+import app.hononeko.miru.persistence.model.WebhookDeliveryRecord
+import app.hononeko.miru.persistence.model.WebhookDeliveryStatus
+import app.hononeko.miru.persistence.model.WebhookEventType
+import app.hononeko.miru.persistence.model.WebhookTargetRecord
 import app.hononeko.miru.persistence.repository.ActiveSessionRepository
 import app.hononeko.miru.persistence.repository.ApiKeyRepository
 import app.hononeko.miru.persistence.repository.AuthAccountRepository
@@ -50,6 +55,8 @@ import app.hononeko.miru.persistence.repository.ExposedPlaybackHistoryRepository
 import app.hononeko.miru.persistence.repository.ExposedStreamTerminationAuditRepository
 import app.hononeko.miru.persistence.repository.ExposedUserPreferencesRepository
 import app.hononeko.miru.persistence.repository.ExposedUserRepository
+import app.hononeko.miru.persistence.repository.ExposedWebhookDeliveryRepository
+import app.hononeko.miru.persistence.repository.ExposedWebhookTargetRepository
 import app.hononeko.miru.persistence.repository.GuardrailRuleRepository
 import app.hononeko.miru.persistence.repository.LibraryRepository
 import app.hononeko.miru.persistence.repository.MediaServerRepository
@@ -57,6 +64,8 @@ import app.hononeko.miru.persistence.repository.PlaybackHistoryRepository
 import app.hononeko.miru.persistence.repository.StreamTerminationAuditRepository
 import app.hononeko.miru.persistence.repository.UserPreferencesRepository
 import app.hononeko.miru.persistence.repository.UserRepository
+import app.hononeko.miru.persistence.repository.WebhookDeliveryRepository
+import app.hononeko.miru.persistence.repository.WebhookTargetRepository
 import app.hononeko.miru.service.HistoryAndStatsService
 import app.hononeko.miru.service.HistoryQueryParams
 import app.hononeko.miru.service.LibraryQueryService
@@ -93,6 +102,8 @@ private class ContractContext(
     val userPreferences: UserPreferencesRepository = ExposedUserPreferencesRepository(handle)
     val guardrails: GuardrailRuleRepository = ExposedGuardrailRuleRepository(handle)
     val terminationAudit: StreamTerminationAuditRepository = ExposedStreamTerminationAuditRepository(handle)
+    val webhookTargets: WebhookTargetRepository = ExposedWebhookTargetRepository(handle)
+    val webhookDeliveries: WebhookDeliveryRepository = ExposedWebhookDeliveryRepository(handle)
 }
 
 fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
@@ -107,6 +118,8 @@ fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
                     stmt.executeUpdate("DELETE FROM media_servers")
                     stmt.executeUpdate("DELETE FROM guardrail_rules")
                     stmt.executeUpdate("DELETE FROM stream_termination_audit")
+                    stmt.executeUpdate("DELETE FROM webhook_deliveries")
+                    stmt.executeUpdate("DELETE FROM webhook_targets")
                 }
             }
             ctx = ContractContext(handle)
@@ -134,6 +147,7 @@ fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
         tautulliBatchAndImporterTests { ctx }
         userLibraryAccessTests { ctx }
         guardrailAndAuditTests { ctx }
+        webhookTests { ctx }
     }
 
 private fun FunSpecRootScope.mediaServerTests(ctxProvider: () -> ContractContext) {
@@ -2426,6 +2440,162 @@ private fun FunSpecRootScope.guardrailAndAuditTests(ctxProvider: () -> ContractC
         }
     }
 }
+
+private fun FunSpecRootScope.webhookTests(ctxProvider: () -> ContractContext) {
+    context("WebhookTargetRepository and WebhookDeliveryRepository") {
+        test("supports target CRUD and redacts sensitive fields in toString") {
+            val ctx = ctxProvider()
+            ctx.webhookTargets.findAll().shouldBeRight().shouldBeEmpty()
+            ctx.webhookTargets.findById("missing").shouldBeRight().shouldBeNull()
+
+            val t1 = sampleWebhookTarget("wh-1", "Media Notifier", enabled = true, createdAtMs = 1_000L)
+            val t2 =
+                WebhookTargetRecord(
+                    id = "wh-2",
+                    name = "Disabled Hook",
+                    url = "https://hooks.example.test/events",
+                    enabled = false,
+                    subscribedEvents = listOf(WebhookEventType.SERVER_UNREACHABLE, WebhookEventType.SERVER_RECOVERED),
+                    createdAtMs = 2_000L,
+                    updatedAtMs = 2_000L,
+                )
+
+            t1.toString() shouldNotContain "secret-query"
+            t1.toString() shouldNotContain "v1:enc-secret"
+            t1.toString() shouldNotContain "v1:enc-auth"
+
+            ctx.webhookTargets.insert(t1).shouldBeRight() shouldBe t1
+            ctx.webhookTargets.insert(t2).shouldBeRight() shouldBe t2
+            ctx.webhookTargets.findById("wh-1").shouldBeRight() shouldBe t1
+            ctx.webhookTargets.findAll().shouldBeRight() shouldContainExactly listOf(t1, t2)
+            ctx.webhookTargets.findEnabled().shouldBeRight() shouldContainExactly listOf(t1)
+
+            val updatedT1 = t1.copy(name = "Media Notifier Renamed", cooldownSeconds = 30, transcode4kOnly = false, updatedAtMs = 3_000L)
+            ctx.webhookTargets.update(updatedT1).shouldBeRight() shouldBe true
+            ctx.webhookTargets.findById("wh-1").shouldBeRight() shouldBe updatedT1
+            ctx.webhookTargets.update(updatedT1.copy(id = "missing")).shouldBeRight() shouldBe false
+        }
+
+        test("supports delivery insert, update, filtering, pagination, pruning, and cascade delete") {
+            val ctx = ctxProvider()
+            val t1 = sampleWebhookTarget("wh-1", "Media Notifier", enabled = true, createdAtMs = 1_000L)
+            val t2 = sampleWebhookTarget("wh-2", "Backup Hook", enabled = false, createdAtMs = 2_000L)
+            ctx.webhookTargets.insert(t1).shouldBeRight()
+            ctx.webhookTargets.insert(t2).shouldBeRight()
+
+            val d1 =
+                WebhookDeliveryRecord(
+                    id = "del-1",
+                    targetId = "wh-1",
+                    targetName = "Media Notifier",
+                    eventId = "evt-1",
+                    eventType = "transcode.started",
+                    status = WebhookDeliveryStatus.RETRYING,
+                    attemptCount = 1,
+                    httpStatus = 503,
+                    durationMs = 45,
+                    errorMessage = "HTTP 503: upstream busy",
+                    createdAtMs = 10_000L,
+                    completedAtMs = null,
+                )
+            val d2 =
+                WebhookDeliveryRecord(
+                    id = "del-2",
+                    targetId = "wh-1",
+                    targetName = "Media Notifier",
+                    eventId = "evt-2",
+                    eventType = "stream.terminated",
+                    status = WebhookDeliveryStatus.FAILED,
+                    attemptCount = 3,
+                    httpStatus = 500,
+                    durationMs = 80,
+                    errorMessage = "HTTP 500",
+                    createdAtMs = 20_000L,
+                    completedAtMs = 28_000L,
+                )
+            val d3 =
+                WebhookDeliveryRecord(
+                    id = "del-3",
+                    targetId = "wh-2",
+                    targetName = "Backup Hook",
+                    eventId = "evt-3",
+                    eventType = "webhook.test",
+                    status = WebhookDeliveryStatus.DELIVERED,
+                    attemptCount = 1,
+                    httpStatus = 200,
+                    durationMs = 12,
+                    errorMessage = null,
+                    createdAtMs = 30_000L,
+                    completedAtMs = 30_012L,
+                )
+
+            ctx.webhookDeliveries.insert(d1).shouldBeRight()
+            ctx.webhookDeliveries.insert(d2).shouldBeRight()
+            ctx.webhookDeliveries.insert(d3).shouldBeRight()
+
+            val d1Delivered =
+                d1.copy(
+                    status = WebhookDeliveryStatus.DELIVERED,
+                    attemptCount = 2,
+                    httpStatus = 200,
+                    errorMessage = null,
+                    completedAtMs = 12_020L,
+                )
+            ctx.webhookDeliveries.update(d1Delivered).shouldBeRight() shouldBe true
+
+            val page1 = ctx.webhookDeliveries.query(WebhookDeliveryFilter(limit = 2, offset = 0)).shouldBeRight()
+            page1.totalCount shouldBe 3L
+            page1.items shouldContainExactly listOf(d3, d2)
+
+            val filtered =
+                ctx.webhookDeliveries
+                    .query(
+                        WebhookDeliveryFilter(
+                            targetId = "wh-1",
+                            eventType = "stream.terminated",
+                            status = WebhookDeliveryStatus.FAILED,
+                        ),
+                    ).shouldBeRight()
+            filtered.totalCount shouldBe 1L
+            filtered.items shouldContainExactly listOf(d2)
+
+            ctx.webhookDeliveries.pruneOldest(2).shouldBeRight() shouldBe 1
+            val afterPrune = ctx.webhookDeliveries.query().shouldBeRight()
+            afterPrune.totalCount shouldBe 2L
+            afterPrune.items shouldContainExactly listOf(d3, d2)
+
+            ctx.webhookTargets.deleteById("wh-1").shouldBeRight() shouldBe true
+            ctx.webhookTargets.deleteById("wh-1").shouldBeRight() shouldBe false
+            val afterCascade = ctx.webhookDeliveries.query().shouldBeRight()
+            afterCascade.totalCount shouldBe 1L
+            afterCascade.items shouldContainExactly listOf(d3)
+        }
+    }
+}
+
+private fun sampleWebhookTarget(
+    id: String,
+    name: String,
+    enabled: Boolean,
+    createdAtMs: Long,
+): WebhookTargetRecord =
+    WebhookTargetRecord(
+        id = id,
+        name = name,
+        url = "http://media-webhook-notifier.media.svc.cluster.local:8080/hook?token=secret-query",
+        enabled = enabled,
+        subscribedEvents = listOf(WebhookEventType.TRANSCODE_STARTED, WebhookEventType.STREAM_TERMINATED),
+        encryptedSigningSecret = "v1:enc-secret",
+        authHeaderName = "Authorization",
+        encryptedAuthHeaderValue = "v1:enc-auth",
+        cooldownSeconds = 90,
+        concurrentStreamThreshold = 4,
+        bufferingSpikeThreshold = 5,
+        bufferingWindowSeconds = 180,
+        transcode4kOnly = true,
+        createdAtMs = createdAtMs,
+        updatedAtMs = createdAtMs,
+    )
 
 private fun createMinimalContractTautulliDb(path: Path): Path {
     DriverManager.getConnection("jdbc:sqlite:${path.toAbsolutePath()}").use { conn ->

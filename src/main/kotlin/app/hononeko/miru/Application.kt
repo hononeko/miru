@@ -32,6 +32,7 @@ import app.hononeko.miru.http.respondError
 import app.hononeko.miru.http.staticWebRoutes
 import app.hononeko.miru.http.streamControlRoutes
 import app.hononeko.miru.http.streamsAndUsersRoutes
+import app.hononeko.miru.http.webhookRoutes
 import app.hononeko.miru.importer.TautulliCli
 import app.hononeko.miru.importer.TautulliImporterService
 import app.hononeko.miru.library.LibraryStatsCollector
@@ -49,6 +50,8 @@ import app.hononeko.miru.persistence.repository.ExposedPlaybackHistoryRepository
 import app.hononeko.miru.persistence.repository.ExposedStreamTerminationAuditRepository
 import app.hononeko.miru.persistence.repository.ExposedUserPreferencesRepository
 import app.hononeko.miru.persistence.repository.ExposedUserRepository
+import app.hononeko.miru.persistence.repository.ExposedWebhookDeliveryRepository
+import app.hononeko.miru.persistence.repository.ExposedWebhookTargetRepository
 import app.hononeko.miru.service.HistoryAndStatsService
 import app.hononeko.miru.service.LibraryQueryService
 import app.hononeko.miru.service.LibrarySyncTrigger
@@ -58,7 +61,12 @@ import app.hononeko.miru.service.PlexUserSyncService
 import app.hononeko.miru.service.StreamControlService
 import app.hononeko.miru.service.StreamGuardrailRunner
 import app.hononeko.miru.service.StreamsAndUsersService
+import app.hononeko.miru.service.WebhookService
 import app.hononeko.miru.session.SessionEvent
+import app.hononeko.miru.webhook.WebhookDispatcher
+import app.hononeko.miru.webhook.WebhookEventEvaluator
+import app.hononeko.miru.webhook.WebhookRunner
+import app.hononeko.miru.webhook.createWebhookHttpClient
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.serialization.kotlinx.json.json
@@ -140,39 +148,29 @@ private fun runServer() {
             mediaServerRepository = mediaServerRepository,
         )
     val libraryRepository = ExposedLibraryRepository(databaseHandle)
-    val sectionAccessChecker =
-        MediaSectionAccessChecker(
-            libraryRepository = libraryRepository,
-            adapter = plexRuntimeManager.adapter,
-        )
+    val sectionAccessChecker = MediaSectionAccessChecker(libraryRepository = libraryRepository, adapter = plexRuntimeManager.adapter)
     val plexOAuthHttpClient = LazyCloseableHttpClient { createPlexHttpClient() }
-    val plexOAuthService =
-        PlexOAuthService(
-            plexConfig = appConfig.plex,
-            oauthClient = PlexOAuthClient({ plexOAuthHttpClient.client }, appConfig.plex.plexTvBaseUrl, appVersion),
-            mediaServerRepository = mediaServerRepository,
-            runtimeManager = plexRuntimeManager,
-        )
-    val artworkProxyService =
-        createArtworkProxyService(plexRuntimeManager, userRepository, libraryRepository, sectionAccessChecker)
+    val plexOAuthService = createPlexOAuthService(appConfig, plexOAuthHttpClient, appVersion, mediaServerRepository, plexRuntimeManager)
+    val artworkProxyService = createArtworkProxyService(plexRuntimeManager, userRepository, libraryRepository, sectionAccessChecker)
     val activeSessionRepository = ExposedActiveSessionRepository(databaseHandle)
     val streamsAndUsersService =
         createStreamsAndUsersService(activeSessionRepository, userRepository, playbackHistoryRepository, plexRuntimeManager)
     val streamControlService =
-        createStreamControlService(
-            plexRuntimeManager = plexRuntimeManager,
-            activeSessionRepository = activeSessionRepository,
-            userRepository = userRepository,
-            databaseHandle = databaseHandle,
-            appConfig = appConfig,
-        )
+        createStreamControlService(plexRuntimeManager, activeSessionRepository, userRepository, databaseHandle, appConfig)
     val libraryQueryService = LibraryQueryService(libraryRepository = libraryRepository)
+    val webhookBundle =
+        createWebhookServices(databaseHandle, plexRuntimeManager, streamControlService, userRepository, appConfig, appVersion)
+    val mediaDetailsService =
+        MediaDetailsService(plexRuntimeManager.adapter, playbackHistoryRepository, libraryRepository, sectionAccessChecker)
     val syncServices =
         createSyncServices(
             plexRuntimeManager = plexRuntimeManager,
             libraryRepository = libraryRepository,
             userRepository = userRepository,
             streamControlService = streamControlService,
+            webhookRunner = webhookBundle.runner,
+            webhookDispatcher = webhookBundle.dispatcher,
+            webhookScope = webhookBundle.scope,
         ) {
             emailLinker.relinkAll().onLeft { error ->
                 logger.warn("Linking SSO accounts by email after the user sync failed: {}", error.message)
@@ -181,17 +179,8 @@ private fun runServer() {
     val readinessChecks = listOf(NamedReadinessCheck("database", DatabaseReadinessCheck(databaseHandle)))
 
     val server =
-        embeddedServer(
-            factory = Netty,
-            port = appConfig.server.port,
-            host = appConfig.server.host,
-        ) {
-            registerLifecycleHandlers(
-                syncServices = syncServices,
-                databaseHandle = databaseHandle,
-                plexOAuthHttpClient,
-                oidcClient,
-            )
+        embeddedServer(factory = Netty, port = appConfig.server.port, host = appConfig.server.host) {
+            registerLifecycleHandlers(syncServices, databaseHandle, plexOAuthHttpClient, webhookBundle.httpClient, oidcClient)
             miruModule(
                 config = appConfig,
                 readinessChecks = readinessChecks,
@@ -202,17 +191,12 @@ private fun runServer() {
                 artworkProxyService = artworkProxyService,
                 streamsAndUsersService = streamsAndUsersService,
                 streamControlService = streamControlService,
+                webhookService = webhookBundle.service,
                 sessionEvents = plexRuntimeManager.sessionEngine.sessionEvents,
                 historyAndStatsService = historyAndStatsService,
                 libraryQueryService = libraryQueryService,
                 librarySyncTrigger = syncServices.libraryStatsCollector,
-                mediaDetailsService =
-                    MediaDetailsService(
-                        mediaServerAdapter = plexRuntimeManager.adapter,
-                        playbackHistoryRepository = playbackHistoryRepository,
-                        libraryRepository = libraryRepository,
-                        sectionAccessChecker = sectionAccessChecker,
-                    ),
+                mediaDetailsService = mediaDetailsService,
                 tautulliImporterService = tautulliImporterService,
                 plexOAuthService = plexOAuthService,
             )
@@ -220,15 +204,83 @@ private fun runServer() {
     try {
         server.start(wait = true)
     } catch (e: Throwable) {
-        cleanupOnStartupFailure(
-            syncServices = syncServices,
-            plexRuntimeManager = plexRuntimeManager,
-            databaseHandle = databaseHandle,
-            plexOAuthHttpClient,
-            oidcClient,
-        )
+        cleanupOnStartupFailure(syncServices, plexRuntimeManager, databaseHandle, plexOAuthHttpClient, webhookBundle.httpClient, oidcClient)
         throw e
     }
+}
+
+private fun createPlexOAuthService(
+    appConfig: AppConfig,
+    plexOAuthHttpClient: LazyCloseableHttpClient,
+    appVersion: String,
+    mediaServerRepository: ExposedMediaServerRepository,
+    plexRuntimeManager: PlexRuntimeManager,
+): PlexOAuthService =
+    PlexOAuthService(
+        plexConfig = appConfig.plex,
+        oauthClient = PlexOAuthClient({ plexOAuthHttpClient.client }, appConfig.plex.plexTvBaseUrl, appVersion),
+        mediaServerRepository = mediaServerRepository,
+        runtimeManager = plexRuntimeManager,
+    )
+
+private data class WebhookServicesBundle(
+    val httpClient: LazyCloseableHttpClient,
+    val scope: CoroutineScope,
+    val dispatcher: WebhookDispatcher,
+    val runner: WebhookRunner,
+    val service: WebhookService,
+)
+
+@Suppress("LongParameterList")
+private fun createWebhookServices(
+    databaseHandle: DatabaseHandle,
+    plexRuntimeManager: PlexRuntimeManager,
+    streamControlService: StreamControlService,
+    userRepository: ExposedUserRepository,
+    appConfig: AppConfig,
+    appVersion: String,
+): WebhookServicesBundle {
+    val httpClient = LazyCloseableHttpClient { createWebhookHttpClient() }
+    val targetRepository = ExposedWebhookTargetRepository(databaseHandle)
+    val deliveryRepository = ExposedWebhookDeliveryRepository(databaseHandle)
+    val evaluator = WebhookEventEvaluator()
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("outbound-webhooks"))
+    val dispatcher =
+        WebhookDispatcher(
+            httpClientProvider = { httpClient.client },
+            deliveryRepository = deliveryRepository,
+            encryptionKey = appConfig.plex.encryptionKey,
+            appVersion = appVersion,
+            scope = scope,
+        )
+    val runner =
+        WebhookRunner(
+            sessionEngine = plexRuntimeManager.sessionEngine,
+            terminatedEvents = streamControlService.terminatedEvents,
+            reconcileHealthSignals = plexRuntimeManager.reconcileHealth,
+            targetRepository = targetRepository,
+            userRepository = userRepository,
+            serverInfoProvider = { plexRuntimeManager.currentServerSummary() },
+            evaluator = evaluator,
+            dispatcher = dispatcher,
+            scope = scope,
+        )
+    val service =
+        WebhookService(
+            targetRepository = targetRepository,
+            deliveryRepository = deliveryRepository,
+            dispatcher = dispatcher,
+            evaluator = evaluator,
+            encryptionKey = appConfig.plex.encryptionKey,
+            serverInfoProvider = { plexRuntimeManager.currentServerSummary() },
+        )
+    return WebhookServicesBundle(
+        httpClient = httpClient,
+        scope = scope,
+        dispatcher = dispatcher,
+        runner = runner,
+        service = service,
+    )
 }
 
 internal fun createArtworkProxyService(
@@ -296,13 +348,20 @@ internal data class SyncServices(
     val plexUserSyncService: PlexUserSyncService,
     val guardrailScope: CoroutineScope? = null,
     val streamGuardrailRunner: StreamGuardrailRunner? = null,
+    val webhookScope: CoroutineScope? = null,
+    val webhookDispatcher: WebhookDispatcher? = null,
+    val webhookRunner: WebhookRunner? = null,
 )
 
+@Suppress("LongParameterList")
 internal fun createSyncServices(
     plexRuntimeManager: PlexRuntimeManager,
     libraryRepository: app.hononeko.miru.persistence.repository.LibraryRepository,
     userRepository: app.hononeko.miru.persistence.repository.UserRepository,
     streamControlService: StreamControlService? = null,
+    webhookRunner: WebhookRunner? = null,
+    webhookDispatcher: WebhookDispatcher? = null,
+    webhookScope: CoroutineScope? = null,
     afterUserSync: suspend () -> Unit = {},
 ): SyncServices {
     val libraryCollectorScope =
@@ -351,6 +410,9 @@ internal fun createSyncServices(
         plexUserSyncService = plexUserSyncService,
         guardrailScope = guardrailScope,
         streamGuardrailRunner = streamGuardrailRunner,
+        webhookScope = webhookScope,
+        webhookDispatcher = webhookDispatcher,
+        webhookRunner = webhookRunner,
     )
 }
 
@@ -364,6 +426,8 @@ internal fun Application.registerLifecycleHandlers(
         syncServices.libraryStatsCollector.start()
         syncServices.plexUserSyncService.start()
         syncServices.streamGuardrailRunner?.start()
+        syncServices.webhookDispatcher?.start()
+        syncServices.webhookRunner?.start()
     }
     monitor.subscribe(ApplicationStopping) {
         logger.info("Stopping library stats collector and Plex user sync")
@@ -376,10 +440,19 @@ internal fun Application.registerLifecycleHandlers(
                 withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { runner.stop() }
                     ?: logger.warn("Stream guardrail runner did not stop within {}", REALTIME_SHUTDOWN_TIMEOUT)
             }
+            syncServices.webhookRunner?.let { runner ->
+                withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { runner.stop() }
+                    ?: logger.warn("Webhook runner did not stop within {}", REALTIME_SHUTDOWN_TIMEOUT)
+            }
+            syncServices.webhookDispatcher?.let { dispatcher ->
+                withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { dispatcher.stop() }
+                    ?: logger.warn("Webhook dispatcher did not stop within {}", REALTIME_SHUTDOWN_TIMEOUT)
+            }
         }
         syncServices.libraryCollectorScope.cancel()
         syncServices.userSyncScope.cancel()
         syncServices.guardrailScope?.cancel()
+        syncServices.webhookScope?.cancel()
     }
     monitor.subscribe(ApplicationStopped) {
         logger.info("Closing external HTTP clients and database handle")
@@ -406,11 +479,18 @@ internal fun cleanupOnStartupFailure(
         syncServices.streamGuardrailRunner?.let { runner ->
             withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { runner.stop() }
         }
+        syncServices.webhookRunner?.let { runner ->
+            withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { runner.stop() }
+        }
+        syncServices.webhookDispatcher?.let { dispatcher ->
+            withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { dispatcher.stop() }
+        }
         withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { plexRuntimeManager.stop() }
     }
     syncServices.libraryCollectorScope.cancel()
     syncServices.userSyncScope.cancel()
     syncServices.guardrailScope?.cancel()
+    syncServices.webhookScope?.cancel()
     clients.forEach { client ->
         if (client != null) {
             runCatching { client.close() }
@@ -515,6 +595,7 @@ fun Application.miruModule(
     artworkProxyService: ArtworkProxyService? = null,
     streamsAndUsersService: StreamsAndUsersService? = null,
     streamControlService: StreamControlService? = null,
+    webhookService: WebhookService? = null,
     sessionEvents: SharedFlow<SessionEvent>? = null,
     sseKeepaliveInterval: Duration = DEFAULT_SSE_KEEPALIVE_INTERVAL,
     historyAndStatsService: HistoryAndStatsService? = null,
@@ -601,6 +682,13 @@ fun Application.miruModule(
             if (streamControlService != null) {
                 streamControlRoutes(
                     streamControlService = streamControlService,
+                    authService = authService,
+                    authMode = config.auth.mode,
+                )
+            }
+            if (webhookService != null) {
+                webhookRoutes(
+                    webhookService = webhookService,
                     authService = authService,
                     authMode = config.auth.mode,
                 )

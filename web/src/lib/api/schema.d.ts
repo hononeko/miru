@@ -407,6 +407,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/webhooks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List configured outbound webhook targets (secrets write-only, URLs redacted) */
+        get: operations["listWebhooks"];
+        put?: never;
+        /** Create an outbound webhook target */
+        post: operations["createWebhook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/webhooks/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete an outbound webhook target and its delivery history */
+        delete: operations["deleteWebhook"];
+        options?: never;
+        head?: never;
+        /** Update an outbound webhook target */
+        patch: operations["updateWebhook"];
+        trace?: never;
+    };
+    "/api/v1/admin/webhooks/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Synchronously dispatch a synthetic webhook.test event to a target (single attempt) */
+        post: operations["testWebhook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/webhooks/deliveries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List recent outbound webhook deliveries with optional filtering and pagination */
+        get: operations["listWebhookDeliveries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/plex/status": {
         parameters: {
             query?: never;
@@ -1946,6 +2016,92 @@ export interface components {
             limit: number;
             offset: number;
         };
+        /** @enum {string} */
+        WebhookEventType: "transcode.started" | "stream.concurrent_limit" | "stream.buffering_spike" | "stream.terminated" | "server.unreachable" | "server.recovered";
+        /** @enum {string} */
+        WebhookDeliveryStatus: "DELIVERED" | "RETRYING" | "FAILED";
+        WebhookTargetDto: {
+            id: string;
+            name: string;
+            url: string;
+            enabled: boolean;
+            subscribedEvents: components["schemas"]["WebhookEventType"][];
+            hasSigningSecret: boolean;
+            authHeaderName?: string | null;
+            hasAuthHeader: boolean;
+            cooldownSeconds: number;
+            concurrentStreamThreshold: number;
+            bufferingSpikeThreshold: number;
+            bufferingWindowSeconds: number;
+            transcode4kOnly: boolean;
+            /** Format: int64 */
+            createdAtMs: number;
+            /** Format: int64 */
+            updatedAtMs: number;
+        };
+        WebhookTargetsResponse: {
+            targets: components["schemas"]["WebhookTargetDto"][];
+            encryptionKeyConfigured: boolean;
+        };
+        CreateWebhookTargetRequest: {
+            name: string;
+            url: string;
+            /** @default true */
+            enabled: boolean;
+            subscribedEvents: components["schemas"]["WebhookEventType"][];
+            signingSecret?: string | null;
+            authHeaderName?: string | null;
+            authHeaderValue?: string | null;
+            /** @default 60 */
+            cooldownSeconds: number;
+            /** @default 3 */
+            concurrentStreamThreshold: number;
+            /** @default 3 */
+            bufferingSpikeThreshold: number;
+            /** @default 120 */
+            bufferingWindowSeconds: number;
+            /** @default false */
+            transcode4kOnly: boolean;
+        };
+        UpdateWebhookTargetRequest: {
+            name?: string | null;
+            url?: string | null;
+            enabled?: boolean | null;
+            subscribedEvents?: components["schemas"]["WebhookEventType"][] | null;
+            signingSecret?: string | null;
+            clearSigningSecret?: boolean;
+            authHeaderName?: string | null;
+            authHeaderValue?: string | null;
+            clearAuthHeader?: boolean;
+            cooldownSeconds?: number | null;
+            concurrentStreamThreshold?: number | null;
+            bufferingSpikeThreshold?: number | null;
+            bufferingWindowSeconds?: number | null;
+            transcode4kOnly?: boolean | null;
+        };
+        WebhookDeliveryDto: {
+            id: string;
+            targetId: string;
+            targetName: string;
+            eventId: string;
+            eventType: string;
+            status: components["schemas"]["WebhookDeliveryStatus"];
+            attemptCount: number;
+            httpStatus?: number | null;
+            durationMs?: number | null;
+            errorMessage?: string | null;
+            /** Format: int64 */
+            createdAtMs: number;
+            /** Format: int64 */
+            completedAtMs?: number | null;
+        };
+        WebhookDeliveriesResponse: {
+            items: components["schemas"]["WebhookDeliveryDto"][];
+            /** Format: int64 */
+            totalCount: number;
+            limit: number;
+            offset: number;
+        };
     };
     responses: never;
     parameters: never;
@@ -3023,6 +3179,306 @@ export interface operations {
                 };
             };
             /** @description Invalid query filter or pagination parameter */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    listWebhooks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Configured outbound webhook targets */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookTargetsResponse"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    createWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateWebhookTargetRequest"];
+            };
+        };
+        responses: {
+            /** @description Created outbound webhook target */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookTargetDto"];
+                };
+            };
+            /** @description Invalid webhook configuration or missing MIRU_ENCRYPTION_KEY for secret fields */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    deleteWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Webhook target deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Webhook target not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    updateWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateWebhookTargetRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated outbound webhook target */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookTargetDto"];
+                };
+            };
+            /** @description Invalid webhook update payload */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Webhook target not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    testWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Synchronous test delivery outcome */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookDeliveryDto"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Webhook target not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    listWebhookDeliveries: {
+        parameters: {
+            query?: {
+                targetId?: string;
+                eventType?: "transcode.started" | "stream.concurrent_limit" | "stream.buffering_spike" | "stream.terminated" | "server.unreachable" | "server.recovered" | "webhook.test";
+                status?: components["schemas"]["WebhookDeliveryStatus"];
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paginated outbound webhook delivery log */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookDeliveriesResponse"];
+                };
+            };
+            /** @description Invalid filter or pagination parameter */
             400: {
                 headers: {
                     [name: string]: unknown;

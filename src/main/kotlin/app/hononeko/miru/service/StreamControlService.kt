@@ -27,7 +27,7 @@ import app.hononeko.miru.persistence.repository.UserRepository
 import arrow.core.Either
 import arrow.core.raise.either
 import arrow.core.raise.ensure
-import net.logstash.logback.argument.StructuredArguments.kv
+import app.hononeko.miru.logging.kv
 import org.slf4j.LoggerFactory
 import java.util.UUID
 

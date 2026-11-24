@@ -35,7 +35,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.encodeToString
-import net.logstash.logback.argument.StructuredArguments.kv
+import app.hononeko.miru.logging.kv
 import org.slf4j.LoggerFactory
 import java.util.UUID
 import kotlin.time.Duration

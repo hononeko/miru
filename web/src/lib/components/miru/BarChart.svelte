@@ -99,10 +99,8 @@
 				{@const isOpen = openKey === key}
 				{@const isPeak = highlightPeak && point.value === maxValue && point.value > 0}
 				{@const activeSegments = point.segments?.filter((s) => s.value > 0) ?? []}
-				{@const ringClass = cn(
-					'group-focus-visible:ring-2 group-focus-visible:ring-fg-primary/80 group-focus-visible:ring-offset-1 group-focus-visible:ring-offset-surface',
-					isOpen && 'ring-2 ring-fg-primary/80 ring-offset-1 ring-offset-surface'
-				)}
+				{@const negativeValue = point.negative?.value ?? 0}
+				{@const hasUpperBar = point.value > 0 || negativeValue === 0}
 				<Popover.Root
 					open={isOpen}
 					onOpenChange={(next) => {
@@ -124,10 +122,7 @@
 						<div class="relative w-full flex-1">
 							{#if activeSegments.length > 0}
 								<div
-									class={cn(
-										'absolute inset-x-0 flex flex-col-reverse gap-[2px] overflow-hidden rounded-t-sm transition-[height,opacity,box-shadow] duration-300 ease-[var(--ease-out-quart)]',
-										ringClass
-									)}
+									class="absolute inset-x-0 flex flex-col-reverse gap-[2px] overflow-hidden rounded-t-sm transition-[height,opacity] duration-300 ease-[var(--ease-out-quart)]"
 									style:bottom={`${baselinePct}%`}
 									style:height={`${barHeightPct(point.value)}%`}
 								>
@@ -142,11 +137,10 @@
 										></div>
 									{/each}
 								</div>
-							{:else if point.value > 0 || !point.negative?.value}
+							{:else if hasUpperBar}
 								<div
 									class={cn(
-										'absolute inset-x-0 rounded-t-sm transition-[height,background-color,opacity,box-shadow] duration-300 ease-[var(--ease-out-quart)]',
-										ringClass,
+										'absolute inset-x-0 rounded-t-sm transition-[height,background-color,opacity] duration-300 ease-[var(--ease-out-quart)]',
 										point.value <= 0
 											? 'bg-subtle/80 group-hover:bg-border-strong'
 											: isPeak
@@ -163,17 +157,29 @@
 									style:bottom={`${baselinePct}%`}
 								></div>
 							{/if}
-							{#if point.negative && point.negative.value > 0}
+							{#if point.negative && negativeValue > 0}
 								<div
 									class={cn(
-										'absolute inset-x-0 rounded-b-sm transition-[height,opacity,box-shadow] duration-300 ease-[var(--ease-out-quart)] group-hover:opacity-90',
-										point.negative.colorClass,
-										ringClass
+										'absolute inset-x-0 rounded-b-sm transition-[height,opacity] duration-300 ease-[var(--ease-out-quart)] group-hover:opacity-90',
+										point.negative.colorClass
 									)}
 									style:top={`${100 - baselinePct}%`}
-									style:height={`${barHeightPct(point.negative.value)}%`}
+									style:height={`${barHeightPct(negativeValue)}%`}
 								></div>
 							{/if}
+							<!-- One outline around the bars above and below the baseline -->
+							<div
+								data-testid="bar-outline"
+								class={cn(
+									'pointer-events-none absolute inset-x-0 transition-[top,bottom,box-shadow] duration-300 ease-[var(--ease-out-quart)]',
+									'group-focus-visible:ring-2 group-focus-visible:ring-fg-primary/80 group-focus-visible:ring-offset-1 group-focus-visible:ring-offset-surface',
+									hasUpperBar && 'rounded-t-sm',
+									negativeValue > 0 && 'rounded-b-sm',
+									isOpen && 'ring-2 ring-fg-primary/80 ring-offset-1 ring-offset-surface'
+								)}
+								style:top={`${100 - baselinePct - (hasUpperBar ? barHeightPct(point.value) : 0)}%`}
+								style:bottom={`${baselinePct - (negativeValue > 0 ? barHeightPct(negativeValue) : 0)}%`}
+							></div>
 						</div>
 
 						<div class="flex flex-col items-center leading-tight">

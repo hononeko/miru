@@ -272,7 +272,9 @@ class HistoryAndStatsService(
 
             playbackHistoryRepository
                 .forEachHeatmapSample(userIds = scopedUserIds, fromMs = fromMs, toMs = toMs) { stoppedAtMs, watchedDurationSec ->
-                    val dayIdx = (utcEpochDay(stoppedAtMs) - firstDay).toInt()
+                    val dayOffset = utcEpochDay(stoppedAtMs) - firstDay
+                    if (dayOffset !in 0L until days) return@forEachHeatmapSample
+                    val dayIdx = dayOffset.toInt()
                     val hourIdx = utcHourOfDay(stoppedAtMs)
                     val duration = watchedDurationSec.toLong()
                     playMatrix[dayIdx][hourIdx] += 1L

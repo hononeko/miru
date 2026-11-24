@@ -23,8 +23,6 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.route
 
 private const val CACHE_CONTROL_VALUE = "private, max-age=3600"
-private const val CONTENT_TYPE_OPTIONS_HEADER = "X-Content-Type-Options"
-private const val CONTENT_TYPE_OPTIONS_VALUE = "nosniff"
 
 fun Route.artworkRoutes(
     artworkProxyService: ArtworkProxyService,
@@ -113,7 +111,6 @@ private suspend fun ApplicationCall.respondArtworkEither(result: Either<MiruErro
         ifRight = { cached ->
             response.header(HttpHeaders.ETag, cached.etag)
             response.header(HttpHeaders.CacheControl, CACHE_CONTROL_VALUE)
-            response.header(CONTENT_TYPE_OPTIONS_HEADER, CONTENT_TYPE_OPTIONS_VALUE)
 
             val ifNoneMatch = request.headers[HttpHeaders.IfNoneMatch]
             if (ArtworkProxyService.matchesIfNoneMatch(ifNoneMatch, cached.etag)) {

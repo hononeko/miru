@@ -22,10 +22,12 @@ import app.hononeko.miru.http.artworkRoutes
 import app.hononeko.miru.http.authRoutes
 import app.hononeko.miru.http.healthRoutes
 import app.hononeko.miru.http.historyStatsRoutes
+import app.hononeko.miru.http.installSecurityHeaders
 import app.hononeko.miru.http.libraryRoutes
 import app.hononeko.miru.http.mediaDetailsRoutes
 import app.hononeko.miru.http.openApiRoutes
 import app.hononeko.miru.http.plexOAuthRoutes
+import app.hononeko.miru.http.resolveWebContentSecurityPolicy
 import app.hononeko.miru.http.respondError
 import app.hononeko.miru.http.staticWebRoutes
 import app.hononeko.miru.http.streamControlRoutes
@@ -530,6 +532,7 @@ fun Application.miruModule(
         filter { call -> call.request.path() != "/healthz" }
     }
 
+    installSecurityHeaders(resolveWebContentSecurityPolicy(config.server.staticWebDir))
     installConfiguredCors(config.server.corsAllowedOrigins)
     installDefaultStatusPages()
 

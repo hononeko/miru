@@ -4,6 +4,7 @@ import app.hononeko.miru.MiruJson
 import app.hononeko.miru.auth.Argon2Params
 import app.hononeko.miru.auth.Argon2idPasswordHasher
 import app.hononeko.miru.auth.AuthService
+import app.hononeko.miru.auth.MiruPrincipal
 import app.hononeko.miru.auth.MiruRole
 import app.hononeko.miru.auth.SESSION_COOKIE_NAME
 import app.hononeko.miru.config.AppConfig
@@ -13,6 +14,7 @@ import app.hononeko.miru.config.DatabaseConfig
 import app.hononeko.miru.config.PlexConfig
 import app.hononeko.miru.config.ServerConfig
 import app.hononeko.miru.config.SessionConfig
+import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.miruModule
 import app.hononeko.miru.persistence.DatabaseFactory
 import app.hononeko.miru.persistence.DatabaseHandle
@@ -28,7 +30,10 @@ import app.hononeko.miru.persistence.repository.ExposedAuthSessionRepository
 import app.hononeko.miru.persistence.repository.ExposedMediaServerRepository
 import app.hononeko.miru.persistence.repository.ExposedPlaybackHistoryRepository
 import app.hononeko.miru.persistence.repository.ExposedUserRepository
+import app.hononeko.miru.persistence.repository.PlaybackHistoryRepository
 import app.hononeko.miru.service.HistoryAndStatsService
+import arrow.core.Either
+import arrow.core.right
 import io.kotest.assertions.arrow.core.shouldBeRight
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.collections.shouldBeEmpty
@@ -852,6 +857,39 @@ class HistoryStatsRoutesTest :
                     MiruJson.decodeFromString<ProblemDetails>(badMetric.bodyAsText()).errors.shouldNotBeNull() shouldContainKey
                         "metric"
                 }
+            }
+        }
+
+        test("leaves heatmap samples outside its days out, whatever the repository returns") {
+            createHistoryHarness().use { harness ->
+                val dayMs = 86_400_000L
+                val firstDayMs = Instant.parse("2026-04-09T00:00:00Z").toEpochMilli()
+                val endMs = firstDayMs + 7 * dayMs
+                val unfiltered =
+                    object : PlaybackHistoryRepository by harness.historyRepo {
+                        override suspend fun forEachHeatmapSample(
+                            serverId: String?,
+                            userIds: Set<String>?,
+                            fromMs: Long?,
+                            toMs: Long?,
+                            onRow: (stoppedAtMs: Long, watchedDurationSec: Int) -> Unit,
+                        ): Either<MiruError.PersistenceError, Unit> {
+                            // 2^32 days away is day 0 again when truncated to an Int
+                            listOf(Long.MIN_VALUE, firstDayMs - 1, endMs, firstDayMs + (1L shl 32) * dayMs, Long.MAX_VALUE)
+                                .forEach { onRow(it, 999) }
+                            onRow(firstDayMs, 60)
+                            onRow(endMs - 1, 30)
+                            return Unit.right()
+                        }
+                    }
+                val service = HistoryAndStatsService(unfiltered, harness.userRepo, clock = { FIXED_NOW_MS })
+                val admin = MiruPrincipal(accountId = "acc-admin", username = "admin", role = MiruRole.ADMIN)
+
+                val heatmap = service.getHeatmapStats(principal = admin, rangeRaw = "7d").shouldBeRight()
+                heatmap.totalPlays shouldBe 2L
+                heatmap.totalWatchDurationSec shouldBe 90L
+                heatmap.cells.filter { it.playCount > 0 }.map { Triple(it.date, it.hour, it.playCount) } shouldContainExactly
+                    listOf(Triple("2026-04-09", 0, 1L), Triple("2026-04-15", 23, 1L))
             }
         }
 

@@ -16,10 +16,12 @@
 	import {
 		cn,
 		formatBytes,
+		formatCalendarDate,
 		formatDurationSec,
 		formatRelativeTime,
 		formatShortDateTime,
 		formatStatPercent,
+		getCalendarDateAxisParts,
 		statBarWidth
 	} from '$lib/utils';
 
@@ -71,14 +73,40 @@
 	const videoDist = $derived(mapToDist(stats.byVideoCodec));
 	const audioDist = $derived(mapToDist(stats.byAudioCodec));
 
-	const snapshotBars = $derived.by<BarPoint[]>(() => {
-		const snaps = [...stats.snapshots].reverse().slice(-8);
-		return snaps.map((s) => ({
-			label: new Date(s.capturedAtMs).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
-			value: s.itemCount,
-			tooltip: `${s.itemCount.toLocaleString()} items · ${formatBytes(s.totalSizeBytes)}`
-		}));
-	});
+	const GROWTH_UNITS: Record<string, { one: string; many: string }> = {
+		movie: { one: 'movie', many: 'movies' },
+		show: { one: 'episode', many: 'episodes' },
+		artist: { one: 'track', many: 'tracks' }
+	};
+	const growthUnit = $derived(GROWTH_UNITS[stats.section.sectionType] ?? { one: 'item', many: 'items' });
+
+	const growthBars = $derived.by<BarPoint[]>(() =>
+		stats.growth.map((day, idx) => {
+			const axis = getCalendarDateAxisParts(day.date, idx > 0 ? stats.growth[idx - 1].date : null);
+			const changes = [
+				day.added > 0 ? `${growthCount(day.added)} added` : null,
+				day.removed > 0 ? `${growthCount(day.removed)} removed` : null
+			];
+			return {
+				id: day.date,
+				label: axis.dayLabel,
+				subLabel: axis.monthLabel,
+				value: day.added,
+				segments: [{ label: 'Added', value: day.added, colorClass: 'bg-chart-1' }],
+				negative: { label: 'Removed', value: day.removed, colorClass: 'bg-chart-2' },
+				ariaLabel: `${formatCalendarDate(day.date, preferencesStore.prefs.dateFormat)}: ${changes.filter(Boolean).join(', ')}`
+			};
+		})
+	);
+
+	function growthCount(count: number): string {
+		return `${count.toLocaleString()} ${count === 1 ? growthUnit.one : growthUnit.many}`;
+	}
+
+	function formatSizeDelta(bytes: number): string {
+		if (bytes === 0) return 'No size change';
+		return `${bytes > 0 ? '+' : '−'}${formatBytes(Math.abs(bytes))}`;
+	}
 
 	async function loadStaleMedia(sectionKey: string, days: number, sort: StaleMediaSort) {
 		if (!sectionKey) return;
@@ -200,19 +228,56 @@
 		<div class="flex flex-col justify-between gap-4 rounded-xl border border-border bg-surface p-4 lg:col-span-5">
 			<div class="flex items-start justify-between gap-2">
 				<div>
-					<h2 class="font-heading text-sm font-semibold text-fg-primary">
-						Growth History (Snapshots)
-					</h2>
-					<p class="text-[11px] text-fg-muted">{stats.section.title} item count over time</p>
+					<h2 class="font-heading text-sm font-semibold text-fg-primary">Growth History</h2>
+					<p class="text-[11px] text-fg-muted first-letter:uppercase">
+						{growthUnit.many} added and removed per day (UTC)
+					</p>
 				</div>
-				<Badge tone="direct-play" mono>{stats.snapshots.length} SNAPS</Badge>
+				{#if growthBars.length > 0}
+					<div class="flex shrink-0 items-center gap-3 text-[10px] text-fg-secondary">
+						<span class="inline-flex items-center gap-1.5">
+							<span class="h-2 w-2 rounded-full bg-chart-1"></span>Added
+						</span>
+						<span class="inline-flex items-center gap-1.5">
+							<span class="h-2 w-2 rounded-full bg-chart-2"></span>Removed
+						</span>
+					</div>
+				{/if}
 			</div>
 
 			<BarChart
-				points={snapshotBars}
+				points={growthBars}
 				heightClass="h-32"
-				emptyMessage={loadingSection ? 'Loading snapshots…' : 'No snapshots captured yet'}
-			/>
+				barClass="max-w-12"
+				highlightPeak={false}
+				emptyMessage={loadingSection ? 'Loading growth history…' : 'No additions or removals recorded yet'}
+			>
+				{#snippet detail(_point, idx)}
+					{@const day = stats.growth[idx]}
+					{#if day}
+						<div class="flex flex-col gap-1.5 text-xs">
+							<span class="font-mono text-xs font-semibold text-fg-primary">
+								{formatCalendarDate(day.date, preferencesStore.prefs.dateFormat)}
+							</span>
+							{#if day.added > 0}
+								<span class="inline-flex items-center gap-1.5 text-fg-secondary">
+									<span class="h-2 w-2 rounded-full bg-chart-1"></span>
+									+{growthCount(day.added)} added
+								</span>
+							{/if}
+							{#if day.removed > 0}
+								<span class="inline-flex items-center gap-1.5 text-fg-secondary">
+									<span class="h-2 w-2 rounded-full bg-chart-2"></span>
+									−{growthCount(day.removed)} removed
+								</span>
+							{/if}
+							<span class="font-mono text-[11px] text-fg-muted tabular-nums">
+								{formatSizeDelta(day.sizeDeltaBytes)}
+							</span>
+						</div>
+					{/if}
+				{/snippet}
+			</BarChart>
 
 			<div class="flex items-center justify-between rounded-lg bg-elevated px-3 py-2 font-mono text-[11px]">
 				<span class="text-fg-secondary">

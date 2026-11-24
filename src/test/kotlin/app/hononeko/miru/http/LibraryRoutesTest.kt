@@ -351,6 +351,15 @@ class LibraryRoutesTest :
                     stats.byVideoCodec shouldContainExactly mapOf("HEVC" to 40, "H.264" to 80)
                     stats.byAudioCodec shouldContainExactly mapOf("EAC3" to 40, "AAC" to 80)
                     stats.snapshots.map { it.id } shouldContainExactly listOf("snap-2", "snap-1")
+                    stats.growth shouldContainExactly
+                        listOf(
+                            LibraryGrowthDayResponse(
+                                date = "1970-01-01",
+                                added = 10L,
+                                removed = 0L,
+                                sizeDeltaBytes = 200_000_000_000L,
+                            ),
+                        )
 
                     // Filtered snapshot window preserves latest breakdown
                     val windowResp =

@@ -15,6 +15,7 @@ import app.hononeko.miru.persistence.model.GuardrailRuleType
 import app.hononeko.miru.persistence.model.HistoryFilter
 import app.hononeko.miru.persistence.model.HistorySortDirection
 import app.hononeko.miru.persistence.model.HistorySortField
+import app.hononeko.miru.persistence.model.LibraryGrowthDayRecord
 import app.hononeko.miru.persistence.model.LibrarySectionRecord
 import app.hononeko.miru.persistence.model.LibrarySnapshotRecord
 import app.hononeko.miru.persistence.model.MediaItemCacheRecord
@@ -133,6 +134,7 @@ fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
         mediaPlaySummaryTests { ctx }
         playbackHistorySortAndStatsTests { ctx }
         libraryTests { ctx }
+        libraryGrowthTests { ctx }
         staleMediaTests { ctx }
         cascadeTests { ctx }
         authAccountTests { ctx }
@@ -846,6 +848,10 @@ private fun FunSpecRootScope.libraryTests(ctxProvider: () -> ContractContext) {
             ctx.library.findSnapshots("srv-1", "sec-1", limit = 2).shouldBeRight() shouldContainExactly listOf(snap2, snap3)
             ctx.library.findSnapshots("srv-1", "sec-1", fromMs = 1_500L, toMs = 2_500L).shouldBeRight() shouldContainExactly listOf(snap3)
 
+            // All three snapshots are from one day: +10 then +15 after the baseline
+            ctx.library.findDailyGrowth("srv-1", "sec-1", limit = 10).shouldBeRight() shouldContainExactly
+                listOf(LibraryGrowthDayRecord(epochDay = 0L, added = 25L, removed = 0L, sizeDeltaBytes = 0L))
+
             val items =
                 (1..5).map { idx ->
                     MediaItemCacheRecord(
@@ -876,6 +882,84 @@ private fun FunSpecRootScope.libraryTests(ctxProvider: () -> ContractContext) {
 
             ctx.library.deleteItemsNotIn("srv-1", "sec-1", emptySet()).shouldBeRight() shouldBe 1
             ctx.library.findRecentlyAdded("srv-1", sectionKey = "sec-1").shouldBeRight() shouldHaveSize 0
+        }
+    }
+}
+
+private fun FunSpecRootScope.libraryGrowthTests(ctxProvider: () -> ContractContext) {
+    context("LibraryRepository daily growth") {
+        test("groups snapshot changes by UTC day, skips unchanged days, and treats the first snapshot as a baseline") {
+            val ctx = ctxProvider()
+            ctx.servers.upsert(sampleServer(id = "srv-1")).shouldBeRight()
+            listOf("sec-1", "sec-2").forEach { key ->
+                ctx.library
+                    .upsertSection(
+                        LibrarySectionRecord(
+                            serverId = "srv-1",
+                            sectionKey = key,
+                            title = key,
+                            sectionType = "movie",
+                            itemCount = 1,
+                            updatedAtMs = 1L,
+                        ),
+                    ).shouldBeRight()
+            }
+
+            val dayMs = 86_400_000L
+
+            suspend fun snapshot(
+                day: Long,
+                offsetMs: Long,
+                count: Int,
+                sizeBytes: Long,
+                sectionKey: String = "sec-1",
+            ) {
+                ctx.library
+                    .insertSnapshot(
+                        sampleSnapshot(
+                            id = "$sectionKey-$day-$offsetMs",
+                            sectionKey = sectionKey,
+                            capturedAtMs = day * dayMs + offsetMs,
+                            itemCount = count,
+                        ).copy(totalSizeBytes = sizeBytes),
+                    ).shouldBeRight()
+            }
+
+            // Day 100: baseline only
+            snapshot(day = 100, offsetMs = 0, count = 50, sizeBytes = 5_000L)
+            // Day 101: rescans without changes
+            snapshot(day = 101, offsetMs = 0, count = 50, sizeBytes = 5_000L)
+            snapshot(day = 101, offsetMs = 1, count = 50, sizeBytes = 5_000L)
+            // Day 102: +3, unchanged, -1
+            snapshot(day = 102, offsetMs = 0, count = 53, sizeBytes = 5_300L)
+            snapshot(day = 102, offsetMs = 1, count = 53, sizeBytes = 5_300L)
+            snapshot(day = 102, offsetMs = dayMs - 1, count = 52, sizeBytes = 5_200L)
+            // Day 103: a file replaced by a larger one, no item added or removed
+            snapshot(day = 103, offsetMs = 0, count = 52, sizeBytes = 9_000L)
+            // Day 105: -2
+            snapshot(day = 105, offsetMs = 0, count = 50, sizeBytes = 8_800L)
+            // Another section does not leak in
+            snapshot(day = 102, offsetMs = 0, count = 1, sizeBytes = 1L, sectionKey = "sec-2")
+            snapshot(day = 105, offsetMs = 0, count = 900, sizeBytes = 1L, sectionKey = "sec-2")
+
+            val day102 = LibraryGrowthDayRecord(epochDay = 102L, added = 3L, removed = 1L, sizeDeltaBytes = 200L)
+            val day105 = LibraryGrowthDayRecord(epochDay = 105L, added = 0L, removed = 2L, sizeDeltaBytes = -200L)
+            ctx.library.findDailyGrowth("srv-1", "sec-1", limit = 10).shouldBeRight() shouldContainExactly listOf(day105, day102)
+            ctx.library.findDailyGrowth("srv-1", "sec-1", limit = 1).shouldBeRight() shouldContainExactly listOf(day105)
+            ctx.library.findDailyGrowth("srv-1", "sec-1", limit = 0).shouldBeRight().shouldBeEmpty()
+            ctx.library.findDailyGrowth("srv-1", "sec-9", limit = 10).shouldBeRight().shouldBeEmpty()
+
+            // A window keeps its deltas relative to the snapshot before it
+            ctx.library
+                .findDailyGrowth("srv-1", "sec-1", limit = 10, fromMs = 102L * dayMs, toMs = 103L * dayMs - 1L)
+                .shouldBeRight() shouldContainExactly listOf(day102)
+
+            // The service returns days oldest first
+            val admin = MiruPrincipal(accountId = "acc-admin", username = "admin", role = MiruRole.ADMIN)
+            LibraryQueryService(ctx.library)
+                .getLibraryStats(principal = admin, sectionId = "sec-1")
+                .shouldBeRight()
+                .growth shouldContainExactly listOf(day102, day105)
         }
     }
 }

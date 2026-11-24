@@ -4,6 +4,7 @@ import app.hononeko.miru.MiruJson
 import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.persistence.DatabaseHandle
 import app.hononeko.miru.persistence.exposedQuery
+import app.hononeko.miru.persistence.model.LibraryGrowthDayRecord
 import app.hononeko.miru.persistence.model.LibrarySectionRecord
 import app.hononeko.miru.persistence.model.LibrarySnapshotRecord
 import app.hononeko.miru.persistence.model.MediaItemCacheRecord
@@ -66,6 +67,19 @@ interface LibraryRepository {
         fromMs: Long? = null,
         toMs: Long? = null,
     ): Either<MiruError.PersistenceError, List<LibrarySnapshotRecord>>
+
+    /**
+     * The most recent [limit] UTC days on which items (movies, episodes or tracks) were added or removed, newest first.
+     * Counts are the changes between consecutive snapshots, so the first snapshot is a baseline and days without a
+     * change are left out.
+     */
+    suspend fun findDailyGrowth(
+        serverId: String,
+        sectionKey: String,
+        limit: Int,
+        fromMs: Long? = null,
+        toMs: Long? = null,
+    ): Either<MiruError.PersistenceError, List<LibraryGrowthDayRecord>> = Either.Right(emptyList())
 
     suspend fun upsertMediaItems(items: List<MediaItemCacheRecord>): Either<MiruError.PersistenceError, Int>
 
@@ -223,6 +237,73 @@ class ExposedLibraryRepository(
                 .orderBy(LibrarySnapshotsTable.capturedAtMs to SortOrder.DESC, LibrarySnapshotsTable.id to SortOrder.ASC)
                 .limit(safeLimit)
                 .map { it.toLibrarySnapshotRecord() }
+        }
+
+    override suspend fun findDailyGrowth(
+        serverId: String,
+        sectionKey: String,
+        limit: Int,
+        fromMs: Long?,
+        toMs: Long?,
+    ): Either<MiruError.PersistenceError, List<LibraryGrowthDayRecord>> =
+        database.exposedQuery("library_find_daily_growth") {
+            val safeLimit = limit.coerceAtLeast(0)
+            if (safeLimit == 0) return@exposedQuery emptyList()
+
+            val args =
+                mutableListOf<Pair<IColumnType<*>, Any?>>(
+                    TextColumnType() to serverId,
+                    TextColumnType() to sectionKey,
+                )
+            val windowPredicates =
+                buildString {
+                    fromMs?.let {
+                        append(" AND captured_at_ms >= ?")
+                        args += LongColumnType() to it
+                    }
+                    toMs?.let {
+                        append(" AND captured_at_ms <= ?")
+                        args += LongColumnType() to it
+                    }
+                }
+            args += IntegerColumnType() to safeLimit
+
+            val sql =
+                """
+                SELECT
+                    epoch_day,
+                    SUM(CASE WHEN leaf_delta > 0 THEN leaf_delta ELSE 0 END) AS added,
+                    SUM(CASE WHEN leaf_delta < 0 THEN -leaf_delta ELSE 0 END) AS removed,
+                    SUM(size_delta) AS size_delta_bytes
+                FROM (
+                    SELECT
+                        captured_at_ms,
+                        captured_at_ms / $MILLIS_PER_DAY AS epoch_day,
+                        leaf_count - LAG(leaf_count) OVER (ORDER BY captured_at_ms, id) AS leaf_delta,
+                        total_size_bytes - LAG(total_size_bytes) OVER (ORDER BY captured_at_ms, id) AS size_delta
+                    FROM library_snapshots
+                    WHERE server_id = ? AND section_key = ?
+                ) deltas
+                WHERE leaf_delta IS NOT NULL$windowPredicates
+                GROUP BY epoch_day
+                HAVING SUM(ABS(leaf_delta)) > 0
+                ORDER BY epoch_day DESC
+                LIMIT ?
+                """.trimIndent()
+
+            exec(sql, args = args, explicitStatementType = StatementType.SELECT) { rs ->
+                val days = mutableListOf<LibraryGrowthDayRecord>()
+                while (rs.next()) {
+                    days +=
+                        LibraryGrowthDayRecord(
+                            epochDay = rs.getLong("epoch_day"),
+                            added = rs.getLong("added"),
+                            removed = rs.getLong("removed"),
+                            sizeDeltaBytes = rs.getLong("size_delta_bytes"),
+                        )
+                }
+                days
+            }.orEmpty()
         }
 
     override suspend fun upsertMediaItems(items: List<MediaItemCacheRecord>): Either<MiruError.PersistenceError, Int> {
@@ -670,5 +751,6 @@ class ExposedLibraryRepository(
 
     private companion object {
         const val BATCH_SIZE = 500
+        const val MILLIS_PER_DAY = 86_400_000L
     }
 }

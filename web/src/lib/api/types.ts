@@ -77,6 +77,7 @@ export type UserStatsResponse = Schemas['UserStatsResponse'];
 export type LibrarySectionResponse = Schemas['LibrarySectionResponse'];
 export type LibraryListResponse = Schemas['LibraryListResponse'];
 export type LibrarySnapshotResponse = Schemas['LibrarySnapshotResponse'];
+export type LibraryGrowthDayResponse = Schemas['LibraryGrowthDayResponse'];
 export type LibraryStatsResponse = Schemas['LibraryStatsResponse'];
 export type RecentMediaItemResponse = Schemas['RecentMediaItemResponse'];
 export type RecentMediaListResponse = Schemas['RecentMediaListResponse'];

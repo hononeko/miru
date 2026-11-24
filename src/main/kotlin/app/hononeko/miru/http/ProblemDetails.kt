@@ -3,9 +3,11 @@ package app.hononeko.miru.http
 import app.hononeko.miru.domain.error.MiruError
 import arrow.core.Either
 import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.uri
+import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
 import kotlinx.serialization.Serializable
@@ -41,6 +43,7 @@ fun MiruError.toHttpStatus(): HttpStatusCode =
         is MiruError.Forbidden -> HttpStatusCode.Forbidden
         is MiruError.NotFound -> HttpStatusCode.NotFound
         is MiruError.Conflict -> HttpStatusCode.Conflict
+        is MiruError.TooManyRequests -> HttpStatusCode.TooManyRequests
         is MiruError.UpstreamAuthError -> HttpStatusCode.BadGateway
         is MiruError.UpstreamUnavailable -> HttpStatusCode.BadGateway
         is MiruError.PersistenceError -> HttpStatusCode.InternalServerError
@@ -91,6 +94,15 @@ fun MiruError.toProblemDetails(instance: String? = null): ProblemDetails {
             ProblemDetails(
                 type = "https://miru.hononeko.app/errors/conflict",
                 title = "Conflict",
+                status = status.value,
+                detail = message,
+                instance = instance,
+            )
+
+        is MiruError.TooManyRequests ->
+            ProblemDetails(
+                type = "https://miru.hononeko.app/errors/too-many-requests",
+                title = "Too Many Requests",
                 status = status.value,
                 detail = message,
                 instance = instance,
@@ -151,6 +163,10 @@ suspend fun ApplicationCall.respondError(error: MiruError) {
 
         else ->
             errorLogger.debug("Request error ({}) at {}: {}", status.value, request.uri, error.message)
+    }
+
+    if (error is MiruError.TooManyRequests) {
+        response.header(HttpHeaders.RetryAfter, error.retryAfterSeconds.coerceAtLeast(1L).toString())
     }
 
     val problem = error.toProblemDetails(instance = request.uri)

@@ -27,6 +27,7 @@ data class ServerConfig(
     val port: Int,
     val corsAllowedOrigins: List<String> = emptyList(),
     val staticWebDir: String? = null,
+    val trustProxyHeaders: Boolean = false,
 )
 
 sealed interface DatabaseConfig {
@@ -99,6 +100,25 @@ data class OidcConfig(
     }
 }
 
+data class AuthRateLimitConfig(
+    val enabled: Boolean = true,
+    val windowSeconds: Int = DEFAULT_WINDOW_SECONDS,
+    val loginMaxPerIp: Int = DEFAULT_LOGIN_MAX_PER_IP,
+    val loginMaxFailuresPerAccount: Int = DEFAULT_LOGIN_MAX_FAILURES_PER_ACCOUNT,
+    val setupMaxPerIp: Int = DEFAULT_SETUP_MAX_PER_IP,
+) {
+    companion object {
+        const val DEFAULT_WINDOW_SECONDS = 60
+        const val MIN_WINDOW_SECONDS = 1
+        const val MAX_WINDOW_SECONDS = 3_600
+        const val DEFAULT_LOGIN_MAX_PER_IP = 20
+        const val DEFAULT_LOGIN_MAX_FAILURES_PER_ACCOUNT = 10
+        const val DEFAULT_SETUP_MAX_PER_IP = 10
+        const val MIN_ATTEMPTS = 1
+        const val MAX_ATTEMPTS = 10_000
+    }
+}
+
 data class AuthConfig(
     val mode: AuthMode = AuthMode.LOCAL,
     val sessionSecret: String = "",
@@ -106,6 +126,7 @@ data class AuthConfig(
     val adminPassword: String? = null,
     val allowLocalLogin: Boolean = true,
     val cookieSecure: CookieSecureMode = CookieSecureMode.AUTO,
+    val rateLimit: AuthRateLimitConfig = AuthRateLimitConfig(),
     val oidc: OidcConfig = OidcConfig(),
 ) {
     val localLoginEnabled: Boolean
@@ -117,7 +138,7 @@ data class AuthConfig(
     override fun toString(): String =
         "AuthConfig(mode=$mode, sessionSecret=***, adminUsername=$adminUsername, " +
             "adminPassword=${if (adminPassword != null) "***" else "null"}, " +
-            "allowLocalLogin=$allowLocalLogin, cookieSecure=$cookieSecure, oidc=$oidc)"
+            "allowLocalLogin=$allowLocalLogin, cookieSecure=$cookieSecure, rateLimit=$rateLimit, oidc=$oidc)"
 }
 
 data class GuardrailsConfig(
@@ -257,12 +278,18 @@ object AppConfigLoader {
                 .filter { it.isNotEmpty() }
 
         val staticWebDir = get("STATIC_WEB_DIR", "miru.server.staticWebDir", null)
+        val trustProxyRaw = get("MIRU_TRUST_PROXY_HEADERS", "miru.server.trustProxyHeaders", null) ?: "false"
+        val trustProxyHeaders = trustProxyRaw.toBooleanStrictOrNull()
+        if (trustProxyHeaders == null) {
+            errors["MIRU_TRUST_PROXY_HEADERS"] = "must be 'true' or 'false'"
+        }
 
         return ServerConfig(
             host = host,
             port = port ?: 8080,
             corsAllowedOrigins = origins,
             staticWebDir = staticWebDir,
+            trustProxyHeaders = trustProxyHeaders ?: false,
         )
     }
 
@@ -438,6 +465,7 @@ object AppConfigLoader {
 
         val oidc = parseOidcConfig(mode = mode, get = get, errors = errors)
         val cookieSecure = parseCookieSecureMode(get = get, errors = errors)
+        val rateLimit = parseAuthRateLimitConfig(get = get, errors = errors)
         val effectiveAllowLocal = allowLocalLogin ?: true
         val localLoginEnabled = mode == AuthMode.LOCAL && effectiveAllowLocal
         val oidcEnabled = mode != AuthMode.NONE && oidc.enabled
@@ -454,6 +482,7 @@ object AppConfigLoader {
             adminPassword = adminPassword,
             allowLocalLogin = effectiveAllowLocal,
             cookieSecure = cookieSecure,
+            rateLimit = rateLimit,
             oidc = oidc,
         )
     }
@@ -472,6 +501,84 @@ object AppConfigLoader {
                 CookieSecureMode.AUTO
             }
         }
+    }
+
+    private fun parseAuthRateLimitConfig(
+        get: (String, String, String?) -> String?,
+        errors: MutableMap<String, String>,
+    ): AuthRateLimitConfig {
+        val enabledRaw = get("AUTH_RATE_LIMIT_ENABLED", "miru.auth.rateLimit.enabled", null) ?: "true"
+        val enabled = enabledRaw.toBooleanStrictOrNull()
+        if (enabled == null) {
+            errors["AUTH_RATE_LIMIT_ENABLED"] = "must be 'true' or 'false'"
+        }
+
+        val windowSeconds =
+            parseBoundedInt(
+                envKey = "AUTH_RATE_LIMIT_WINDOW_SECONDS",
+                hoconPath = "miru.auth.rateLimit.windowSeconds",
+                default = AuthRateLimitConfig.DEFAULT_WINDOW_SECONDS,
+                min = AuthRateLimitConfig.MIN_WINDOW_SECONDS,
+                max = AuthRateLimitConfig.MAX_WINDOW_SECONDS,
+                get = get,
+                errors = errors,
+            )
+        val loginMaxPerIp =
+            parseBoundedInt(
+                envKey = "AUTH_RATE_LIMIT_LOGIN_MAX_ATTEMPTS",
+                hoconPath = "miru.auth.rateLimit.loginMaxPerIp",
+                default = AuthRateLimitConfig.DEFAULT_LOGIN_MAX_PER_IP,
+                min = AuthRateLimitConfig.MIN_ATTEMPTS,
+                max = AuthRateLimitConfig.MAX_ATTEMPTS,
+                get = get,
+                errors = errors,
+            )
+        val loginMaxFailuresPerAccount =
+            parseBoundedInt(
+                envKey = "AUTH_RATE_LIMIT_ACCOUNT_MAX_FAILURES",
+                hoconPath = "miru.auth.rateLimit.loginMaxFailuresPerAccount",
+                default = AuthRateLimitConfig.DEFAULT_LOGIN_MAX_FAILURES_PER_ACCOUNT,
+                min = AuthRateLimitConfig.MIN_ATTEMPTS,
+                max = AuthRateLimitConfig.MAX_ATTEMPTS,
+                get = get,
+                errors = errors,
+            )
+        val setupMaxPerIp =
+            parseBoundedInt(
+                envKey = "AUTH_RATE_LIMIT_SETUP_MAX_ATTEMPTS",
+                hoconPath = "miru.auth.rateLimit.setupMaxPerIp",
+                default = AuthRateLimitConfig.DEFAULT_SETUP_MAX_PER_IP,
+                min = AuthRateLimitConfig.MIN_ATTEMPTS,
+                max = AuthRateLimitConfig.MAX_ATTEMPTS,
+                get = get,
+                errors = errors,
+            )
+
+        return AuthRateLimitConfig(
+            enabled = enabled ?: true,
+            windowSeconds = windowSeconds,
+            loginMaxPerIp = loginMaxPerIp,
+            loginMaxFailuresPerAccount = loginMaxFailuresPerAccount,
+            setupMaxPerIp = setupMaxPerIp,
+        )
+    }
+
+    private fun parseBoundedInt(
+        envKey: String,
+        hoconPath: String,
+        default: Int,
+        min: Int,
+        max: Int,
+        get: (String, String, String?) -> String?,
+        errors: MutableMap<String, String>,
+    ): Int {
+        val raw = get(envKey, hoconPath, null) ?: return default
+        val parsed = raw.toIntOrNull()
+        if (parsed == null || parsed !in min..max) {
+            errors[envKey] = "must be an integer between $min and $max"
+            return default
+        }
+        return parsed
     }
 
     private fun parseOidcConfig(

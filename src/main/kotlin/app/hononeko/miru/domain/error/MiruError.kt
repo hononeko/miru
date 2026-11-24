@@ -32,6 +32,11 @@ sealed interface MiruError {
         override val message: String,
     ) : MiruError
 
+    data class TooManyRequests(
+        override val message: String = "Too many requests; please try again later",
+        val retryAfterSeconds: Long = 60L,
+    ) : MiruError
+
     data class UpstreamAuthError(
         val provider: String,
         override val message: String,

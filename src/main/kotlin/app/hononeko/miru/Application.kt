@@ -8,6 +8,7 @@ import app.hononeko.miru.adapter.plex.createPlexHttpClient
 import app.hononeko.miru.artwork.ArtworkProxyService
 import app.hononeko.miru.artwork.createAvatarHttpClient
 import app.hononeko.miru.auth.Argon2idPasswordHasher
+import app.hononeko.miru.auth.AuthRateLimiter
 import app.hononeko.miru.auth.AuthService
 import app.hononeko.miru.auth.EmailMediaUserLinker
 import app.hononeko.miru.auth.oidc.OidcAuthService
@@ -506,6 +507,7 @@ fun Application.miruModule(
     mediaDetailsService: MediaDetailsService? = null,
     tautulliImporterService: TautulliImporterService? = null,
     plexOAuthService: PlexOAuthService? = null,
+    authRateLimiter: AuthRateLimiter = AuthRateLimiter(config.auth.rateLimit),
 ) {
     if (realtime != null) {
         monitor.subscribe(ApplicationStarted) {
@@ -546,6 +548,8 @@ fun Application.miruModule(
                 authService = authService,
                 authMode = config.auth.mode,
                 cookieSecureMode = config.auth.cookieSecure,
+                authRateLimiter = authRateLimiter,
+                trustProxyHeaders = config.server.trustProxyHeaders,
                 oidcAuthService = oidcAuthService,
             )
             if (plexOAuthService != null) {

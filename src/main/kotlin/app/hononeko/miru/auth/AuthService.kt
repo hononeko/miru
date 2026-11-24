@@ -19,8 +19,12 @@ import app.hononeko.miru.persistence.repository.UserRepository
 import arrow.core.Either
 import arrow.core.raise.either
 import arrow.core.raise.ensure
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import java.util.UUID
 
@@ -69,9 +73,15 @@ class AuthService(
     private val idGenerator: () -> String = { UUID.randomUUID().toString() },
     private val preferencesRepository: UserPreferencesRepository? = null,
     private val emailLinker: EmailMediaUserLinker? = null,
+    private val maxConcurrentPasswordHashes: Int = DEFAULT_MAX_CONCURRENT_PASSWORD_HASHES,
 ) {
+    init {
+        require(maxConcurrentPasswordHashes >= 1) { "maxConcurrentPasswordHashes must be >= 1" }
+    }
+
     private val logger = LoggerFactory.getLogger(AuthService::class.java)
     private val setupMutex = Mutex()
+    private val passwordHashSemaphore = Semaphore(maxConcurrentPasswordHashes)
     private val dummyPasswordHash: String by lazy {
         passwordHasher.hash("miru-constant-time-dummy-password")
     }
@@ -103,7 +113,7 @@ class AuthService(
                         username = validated.username,
                         usernameNormalized = validated.usernameNormalized,
                         email = null,
-                        passwordHash = passwordHasher.hash(adminPassword),
+                        passwordHash = hashPassword(adminPassword),
                         role = MiruRole.ADMIN.name,
                         disabled = false,
                         createdAtMs = now,
@@ -165,7 +175,7 @@ class AuthService(
                             username = validated.username,
                             usernameNormalized = validated.usernameNormalized,
                             email = validated.email,
-                            passwordHash = passwordHasher.hash(password),
+                            passwordHash = hashPassword(password),
                             role = MiruRole.ADMIN.name,
                             disabled = false,
                             createdAtMs = now,
@@ -191,11 +201,11 @@ class AuthService(
             val account = accountRepository.findByNormalizedUsername(normalized).bind()
 
             if (account == null || !account.authProvider.equals("LOCAL", ignoreCase = true)) {
-                passwordHasher.verify(password, dummyPasswordHash)
+                verifyPassword(password, dummyPasswordHash)
                 raise(MiruError.Unauthorized("Invalid username or password"))
             }
 
-            val passwordMatches = passwordHasher.verify(password, account.passwordHash)
+            val passwordMatches = verifyPassword(password, account.passwordHash)
             ensure(passwordMatches) {
                 MiruError.Unauthorized("Invalid username or password")
             }
@@ -358,7 +368,7 @@ class AuthService(
                     username = validated.username,
                     usernameNormalized = validated.usernameNormalized,
                     email = validated.email,
-                    passwordHash = passwordHasher.hash(password),
+                    passwordHash = hashPassword(password),
                     role = role.name,
                     disabled = false,
                     createdAtMs = now,
@@ -720,6 +730,23 @@ class AuthService(
             updatedAtMs = null,
         )
 
+    private suspend fun hashPassword(password: String): String =
+        passwordHashSemaphore.withPermit {
+            withContext(Dispatchers.Default) {
+                passwordHasher.hash(password)
+            }
+        }
+
+    private suspend fun verifyPassword(
+        password: String,
+        encodedHash: String,
+    ): Boolean =
+        passwordHashSemaphore.withPermit {
+            withContext(Dispatchers.Default) {
+                passwordHasher.verify(password, encodedHash)
+            }
+        }
+
     private data class ValidatedCredentials(
         val username: String,
         val usernameNormalized: String,
@@ -729,6 +756,7 @@ class AuthService(
     companion object {
         const val MIN_USERNAME_LENGTH = 3
         const val MAX_USERNAME_LENGTH = 64
+        const val DEFAULT_MAX_CONCURRENT_PASSWORD_HASHES = 4
         const val MIN_PASSWORD_LENGTH = PasswordPolicy.MIN_LENGTH
         const val MAX_API_KEY_NAME_LENGTH = 100
         const val MILLIS_PER_DAY = 24L * 60L * 60L * 1000L

@@ -4,6 +4,7 @@ import app.hononeko.miru.MiruJson
 import app.hononeko.miru.config.AppConfig
 import app.hononeko.miru.config.AuthConfig
 import app.hononeko.miru.config.AuthMode
+import app.hononeko.miru.config.AuthRateLimitConfig
 import app.hononeko.miru.config.CookieSecureMode
 import app.hononeko.miru.config.DatabaseConfig
 import app.hononeko.miru.config.PlexConfig
@@ -65,10 +66,15 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.encodeToString
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.math.max
 
 private class TestAuthHarness(
     val tempDir: Path,
@@ -1275,6 +1281,154 @@ class AuthRoutesTest :
                         }
                     hasSecureFlag(login.headers.getAll(HttpHeaders.SetCookie).orEmpty(), SESSION_COOKIE_NAME) shouldBe false
                 }
+            }
+        }
+
+        test("rate limits /api/v1/auth/login (per-IP and per-account) and /api/v1/auth/setup with RFC 7807 429 and Retry-After") {
+            createHarness(adminUsername = "admin", adminPassword = "Admin-strong-password-1").use { harness ->
+                harness.authService.bootstrapAdminIfConfigured().shouldBeRight()
+                val rateConfig =
+                    AuthRateLimitConfig(
+                        enabled = true,
+                        windowSeconds = 60,
+                        loginMaxPerIp = 4,
+                        loginMaxFailuresPerAccount = 2,
+                        setupMaxPerIp = 2,
+                    )
+                val nowMs = AtomicLong(1_000_000L)
+                val limiter = AuthRateLimiter(config = rateConfig, clock = { nowMs.get() })
+                val trustedConfig =
+                    harness.appConfig.copy(
+                        server = harness.appConfig.server.copy(trustProxyHeaders = true),
+                        auth = harness.appConfig.auth.copy(rateLimit = rateConfig),
+                    )
+
+                testApplication {
+                    application {
+                        miruModule(config = trustedConfig, authService = harness.authService, authRateLimiter = limiter)
+                    }
+
+                    // Setup endpoint limited after 2 attempts from same client IP
+                    repeat(2) {
+                        client.post("/api/v1/auth/setup") {
+                            header(HttpHeaders.XForwardedFor, "203.0.113.1")
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(SetupAdminRequest("x", "Valid-password-123")))
+                        }.status shouldBe HttpStatusCode.Conflict
+                    }
+                    val setupLimited =
+                        client.post("/api/v1/auth/setup") {
+                            header(HttpHeaders.XForwardedFor, "203.0.113.1")
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(SetupAdminRequest("x", "Valid-password-123")))
+                        }
+                    setupLimited.status shouldBe HttpStatusCode.TooManyRequests
+                    setupLimited.headers[HttpHeaders.RetryAfter] shouldBe "60"
+                    setupLimited.contentType()?.withoutParameters() shouldBe ContentType.Application.ProblemJson
+
+                    // Account failure limit kicks in across rotating client IPs
+                    client.post("/api/v1/auth/login") {
+                        header(HttpHeaders.XForwardedFor, "203.0.113.10")
+                        contentType(ContentType.Application.Json)
+                        setBody(MiruJson.encodeToString(LoginRequest("admin", "Wrong-password-1")))
+                    }.status shouldBe HttpStatusCode.Unauthorized
+                    client.post("/api/v1/auth/login") {
+                        header(HttpHeaders.XForwardedFor, "203.0.113.11")
+                        contentType(ContentType.Application.Json)
+                        setBody(MiruJson.encodeToString(LoginRequest("ADMIN", "Wrong-password-2")))
+                    }.status shouldBe HttpStatusCode.Unauthorized
+
+                    val acctLimited =
+                        client.post("/api/v1/auth/login") {
+                            header(HttpHeaders.XForwardedFor, "203.0.113.12")
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(LoginRequest("admin", "Admin-strong-password-1")))
+                        }
+                    acctLimited.status shouldBe HttpStatusCode.TooManyRequests
+                    acctLimited.headers[HttpHeaders.RetryAfter] shouldBe "60"
+                    MiruJson.decodeFromString<ProblemDetails>(acctLimited.bodyAsText()).status shouldBe 429
+
+                    // Per-IP limit triggers for repeated attempts against different usernames from same IP
+                    val burstIp = "198.51.100.20"
+                    repeat(4) { idx ->
+                        client.post("/api/v1/auth/login") {
+                            header(HttpHeaders.XForwardedFor, "1.1.1.$idx, $burstIp")
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(LoginRequest("user$idx", "Wrong-password-1")))
+                        }.status shouldBe HttpStatusCode.Unauthorized
+                    }
+                    val ipLimited =
+                        client.post("/api/v1/auth/login") {
+                            header(HttpHeaders.XForwardedFor, "2.2.2.2, $burstIp")
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(LoginRequest("otheruser", "Wrong-password-1")))
+                        }
+                    ipLimited.status shouldBe HttpStatusCode.TooManyRequests
+                    ipLimited.headers[HttpHeaders.RetryAfter] shouldBe "60"
+
+                    // After window advances, account and IP can log in cleanly
+                    nowMs.addAndGet(61_000L)
+                    val recovered =
+                        client.post("/api/v1/auth/login") {
+                            header(HttpHeaders.XForwardedFor, burstIp)
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(LoginRequest("admin", "Admin-strong-password-1")))
+                        }
+                    recovered.status shouldBe HttpStatusCode.OK
+                }
+            }
+        }
+
+        test("AuthService bounds concurrent password hashing operations with a semaphore") {
+            createHarness().use { harness ->
+                val inFlight = AtomicInteger(0)
+                val maxObserved = AtomicInteger(0)
+                val blockingHasher =
+                    object : PasswordHasher {
+                        override fun hash(password: String): String {
+                            val current = inFlight.incrementAndGet()
+                            maxObserved.updateAndGet { prev -> max(prev, current) }
+                            Thread.sleep(25)
+                            inFlight.decrementAndGet()
+                            return harness.hasher.hash(password)
+                        }
+
+                        override fun verify(
+                            password: String,
+                            encodedHash: String,
+                        ): Boolean {
+                            val current = inFlight.incrementAndGet()
+                            maxObserved.updateAndGet { prev -> max(prev, current) }
+                            Thread.sleep(25)
+                            inFlight.decrementAndGet()
+                            return harness.hasher.verify(password, encodedHash)
+                        }
+                    }
+
+                val boundedService =
+                    AuthService(
+                        accountRepository = harness.accountRepo,
+                        sessionRepository = harness.sessionRepo,
+                        apiKeyRepository = harness.apiKeyRepo,
+                        userRepository = harness.userRepo,
+                        passwordHasher = blockingHasher,
+                        authConfig = harness.appConfig.auth,
+                        maxConcurrentPasswordHashes = 2,
+                    )
+
+                boundedService.setupInitialAdmin("admin", "Admin-strong-password-1").shouldBeRight()
+                inFlight.set(0)
+                maxObserved.set(0)
+
+                coroutineScope {
+                    (1..6)
+                        .map {
+                            async {
+                                boundedService.login("admin", "Admin-strong-password-1").shouldBeRight()
+                            }
+                        }.awaitAll()
+                }
+                (maxObserved.get() in 1..2) shouldBe true
             }
         }
     })

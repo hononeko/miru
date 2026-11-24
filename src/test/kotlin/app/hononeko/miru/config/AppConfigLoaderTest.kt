@@ -446,4 +446,60 @@ class AppConfigLoaderTest :
                     .shouldBeLeft()
             invalid.fieldErrors.keys shouldBe setOf("AUTH_COOKIE_SECURE")
         }
+
+        test("loads and validates MIRU_TRUST_PROXY_HEADERS and AUTH_RATE_LIMIT_* settings") {
+            val defaults = AppConfigLoader.load(env = baseSqliteEnv()).shouldBeRight()
+            defaults.server.trustProxyHeaders shouldBe false
+            defaults.auth.rateLimit shouldBe AuthRateLimitConfig()
+
+            val configured =
+                AppConfigLoader
+                    .load(
+                        env =
+                            baseSqliteEnv(
+                                mapOf(
+                                    "MIRU_TRUST_PROXY_HEADERS" to "true",
+                                    "AUTH_RATE_LIMIT_ENABLED" to "false",
+                                    "AUTH_RATE_LIMIT_WINDOW_SECONDS" to "120",
+                                    "AUTH_RATE_LIMIT_LOGIN_MAX_ATTEMPTS" to "30",
+                                    "AUTH_RATE_LIMIT_ACCOUNT_MAX_FAILURES" to "5",
+                                    "AUTH_RATE_LIMIT_SETUP_MAX_ATTEMPTS" to "4",
+                                ),
+                            ),
+                    ).shouldBeRight()
+            configured.server.trustProxyHeaders shouldBe true
+            configured.auth.rateLimit shouldBe
+                AuthRateLimitConfig(
+                    enabled = false,
+                    windowSeconds = 120,
+                    loginMaxPerIp = 30,
+                    loginMaxFailuresPerAccount = 5,
+                    setupMaxPerIp = 4,
+                )
+
+            val invalid =
+                AppConfigLoader
+                    .load(
+                        env =
+                            baseSqliteEnv(
+                                mapOf(
+                                    "MIRU_TRUST_PROXY_HEADERS" to "yes",
+                                    "AUTH_RATE_LIMIT_ENABLED" to "no",
+                                    "AUTH_RATE_LIMIT_WINDOW_SECONDS" to "0",
+                                    "AUTH_RATE_LIMIT_LOGIN_MAX_ATTEMPTS" to "0",
+                                    "AUTH_RATE_LIMIT_ACCOUNT_MAX_FAILURES" to "10001",
+                                    "AUTH_RATE_LIMIT_SETUP_MAX_ATTEMPTS" to "abc",
+                                ),
+                            ),
+                    ).shouldBeLeft()
+            invalid.fieldErrors.keys shouldBe
+                setOf(
+                    "MIRU_TRUST_PROXY_HEADERS",
+                    "AUTH_RATE_LIMIT_ENABLED",
+                    "AUTH_RATE_LIMIT_WINDOW_SECONDS",
+                    "AUTH_RATE_LIMIT_LOGIN_MAX_ATTEMPTS",
+                    "AUTH_RATE_LIMIT_ACCOUNT_MAX_FAILURES",
+                    "AUTH_RATE_LIMIT_SETUP_MAX_ATTEMPTS",
+                )
+        }
     })

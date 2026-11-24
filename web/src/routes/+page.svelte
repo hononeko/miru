@@ -20,6 +20,7 @@
 	import BarChart, { type BarPoint, type BarSegment } from '$components/miru/BarChart.svelte';
 	import ViewingHeatmap from '$components/miru/ViewingHeatmap.svelte';
 	import ClientsCodecsPanel from '$components/miru/ClientsCodecsPanel.svelte';
+	import { latestRequest } from '$lib/latestRequest';
 	import { authStore } from '$stores/auth.svelte';
 	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
@@ -96,7 +97,11 @@
 		preferencesStore.prefs.analyticsMetric
 	);
 
+	const startOverviewRequest = latestRequest();
+	const startHeatmapRequest = latestRequest();
+
 	async function loadOverview(selectedRange: StatsRange, selectedMetric: AnalyticsMetricPreference) {
+		const isLatest = startOverviewRequest();
 		if (authStore.isUnlinkedUser) {
 			overview = null;
 			clientStats = null;
@@ -115,12 +120,14 @@
 					params: { query: { range: selectedRange, metric: selectedMetric } }
 				})
 			]);
+			if (!isLatest()) return;
 			overview = unwrap(overviewRes);
 			clientStats = unwrap(clientsRes);
 		} catch (e) {
+			if (!isLatest()) return;
 			statsError = e instanceof MiruApiError ? e.detail : 'Failed to load overview stats';
 		} finally {
-			loadingStats = false;
+			if (isLatest()) loadingStats = false;
 		}
 	}
 
@@ -128,6 +135,7 @@
 		selectedHeatmapRange: HeatmapRange,
 		selectedMetric: AnalyticsMetricPreference
 	) {
+		const isLatest = startHeatmapRequest();
 		if (authStore.isUnlinkedUser) {
 			heatmap = null;
 			loadingHeatmap = false;
@@ -135,15 +143,16 @@
 		}
 		loadingHeatmap = true;
 		try {
-			heatmap = unwrap(
+			const res = unwrap(
 				await api.GET('/api/v1/stats/heatmap', {
 					params: { query: { range: selectedHeatmapRange, metric: selectedMetric } }
 				})
 			);
+			if (isLatest()) heatmap = res;
 		} catch {
 			// Keep previous heatmap state if overview already reports error
 		} finally {
-			loadingHeatmap = false;
+			if (isLatest()) loadingHeatmap = false;
 		}
 	}
 

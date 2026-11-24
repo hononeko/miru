@@ -36,6 +36,15 @@ export function formatCalendarDate(isoDate: string, dateFormat: DateFormatPrefer
 	return `${parsed.year}-${pad2(parsed.month)}-${pad2(parsed.day)}`;
 }
 
+/** The month and day of an ISO date, in the order of the preferred date layout. */
+export function formatCalendarMonthDay(isoDate: string, dateFormat: DateFormatPreference = 'iso'): string {
+	const parsed = parseIsoCalendarDate(isoDate);
+	if (!parsed) return isoDate;
+	if (dateFormat === 'mdy') return `${MONTH_SHORT[parsed.month - 1]} ${parsed.day}`;
+	if (dateFormat === 'dmy') return `${pad2(parsed.day)}/${pad2(parsed.month)}`;
+	return `${pad2(parsed.month)}-${pad2(parsed.day)}`;
+}
+
 export function getCalendarDateAxisParts(
 	isoDate: string,
 	prevIsoDate?: string | null

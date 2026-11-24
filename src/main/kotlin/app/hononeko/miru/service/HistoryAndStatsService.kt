@@ -30,11 +30,12 @@ import java.time.ZoneOffset
 private const val DEFAULT_PAGE_SIZE = 50
 private const val MAX_PAGE_SIZE = 100
 private const val MILLIS_PER_DAY = 86_400_000L
-private const val DAYS_IN_WEEK = 7
 private const val HOURS_IN_DAY = 24
+private const val DEFAULT_HEATMAP_RANGE = "7d"
 private const val MIN_WRAPPED_YEAR = 1970
 private const val MAX_WRAPPED_YEAR = 2100
 
+private val HEATMAP_RANGE_DAYS = mapOf("7d" to 7, "30d" to 30)
 private val DAY_NAMES = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 private val VALID_MEDIA_TYPES = setOf("movie", "episode", "track", "clip", "live_tv")
 private val VALID_DECISIONS = setOf("direct_play", "direct_stream", "transcode")
@@ -254,18 +255,24 @@ class HistoryAndStatsService(
         metricRaw: String? = null,
     ): Either<MiruError, HeatmapStatsResponse> =
         either {
-            val range = parseRange(rangeRaw, defaultRange = "90d").bind()
+            val (rangeLabel, days) = parseHeatmapRange(rangeRaw).bind()
             val metric = parseMetric(metricRaw).bind()
             val scopedUserIds = resolveScopedStatsUserIds(principal, userId).bind()
 
-            val playMatrix = Array(DAYS_IN_WEEK) { LongArray(HOURS_IN_DAY) }
-            val durationMatrix = Array(DAYS_IN_WEEK) { LongArray(HOURS_IN_DAY) }
+            // Whole UTC days up to and including today, so every row of the grid is a calendar date
+            val today = utcEpochDay(clock())
+            val firstDay = today - (days - 1)
+            val fromMs = firstDay * MILLIS_PER_DAY
+            val toMs = (today + 1) * MILLIS_PER_DAY - 1L
+
+            val playMatrix = Array(days) { LongArray(HOURS_IN_DAY) }
+            val durationMatrix = Array(days) { LongArray(HOURS_IN_DAY) }
             var totalPlays = 0L
             var totalWatchDurationSec = 0L
 
             playbackHistoryRepository
-                .forEachHeatmapSample(userIds = scopedUserIds, fromMs = range.fromMs) { stoppedAtMs, watchedDurationSec ->
-                    val dayIdx = utcDayOfWeekIndex(utcEpochDay(stoppedAtMs))
+                .forEachHeatmapSample(userIds = scopedUserIds, fromMs = fromMs, toMs = toMs) { stoppedAtMs, watchedDurationSec ->
+                    val dayIdx = (utcEpochDay(stoppedAtMs) - firstDay).toInt()
                     val hourIdx = utcHourOfDay(stoppedAtMs)
                     val duration = watchedDurationSec.toLong()
                     playMatrix[dayIdx][hourIdx] += 1L
@@ -274,20 +281,23 @@ class HistoryAndStatsService(
                     totalWatchDurationSec += duration
                 }.bind()
 
-            val cells = ArrayList<HeatmapCellDto>(DAYS_IN_WEEK * HOURS_IN_DAY)
+            val cells = ArrayList<HeatmapCellDto>(days * HOURS_IN_DAY)
             var maxCellPlays = 0L
             var maxCellWatchDurationSec = 0L
             var peakCell: HeatmapCellDto? = null
 
-            for (day in 0 until DAYS_IN_WEEK) {
-                val dayName = DAY_NAMES[day]
+            for (day in 0 until days) {
+                val epochDay = firstDay + day
+                val date = LocalDate.ofEpochDay(epochDay).toString()
+                val dayOfWeek = utcDayOfWeekIndex(epochDay)
                 for (hour in 0 until HOURS_IN_DAY) {
                     val cellPlays = playMatrix[day][hour]
                     val cellDuration = durationMatrix[day][hour]
                     val cell =
                         HeatmapCellDto(
-                            dayOfWeek = day,
-                            dayName = dayName,
+                            date = date,
+                            dayOfWeek = dayOfWeek,
+                            dayName = DAY_NAMES[dayOfWeek],
                             hour = hour,
                             playCount = cellPlays,
                             watchDurationSec = cellDuration,
@@ -306,12 +316,13 @@ class HistoryAndStatsService(
             }
 
             HeatmapStatsResponse(
-                range = range.label,
-                fromMs = range.fromMs,
+                range = rangeLabel,
+                fromMs = fromMs,
                 totalPlays = totalPlays,
                 totalWatchDurationSec = totalWatchDurationSec,
                 maxCellPlays = maxCellPlays,
                 maxCellWatchDurationSec = maxCellWatchDurationSec,
+                peakDate = peakCell?.date,
                 peakDayName = peakCell?.dayName,
                 peakHour = peakCell?.hour,
                 cells = cells,
@@ -560,6 +571,20 @@ class HistoryAndStatsService(
                         )
                 }
             StatsRange(label = normalized, fromMs = fromMs)
+        }
+
+    private fun parseHeatmapRange(rangeRaw: String?): Either<MiruError.ValidationError, Pair<String, Int>> =
+        either {
+            val normalized = rangeRaw?.trim()?.takeIf { it.isNotEmpty() }?.lowercase() ?: DEFAULT_HEATMAP_RANGE
+            val days =
+                HEATMAP_RANGE_DAYS[normalized]
+                    ?: raise(
+                        MiruError.ValidationError(
+                            message = "Invalid heatmap range",
+                            fieldErrors = mapOf("range" to "Must be one of: ${HEATMAP_RANGE_DAYS.keys.joinToString(", ")}"),
+                        ),
+                    )
+            normalized to days
         }
 
     private fun parseMetric(metricRaw: String?): Either<MiruError.ValidationError, AnalyticsMetric> =

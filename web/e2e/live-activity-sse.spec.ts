@@ -137,10 +137,12 @@ test.describe('Live Activity SSE, stream lifecycle, KPI strip & Top Watched rang
 		await expect(kpiSection).toContainText('Direct Play (all)');
 
 		// 6. Viewing Heatmap & Clients/Codecs/Transcode analytics on Live page
-		await expect(page.getByRole('heading', { name: 'Viewing Heatmap (90d)' })).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Viewing Heatmap (7d)' })).toBeVisible();
+		await expect(page.getByTestId('heatmap-day')).toHaveCount(7);
 		const heatmapRangeGroup = page.getByRole('group', { name: 'Heatmap time range' });
-		await heatmapRangeGroup.getByRole('button', { name: '365d' }).click();
-		await expect(page.getByRole('heading', { name: 'Viewing Heatmap (365d)' })).toBeVisible();
+		await heatmapRangeGroup.getByRole('button', { name: '30d' }).click();
+		await expect(page.getByRole('heading', { name: 'Viewing Heatmap (30d)' })).toBeVisible();
+		await expect(page.getByTestId('heatmap-day')).toHaveCount(30);
 		await expect(page.getByRole('heading', { name: 'Top Players & Apps' })).toBeVisible();
 		await expect(page.getByRole('heading', { name: 'Transcode & Remux Reasons' })).toBeVisible();
 	});

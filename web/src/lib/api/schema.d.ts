@@ -803,7 +803,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Retrieve day-of-week by hour-of-day playback activity heatmap */
+        /** Retrieve playback activity per UTC date and hour of day */
         get: operations["getHeatmapStats"];
         put?: never;
         post?: never;
@@ -1604,6 +1604,11 @@ export interface components {
             thumbUrl?: string | null;
         };
         HeatmapCellDto: {
+            /**
+             * Format: date
+             * @description UTC calendar date
+             */
+            date: string;
             dayOfWeek: number;
             dayName: string;
             hour: number;
@@ -1614,7 +1619,7 @@ export interface components {
         };
         HeatmapStatsResponse: {
             /** @enum {string} */
-            range: "7d" | "30d" | "90d" | "365d" | "all";
+            range: "7d" | "30d";
             /** Format: int64 */
             fromMs?: number | null;
             /** Format: int64 */
@@ -1625,8 +1630,11 @@ export interface components {
             maxCellPlays: number;
             /** Format: int64 */
             maxCellWatchDurationSec: number;
+            /** Format: date */
+            peakDate?: string | null;
             peakDayName?: string | null;
             peakHour?: number | null;
+            /** @description Every hour of every UTC date in the range, oldest date first */
             cells: components["schemas"]["HeatmapCellDto"][];
         };
         ClientBreakdownItemDto: {
@@ -4693,7 +4701,7 @@ export interface operations {
     getHeatmapStats: {
         parameters: {
             query?: {
-                range?: "7d" | "30d" | "90d" | "365d" | "all";
+                range?: "7d" | "30d";
                 userId?: string;
                 /** @description Whether peak activity is ranked by number of plays or playback duration */
                 metric?: "plays" | "duration";
@@ -4704,7 +4712,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 7x24 playback heatmap buckets and peak activity slot */
+            /** @description Playback buckets for every hour of every UTC date in the range, and the peak activity slot */
             200: {
                 headers: {
                     [name: string]: unknown;

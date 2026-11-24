@@ -111,7 +111,7 @@ const emptyClients: ClientStatsResponse = {
 };
 
 const emptyHeatmap: HeatmapStatsResponse = {
-	range: '90d',
+	range: '7d',
 	fromMs: 1_700_000_000_000,
 	totalPlays: 24,
 	totalWatchDurationSec: 28_200,
@@ -207,7 +207,7 @@ describe('Live Activity page fixes', () => {
 
 		// Viewing Heatmap sits below Top Players & Apps at the bottom of the page.
 		const playersHeading = screen.getByRole('heading', { name: 'Top Players & Apps' });
-		const heatmapHeading = screen.getByRole('heading', { name: 'Viewing Heatmap (90d)' });
+		const heatmapHeading = screen.getByRole('heading', { name: 'Viewing Heatmap (7d)' });
 		expect(
 			Boolean(playersHeading.compareDocumentPosition(heatmapHeading) & Node.DOCUMENT_POSITION_FOLLOWING)
 		).toBe(true);

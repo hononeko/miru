@@ -219,6 +219,8 @@ data class RewatchedMediaStatDto(
 
 @Serializable
 data class HeatmapCellDto(
+    /** UTC calendar date, ISO-8601. */
+    val date: String,
     val dayOfWeek: Int,
     val dayName: String,
     val hour: Int,
@@ -234,8 +236,10 @@ data class HeatmapStatsResponse(
     val totalWatchDurationSec: Long,
     val maxCellPlays: Long,
     val maxCellWatchDurationSec: Long,
+    val peakDate: String? = null,
     val peakDayName: String? = null,
     val peakHour: Int? = null,
+    /** Every hour of every day in the range, oldest day first. */
     val cells: List<HeatmapCellDto>,
 )
 

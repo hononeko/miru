@@ -127,13 +127,12 @@
 							</div>
 						</div>
 
-						{#if user.isStreaming}
-							<Badge tone="direct-play" dot pulse>LIVE · {user.activeStreamCount}</Badge>
-						{:else if user.isAdmin}
-							<Badge tone="primary">ADMIN</Badge>
-						{:else}
-							<Badge tone="neutral">USER</Badge>
-						{/if}
+						<div class="flex shrink-0 flex-col items-end gap-1">
+							<Badge tone={user.isAdmin ? 'primary' : 'neutral'}>{user.isAdmin ? 'ADMIN' : 'USER'}</Badge>
+							{#if user.isStreaming}
+								<Badge tone="direct-play" dot pulse>LIVE · {user.activeStreamCount}</Badge>
+							{/if}
+						</div>
 					</div>
 
 					<div

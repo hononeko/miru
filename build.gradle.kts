@@ -32,8 +32,6 @@ dependencies {
     implementation(libs.bundles.ktor.client)
 
     // Structured Logging
-    // Upgrade transitive Jackson 3.0.1 from logstash-logback-encoder 9.0 to remediate known HIGH CVEs
-    implementation(platform(libs.jackson.bom))
     implementation(libs.bundles.logging)
 
     // Persistence & Migrations

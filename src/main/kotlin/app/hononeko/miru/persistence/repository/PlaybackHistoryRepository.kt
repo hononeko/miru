@@ -4,11 +4,13 @@ import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.persistence.DatabaseHandle
 import app.hononeko.miru.persistence.escapeLikePattern
 import app.hononeko.miru.persistence.exposedQuery
+import app.hononeko.miru.persistence.model.ClientStatsRow
 import app.hononeko.miru.persistence.model.HistoryFilter
 import app.hononeko.miru.persistence.model.HistoryPage
 import app.hononeko.miru.persistence.model.HistorySortDirection
 import app.hononeko.miru.persistence.model.HistorySortField
 import app.hononeko.miru.persistence.model.MediaPlaySummary
+import app.hononeko.miru.persistence.model.OverviewStatsRow
 import app.hononeko.miru.persistence.model.PlaybackHistoryRecord
 import app.hononeko.miru.persistence.model.PlaybackHistoryStatsRow
 import app.hononeko.miru.persistence.model.UserPlaybackSummary
@@ -41,6 +43,7 @@ import org.jetbrains.exposed.v1.jdbc.update
 import kotlin.math.roundToLong
 
 private const val IMPORT_KEY_QUERY_CHUNK_SIZE = 500
+private const val STATS_STREAM_FETCH_SIZE = 500
 private const val COMPLETION_ROUNDING_SCALE = 100.0
 
 interface PlaybackHistoryRepository {
@@ -93,6 +96,86 @@ interface PlaybackHistoryRepository {
         fromMs: Long? = null,
         toMs: Long? = null,
     ): Either<MiruError.PersistenceError, List<PlaybackHistoryStatsRow>>
+
+    suspend fun forEachStatsRow(
+        serverId: String? = null,
+        userIds: Set<String>? = null,
+        fromMs: Long? = null,
+        toMs: Long? = null,
+        onRow: (PlaybackHistoryStatsRow) -> Unit,
+    ): Either<MiruError.PersistenceError, Unit> =
+        listForStats(serverId = serverId, userIds = userIds, fromMs = fromMs, toMs = toMs).map { rows ->
+            rows.forEach(onRow)
+        }
+
+    suspend fun forEachOverviewStatsRow(
+        serverId: String? = null,
+        userIds: Set<String>? = null,
+        fromMs: Long? = null,
+        toMs: Long? = null,
+        onRow: (OverviewStatsRow) -> Unit,
+    ): Either<MiruError.PersistenceError, Unit> =
+        listForStats(serverId = serverId, userIds = userIds, fromMs = fromMs, toMs = toMs).map { rows ->
+            for (row in rows) {
+                onRow(
+                    OverviewStatsRow(
+                        userId = row.userId,
+                        mediaType = row.mediaType,
+                        ratingKey = row.ratingKey,
+                        title = row.title,
+                        grandparentTitle = row.grandparentTitle,
+                        thumbPath = row.thumbPath,
+                        watchedDurationSec = row.watchedDurationSec,
+                        streamDecision = row.streamDecision,
+                        hwTranscode = row.hwTranscode,
+                        stoppedAtMs = row.stoppedAtMs,
+                    ),
+                )
+            }
+        }
+
+    suspend fun forEachClientStatsRow(
+        serverId: String? = null,
+        userIds: Set<String>? = null,
+        fromMs: Long? = null,
+        toMs: Long? = null,
+        onRow: (ClientStatsRow) -> Unit,
+    ): Either<MiruError.PersistenceError, Unit> =
+        listForStats(serverId = serverId, userIds = userIds, fromMs = fromMs, toMs = toMs).map { rows ->
+            for (row in rows) {
+                onRow(
+                    ClientStatsRow(
+                        watchedDurationSec = row.watchedDurationSec,
+                        streamDecision = row.streamDecision,
+                        videoDecision = row.videoDecision,
+                        audioDecision = row.audioDecision,
+                        subtitleDecision = row.subtitleDecision,
+                        videoCodec = row.videoCodec,
+                        audioCodec = row.audioCodec,
+                        transcodeVideoCodec = row.transcodeVideoCodec,
+                        transcodeAudioCodec = row.transcodeAudioCodec,
+                        container = row.container,
+                        transcodeContainer = row.transcodeContainer,
+                        playerProduct = row.playerProduct,
+                        playerName = row.playerName,
+                        playerPlatform = row.playerPlatform,
+                    ),
+                )
+            }
+        }
+
+    suspend fun forEachHeatmapSample(
+        serverId: String? = null,
+        userIds: Set<String>? = null,
+        fromMs: Long? = null,
+        toMs: Long? = null,
+        onRow: (stoppedAtMs: Long, watchedDurationSec: Int) -> Unit,
+    ): Either<MiruError.PersistenceError, Unit> =
+        listForStats(serverId = serverId, userIds = userIds, fromMs = fromMs, toMs = toMs).map { rows ->
+            for (row in rows) {
+                onRow(row.stoppedAtMs, row.watchedDurationSec)
+            }
+        }
 }
 
 class ExposedPlaybackHistoryRepository(
@@ -270,24 +353,30 @@ class ExposedPlaybackHistoryRepository(
         fromMs: Long?,
         toMs: Long?,
     ): Either<MiruError.PersistenceError, List<PlaybackHistoryStatsRow>> {
+        val rows = mutableListOf<PlaybackHistoryStatsRow>()
+        return forEachStatsRow(
+            serverId = serverId,
+            userIds = userIds,
+            fromMs = fromMs,
+            toMs = toMs,
+        ) { row ->
+            rows += row
+        }.map { rows }
+    }
+
+    override suspend fun forEachStatsRow(
+        serverId: String?,
+        userIds: Set<String>?,
+        fromMs: Long?,
+        toMs: Long?,
+        onRow: (PlaybackHistoryStatsRow) -> Unit,
+    ): Either<MiruError.PersistenceError, Unit> {
         if (userIds != null && userIds.isEmpty()) {
-            return Either.Right(emptyList())
+            return Either.Right(Unit)
         }
 
-        return database.exposedQuery("playback_history_list_for_stats") {
-            val predicates = mutableListOf<Op<Boolean>>()
-            serverId?.let { predicates += PlaybackHistoryTable.serverId eq it }
-            userIds?.let { predicates += PlaybackHistoryTable.userId inList it }
-            fromMs?.let { predicates += PlaybackHistoryTable.stoppedAtMs greaterEq it }
-            toMs?.let { predicates += PlaybackHistoryTable.stoppedAtMs lessEq it }
-
-            val condition =
-                if (predicates.isEmpty()) {
-                    Op.TRUE
-                } else {
-                    predicates.reduce { acc, next -> acc and next }
-                }
-
+        return database.exposedQuery("playback_history_stream_stats") {
+            val condition = buildStatsCondition(serverId, userIds, fromMs, toMs)
             PlaybackHistoryTable
                 .select(
                     PlaybackHistoryTable.userId,
@@ -320,7 +409,118 @@ class ExposedPlaybackHistoryRepository(
                     PlaybackHistoryTable.subtitleDecision,
                 ).where { condition }
                 .orderBy(PlaybackHistoryTable.stoppedAtMs to SortOrder.ASC, PlaybackHistoryTable.id to SortOrder.ASC)
-                .map { it.toPlaybackHistoryStatsRow() }
+                .fetchSize(STATS_STREAM_FETCH_SIZE)
+                .forEach { row -> onRow(row.toPlaybackHistoryStatsRow()) }
+        }
+    }
+
+    override suspend fun forEachOverviewStatsRow(
+        serverId: String?,
+        userIds: Set<String>?,
+        fromMs: Long?,
+        toMs: Long?,
+        onRow: (OverviewStatsRow) -> Unit,
+    ): Either<MiruError.PersistenceError, Unit> {
+        if (userIds != null && userIds.isEmpty()) {
+            return Either.Right(Unit)
+        }
+
+        return database.exposedQuery("playback_history_stream_overview_stats") {
+            val condition = buildStatsCondition(serverId, userIds, fromMs, toMs)
+            PlaybackHistoryTable
+                .select(
+                    PlaybackHistoryTable.userId,
+                    PlaybackHistoryTable.mediaType,
+                    PlaybackHistoryTable.ratingKey,
+                    PlaybackHistoryTable.title,
+                    PlaybackHistoryTable.grandparentTitle,
+                    PlaybackHistoryTable.thumbPath,
+                    PlaybackHistoryTable.watchedDurationSec,
+                    PlaybackHistoryTable.streamDecision,
+                    PlaybackHistoryTable.hwTranscode,
+                    PlaybackHistoryTable.stoppedAtMs,
+                ).where { condition }
+                .orderBy(PlaybackHistoryTable.stoppedAtMs to SortOrder.ASC, PlaybackHistoryTable.id to SortOrder.ASC)
+                .fetchSize(STATS_STREAM_FETCH_SIZE)
+                .forEach { row -> onRow(row.toOverviewStatsRow()) }
+        }
+    }
+
+    override suspend fun forEachClientStatsRow(
+        serverId: String?,
+        userIds: Set<String>?,
+        fromMs: Long?,
+        toMs: Long?,
+        onRow: (ClientStatsRow) -> Unit,
+    ): Either<MiruError.PersistenceError, Unit> {
+        if (userIds != null && userIds.isEmpty()) {
+            return Either.Right(Unit)
+        }
+
+        return database.exposedQuery("playback_history_stream_client_stats") {
+            val condition = buildStatsCondition(serverId, userIds, fromMs, toMs)
+            PlaybackHistoryTable
+                .select(
+                    PlaybackHistoryTable.watchedDurationSec,
+                    PlaybackHistoryTable.streamDecision,
+                    PlaybackHistoryTable.videoDecision,
+                    PlaybackHistoryTable.audioDecision,
+                    PlaybackHistoryTable.subtitleDecision,
+                    PlaybackHistoryTable.videoCodec,
+                    PlaybackHistoryTable.audioCodec,
+                    PlaybackHistoryTable.transcodeVideoCodec,
+                    PlaybackHistoryTable.transcodeAudioCodec,
+                    PlaybackHistoryTable.container,
+                    PlaybackHistoryTable.transcodeContainer,
+                    PlaybackHistoryTable.playerProduct,
+                    PlaybackHistoryTable.playerName,
+                    PlaybackHistoryTable.playerPlatform,
+                ).where { condition }
+                .fetchSize(STATS_STREAM_FETCH_SIZE)
+                .forEach { row -> onRow(row.toClientStatsRow()) }
+        }
+    }
+
+    override suspend fun forEachHeatmapSample(
+        serverId: String?,
+        userIds: Set<String>?,
+        fromMs: Long?,
+        toMs: Long?,
+        onRow: (stoppedAtMs: Long, watchedDurationSec: Int) -> Unit,
+    ): Either<MiruError.PersistenceError, Unit> {
+        if (userIds != null && userIds.isEmpty()) {
+            return Either.Right(Unit)
+        }
+
+        return database.exposedQuery("playback_history_stream_heatmap_stats") {
+            val condition = buildStatsCondition(serverId, userIds, fromMs, toMs)
+            PlaybackHistoryTable
+                .select(
+                    PlaybackHistoryTable.stoppedAtMs,
+                    PlaybackHistoryTable.watchedDurationSec,
+                ).where { condition }
+                .fetchSize(STATS_STREAM_FETCH_SIZE)
+                .forEach { row ->
+                    onRow(row[PlaybackHistoryTable.stoppedAtMs], row[PlaybackHistoryTable.watchedDurationSec])
+                }
+        }
+    }
+
+    private fun buildStatsCondition(
+        serverId: String?,
+        userIds: Set<String>?,
+        fromMs: Long?,
+        toMs: Long?,
+    ): Op<Boolean> {
+        val predicates = mutableListOf<Op<Boolean>>()
+        serverId?.let { predicates += PlaybackHistoryTable.serverId eq it }
+        userIds?.let { predicates += PlaybackHistoryTable.userId inList it }
+        fromMs?.let { predicates += PlaybackHistoryTable.stoppedAtMs greaterEq it }
+        toMs?.let { predicates += PlaybackHistoryTable.stoppedAtMs lessEq it }
+        return if (predicates.isEmpty()) {
+            Op.TRUE
+        } else {
+            predicates.reduce { acc, next -> acc and next }
         }
     }
 
@@ -407,60 +607,67 @@ class ExposedPlaybackHistoryRepository(
                     baseCondition
                 }
 
-            val rows =
-                PlaybackHistoryTable
-                    .select(
-                        PlaybackHistoryTable.userId,
-                        PlaybackHistoryTable.watchedDurationSec,
-                        PlaybackHistoryTable.completionPercent,
-                        PlaybackHistoryTable.streamDecision,
-                        PlaybackHistoryTable.stoppedAtMs,
-                    ).where { condition }
-                    .orderBy(PlaybackHistoryTable.stoppedAtMs to SortOrder.DESC, PlaybackHistoryTable.id to SortOrder.ASC)
-                    .toList()
-
-            if (rows.isEmpty()) {
-                return@exposedQuery MediaPlaySummary.EMPTY
-            }
-
             val uniqueUsers = hashSetOf<String>()
+            var totalPlays = 0L
             var totalWatchDurationSec = 0L
             var completionSum = 0.0
             var directPlayCount = 0L
             var directStreamCount = 0L
             var transcodeCount = 0L
+            var lastUserId: String? = null
+            var lastWatchedAtMs: Long? = null
 
-            for (row in rows) {
-                uniqueUsers += row[PlaybackHistoryTable.userId]
-                totalWatchDurationSec += row[PlaybackHistoryTable.watchedDurationSec].toLong()
-                completionSum += row[PlaybackHistoryTable.completionPercent]
-                when (row[PlaybackHistoryTable.streamDecision].lowercase()) {
-                    "direct_play" -> directPlayCount++
-                    "direct_stream" -> directStreamCount++
-                    "transcode" -> transcodeCount++
+            PlaybackHistoryTable
+                .select(
+                    PlaybackHistoryTable.userId,
+                    PlaybackHistoryTable.watchedDurationSec,
+                    PlaybackHistoryTable.completionPercent,
+                    PlaybackHistoryTable.streamDecision,
+                    PlaybackHistoryTable.stoppedAtMs,
+                ).where { condition }
+                .orderBy(PlaybackHistoryTable.stoppedAtMs to SortOrder.DESC, PlaybackHistoryTable.id to SortOrder.ASC)
+                .fetchSize(STATS_STREAM_FETCH_SIZE)
+                .forEach { row ->
+                    val uid = row[PlaybackHistoryTable.userId]
+                    if (totalPlays == 0L) {
+                        lastUserId = uid
+                        lastWatchedAtMs = row[PlaybackHistoryTable.stoppedAtMs]
+                    }
+                    totalPlays++
+                    uniqueUsers += uid
+                    totalWatchDurationSec += row[PlaybackHistoryTable.watchedDurationSec].toLong()
+                    completionSum += row[PlaybackHistoryTable.completionPercent]
+                    when (row[PlaybackHistoryTable.streamDecision].lowercase()) {
+                        "direct_play" -> directPlayCount++
+                        "direct_stream" -> directStreamCount++
+                        "transcode" -> transcodeCount++
+                    }
                 }
+
+            if (totalPlays == 0L) {
+                return@exposedQuery MediaPlaySummary.EMPTY
             }
 
-            val latest = rows.first()
-            val lastUserId = latest[PlaybackHistoryTable.userId]
-            val lastWatchedAtMs = latest[PlaybackHistoryTable.stoppedAtMs]
+            val resolvedLastUserId = lastUserId
             val lastWatchedUsername =
-                UsersTable
-                    .select(UsersTable.displayName, UsersTable.username)
-                    .where { UsersTable.id eq lastUserId }
-                    .singleOrNull()
-                    ?.let { userRow ->
-                        userRow[UsersTable.displayName]?.takeIf { it.isNotBlank() } ?: userRow[UsersTable.username]
-                    }
+                resolvedLastUserId?.let { uid ->
+                    UsersTable
+                        .select(UsersTable.displayName, UsersTable.username)
+                        .where { UsersTable.id eq uid }
+                        .singleOrNull()
+                        ?.let { userRow ->
+                            userRow[UsersTable.displayName]?.takeIf { it.isNotBlank() } ?: userRow[UsersTable.username]
+                        }
+                }
 
             val avgCompletionPercent =
-                ((completionSum / rows.size) * COMPLETION_ROUNDING_SCALE).roundToLong() / COMPLETION_ROUNDING_SCALE
+                ((completionSum / totalPlays) * COMPLETION_ROUNDING_SCALE).roundToLong() / COMPLETION_ROUNDING_SCALE
 
             MediaPlaySummary(
-                totalPlays = rows.size.toLong(),
+                totalPlays = totalPlays,
                 uniqueUsers = uniqueUsers.size,
                 lastWatchedAtMs = lastWatchedAtMs,
-                lastWatchedUserId = lastUserId,
+                lastWatchedUserId = resolvedLastUserId,
                 lastWatchedUsername = lastWatchedUsername,
                 avgCompletionPercent = avgCompletionPercent,
                 directPlayCount = directPlayCount,

@@ -12,7 +12,6 @@ import app.hononeko.miru.persistence.repository.PlaybackHistoryRepository
 import app.hononeko.miru.persistence.repository.UserRepository
 import app.hononeko.miru.session.moreConverted
 import arrow.core.Either
-import arrow.core.raise.Raise
 import arrow.core.raise.either
 import org.slf4j.LoggerFactory
 import java.nio.file.Path
@@ -25,7 +24,8 @@ private const val DEFAULT_IMPORT_SERVER_MACHINE_ID = "tautulli-import"
 private const val DRY_RUN_SERVER_ID = "dry-run-server"
 
 /**
- * Imports historical users and playback sessions from a Tautulli SQLite database into Miru.
+ * Imports historical users and playback sessions from a Tautulli SQLite database into Miru using
+ * bounded-memory streaming batches.
  */
 class TautulliImporterService(
     private val mediaServerRepository: MediaServerRepository,
@@ -43,72 +43,142 @@ class TautulliImporterService(
         options: TautulliImportOptions = TautulliImportOptions(watchedThresholdPercent = defaultWatchedThresholdPercent),
     ): Either<MiruError, TautulliImportReport> =
         either {
-            val readResult = TautulliSqliteReader.read(file).bind()
-            val warnings = readResult.warnings.toMutableList()
-            var malformedRows = readResult.malformedRows
-            val nowMs = clock()
-            val thresholdPercent = options.watchedThresholdPercent.coerceIn(1, 100)
-            val batchSize = options.batchSize.coerceAtLeast(1)
+            TautulliSqliteReader.open(file).bind().use { session ->
+                val warnings = mutableListOf<String>()
+                val nowMs = clock()
+                val thresholdPercent = options.watchedThresholdPercent.coerceIn(1, 100)
+                val batchSize = options.batchSize.coerceAtLeast(1)
 
-            val serverId = resolveServerId(options, nowMs).bind()
+                val (rawUsers, userMalformed) = session.readUsers(warnings).bind()
+                var malformedRows = userMalformed
 
-            val validatedRows = mutableListOf<ValidatedHistoryRow>()
-            for (row in readResult.history) {
-                val validated = validateHistoryRow(row, warnings)
-                if (validated == null) {
-                    malformedRows++
-                } else {
-                    validatedRows += validated
+                val serverId = resolveServerId(options, nowMs).bind()
+
+                val historyUsers = collectHistoryUserHints(session).bind()
+                val discoveredUsers = collectUsers(rawUsers, historyUsers, warnings)
+                val (userIdByExternalId, usersUpserted) =
+                    upsertOrMapUsers(
+                        dryRun = options.dryRun,
+                        serverId = serverId,
+                        users = discoveredUsers.values.toList(),
+                        nowMs = nowMs,
+                    ).bind()
+
+                val batchState = BatchImportState(batchSize = batchSize)
+                val currentGroup = mutableListOf<ValidatedHistoryRow>()
+                var currentGroupKey: String? = null
+
+                val streamSummary =
+                    session
+                        .streamHistoryGrouped(warnings) { rawRow ->
+                            either {
+                                val validated = validateHistoryRow(rawRow, warnings)
+                                if (validated == null) {
+                                    malformedRows++
+                                } else {
+                                    if (currentGroupKey != null && validated.importKey != currentGroupKey) {
+                                        val record =
+                                            mergeGroup(
+                                                group = currentGroup,
+                                                serverId = serverId,
+                                                userIdByExternalId = userIdByExternalId,
+                                                watchedThresholdPercent = thresholdPercent,
+                                            )
+                                        currentGroup.clear()
+                                        batchState.buffer += record
+                                        if (batchState.buffer.size >= batchSize) {
+                                            flushBatch(options.dryRun, batchState).bind()
+                                        }
+                                    }
+                                    currentGroupKey = validated.importKey
+                                    currentGroup += validated
+                                }
+                            }
+                        }.bind()
+
+                malformedRows += streamSummary.malformedRows
+
+                if (currentGroup.isNotEmpty()) {
+                    batchState.buffer +=
+                        mergeGroup(
+                            group = currentGroup,
+                            serverId = serverId,
+                            userIdByExternalId = userIdByExternalId,
+                            watchedThresholdPercent = thresholdPercent,
+                        )
+                    currentGroup.clear()
                 }
-            }
+                if (batchState.buffer.isNotEmpty()) {
+                    flushBatch(options.dryRun, batchState).bind()
+                }
 
-            val discoveredUsers = collectUsers(readResult.users, validatedRows, warnings)
-            val (userIdByExternalId, usersUpserted) =
-                upsertOrMapUsers(
-                    dryRun = options.dryRun,
-                    serverId = serverId,
-                    users = discoveredUsers.values.toList(),
-                    nowMs = nowMs,
-                ).bind()
-
-            val mergedRecords =
-                mergeGroupedHistoryRows(
-                    rows = validatedRows,
-                    serverId = serverId,
-                    userIdByExternalId = userIdByExternalId,
-                    watchedThresholdPercent = thresholdPercent,
+                logger.info(
+                    "Tautulli import completed (dryRun={}, serverId={}, users={}, rowsRead={}, imported={}, skipped={}, malformed={})",
+                    options.dryRun,
+                    serverId,
+                    discoveredUsers.size,
+                    streamSummary.historyRowsRead,
+                    batchState.importedCount,
+                    batchState.skippedDuplicateCount,
+                    malformedRows,
                 )
 
-            val (importedCount, skippedDuplicateCount) =
-                processBatches(
+                TautulliImportReport(
                     dryRun = options.dryRun,
-                    records = mergedRecords,
-                    batchSize = batchSize,
-                ).bind()
+                    serverId = serverId,
+                    usersDiscovered = discoveredUsers.size,
+                    usersUpserted = usersUpserted,
+                    historyRowsRead = streamSummary.historyRowsRead,
+                    historyImported = batchState.importedCount,
+                    historySkippedDuplicate = batchState.skippedDuplicateCount,
+                    malformedRows = malformedRows,
+                    warnings = warnings.take(MAX_TAUTULLI_IMPORT_WARNINGS),
+                )
+            }
+        }
 
-            logger.info(
-                "Tautulli import completed (dryRun={}, serverId={}, users={}, rowsRead={}, imported={}, skipped={}, malformed={})",
-                options.dryRun,
-                serverId,
-                discoveredUsers.size,
-                readResult.historyRowsRead,
-                importedCount,
-                skippedDuplicateCount,
-                malformedRows,
-            )
+    private fun collectHistoryUserHints(
+        session: TautulliSqliteSession,
+    ): Either<MiruError.ValidationError, HistoryUserHints> {
+        val lastSeenByExternalId = linkedMapOf<String, Long>()
+        val fallbackNameByExternalId = linkedMapOf<String, String?>()
 
-            TautulliImportReport(
-                dryRun = options.dryRun,
-                serverId = serverId,
-                usersDiscovered = discoveredUsers.size,
-                usersUpserted = usersUpserted,
-                historyRowsRead = readResult.historyRowsRead,
-                historyImported = importedCount,
-                historySkippedDuplicate = skippedDuplicateCount,
-                malformedRows = malformedRows,
-                warnings = warnings.take(MAX_TAUTULLI_IMPORT_WARNINGS),
+        return session.scanHistoryUsers { hint ->
+            val ratingKey = hint.ratingKey?.trim()?.takeIf { it.isNotEmpty() }
+            val title = hint.title?.trim()?.takeIf { it.isNotEmpty() } ?: hint.fullTitle?.trim()?.takeIf { it.isNotEmpty() }
+            if (ratingKey == null || title == null) return@scanHistoryUsers
+
+            val startedAtMs = normalizeEpochMs(hint.started)
+            if (startedAtMs <= 0L) return@scanHistoryUsers
+
+            val rawStopped = hint.stopped
+            val stoppedAtMs =
+                if (rawStopped == null || rawStopped <= 0L) {
+                    startedAtMs
+                } else {
+                    normalizeEpochMs(rawStopped)
+                }
+            if (stoppedAtMs < startedAtMs) return@scanHistoryUsers
+
+            val externalUserId =
+                hint.userId?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: hint.user?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: "unknown"
+
+            val prev = lastSeenByExternalId[externalUserId]
+            if (prev == null || stoppedAtMs > prev) {
+                lastSeenByExternalId[externalUserId] = stoppedAtMs
+            }
+            if (externalUserId !in fallbackNameByExternalId) {
+                fallbackNameByExternalId[externalUserId] = hint.user?.trim()?.takeIf { it.isNotEmpty() }
+            }
+        }.map {
+            HistoryUserHints(
+                lastSeenByExternalId = lastSeenByExternalId,
+                fallbackNameByExternalId = fallbackNameByExternalId,
             )
         }
+    }
 
     private suspend fun resolveServerId(
         options: TautulliImportOptions,
@@ -150,6 +220,20 @@ class TautulliImporterService(
                     ).bind()
             created.id
         }
+
+    private data class HistoryUserHints(
+        val lastSeenByExternalId: Map<String, Long>,
+        val fallbackNameByExternalId: Map<String, String?>,
+    )
+
+    private class BatchImportState(
+        batchSize: Int,
+    ) {
+        val buffer = ArrayList<PlaybackHistoryRecord>(batchSize)
+        var batchIndex: Int = 0
+        var importedCount: Int = 0
+        var skippedDuplicateCount: Int = 0
+    }
 
     private data class DiscoveredUser(
         val externalUserId: String,
@@ -229,17 +313,10 @@ class TautulliImporterService(
 
     private fun collectUsers(
         rawUsers: List<TautulliUserRow>,
-        historyRows: List<ValidatedHistoryRow>,
+        historyUsers: HistoryUserHints,
         warnings: MutableList<String>,
     ): Map<String, DiscoveredUser> {
-        val lastSeenByExternalId = linkedMapOf<String, Long>()
-        for (history in historyRows) {
-            val prev = lastSeenByExternalId[history.externalUserId]
-            if (prev == null || history.stoppedAtMs > prev) {
-                lastSeenByExternalId[history.externalUserId] = history.stoppedAtMs
-            }
-        }
-
+        val lastSeenByExternalId = historyUsers.lastSeenByExternalId
         val discovered = linkedMapOf<String, DiscoveredUser>()
         for (user in rawUsers) {
             val externalId =
@@ -270,18 +347,18 @@ class TautulliImporterService(
                 )
         }
 
-        for (history in historyRows) {
-            if (history.externalUserId !in discovered) {
-                val fallbackName = history.row.user?.trim()?.takeIf { it.isNotEmpty() } ?: "user-${history.externalUserId}"
-                discovered[history.externalUserId] =
+        for ((externalUserId, fallbackUser) in historyUsers.fallbackNameByExternalId) {
+            if (externalUserId !in discovered) {
+                val fallbackName = fallbackUser ?: "user-$externalUserId"
+                discovered[externalUserId] =
                     DiscoveredUser(
-                        externalUserId = history.externalUserId,
+                        externalUserId = externalUserId,
                         username = fallbackName,
                         displayName = fallbackName,
                         email = null,
                         thumbUrl = null,
                         isAdmin = false,
-                        lastSeenAtMs = lastSeenByExternalId[history.externalUserId],
+                        lastSeenAtMs = lastSeenByExternalId[externalUserId],
                     )
             }
         }
@@ -331,83 +408,108 @@ class TautulliImporterService(
             idMap to upserted
         }
 
-    private fun mergeGroupedHistoryRows(
-        rows: List<ValidatedHistoryRow>,
+    private fun mergeGroup(
+        group: List<ValidatedHistoryRow>,
         serverId: String,
         userIdByExternalId: Map<String, String>,
         watchedThresholdPercent: Int,
-    ): List<PlaybackHistoryRecord> {
-        val grouped = linkedMapOf<String, MutableList<ValidatedHistoryRow>>()
-        for (row in rows) {
-            grouped.getOrPut(row.importKey) { mutableListOf() }.add(row)
+    ): PlaybackHistoryRecord {
+        val latest = group.last()
+        val startedAtMs = group.minOf { it.startedAtMs }
+        val stoppedAtMs = group.maxOf { it.stoppedAtMs }
+        val pausedDurationSec = group.sumOf { it.pausedDurationSec.toLong() }.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        val viewOffsetMs = group.maxOf { it.viewOffsetMs }
+        val durationMs = latest.durationMs.takeIf { it > 0L } ?: group.lastOrNull { it.durationMs > 0L }?.durationMs ?: 0L
+
+        val watchedDurationSec =
+            group
+                .sumOf { item ->
+                    (((item.stoppedAtMs - item.startedAtMs) / MILLIS_PER_SECOND) - item.pausedDurationSec.toLong())
+                        .coerceAtLeast(0L)
+                }.coerceAtMost(Int.MAX_VALUE.toLong())
+                .toInt()
+        val completionPercent =
+            if (durationMs > 0L) {
+                ((viewOffsetMs.toDouble() / durationMs.toDouble()) * PERCENT_SCALE).coerceIn(0.0, PERCENT_SCALE)
+            } else {
+                0.0
+            }
+        val isWatched = completionPercent >= watchedThresholdPercent.toDouble()
+
+        val raw = latest.row
+        var streamTech = mapStreamTech(group.first().row)
+        for (idx in 1 until group.size) {
+            streamTech = moreConverted(streamTech, mapStreamTech(group[idx].row))
         }
+        val miruUserId = userIdByExternalId.getValue(latest.externalUserId)
 
-        return grouped.values.map { group ->
-            val latest = group.last()
-            val startedAtMs = group.minOf { it.startedAtMs }
-            val stoppedAtMs = group.maxOf { it.stoppedAtMs }
-            val pausedDurationSec = group.sumOf { it.pausedDurationSec.toLong() }.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-            val viewOffsetMs = group.maxOf { it.viewOffsetMs }
-            val durationMs = latest.durationMs.takeIf { it > 0L } ?: group.lastOrNull { it.durationMs > 0L }?.durationMs ?: 0L
-
-            val watchedDurationSec =
-                group
-                    .sumOf { item ->
-                        (((item.stoppedAtMs - item.startedAtMs) / MILLIS_PER_SECOND) - item.pausedDurationSec.toLong())
-                            .coerceAtLeast(0L)
-                    }.coerceAtMost(Int.MAX_VALUE.toLong())
-                    .toInt()
-            val completionPercent =
-                if (durationMs > 0L) {
-                    ((viewOffsetMs.toDouble() / durationMs.toDouble()) * PERCENT_SCALE).coerceIn(0.0, PERCENT_SCALE)
-                } else {
-                    0.0
-                }
-            val isWatched = completionPercent >= watchedThresholdPercent.toDouble()
-
-            val raw = latest.row
-            val streamTech = group.map { mapStreamTech(it.row) }.reduce(::moreConverted)
-            val miruUserId = userIdByExternalId.getValue(latest.externalUserId)
-
-            PlaybackHistoryRecord(
-                id = idGenerator(),
-                serverId = serverId,
-                userId = miruUserId,
-                externalImportKey = latest.importKey,
-                media =
-                    MediaMetadataRecord(
-                        ratingKey = latest.ratingKey,
-                        mediaType = raw.mediaType?.trim()?.lowercase()?.takeIf { it.isNotEmpty() } ?: "unknown",
-                        title = latest.title,
-                        parentTitle = raw.parentTitle,
-                        grandparentTitle = raw.grandparentTitle,
-                        parentIndex = raw.parentMediaIndex,
-                        mediaIndex = raw.mediaIndex,
-                        year = raw.year,
-                        thumbPath = raw.thumb,
-                        librarySectionKey = raw.sectionId,
-                        durationMs = durationMs,
-                    ),
-                viewOffsetMs = viewOffsetMs,
-                watchedDurationSec = watchedDurationSec,
-                pausedDurationSec = pausedDurationSec,
-                completionPercent = completionPercent,
-                isWatched = isWatched,
-                streamTech = streamTech,
-                player =
-                    PlayerRecord(
-                        playerName = raw.player,
-                        playerPlatform = raw.platform,
-                        playerProduct = raw.product,
-                        playerMachineId = raw.machineId,
-                        ipAddress = raw.ipAddress,
-                        location = raw.location?.trim()?.lowercase()?.takeIf { it.isNotEmpty() },
-                    ),
-                startedAtMs = startedAtMs,
-                stoppedAtMs = stoppedAtMs,
-            )
-        }
+        return PlaybackHistoryRecord(
+            id = idGenerator(),
+            serverId = serverId,
+            userId = miruUserId,
+            externalImportKey = latest.importKey,
+            media =
+                MediaMetadataRecord(
+                    ratingKey = latest.ratingKey,
+                    mediaType = raw.mediaType?.trim()?.lowercase()?.takeIf { it.isNotEmpty() } ?: "unknown",
+                    title = latest.title,
+                    parentTitle = raw.parentTitle,
+                    grandparentTitle = raw.grandparentTitle,
+                    parentIndex = raw.parentMediaIndex,
+                    mediaIndex = raw.mediaIndex,
+                    year = raw.year,
+                    thumbPath = raw.thumb,
+                    librarySectionKey = raw.sectionId,
+                    durationMs = durationMs,
+                ),
+            viewOffsetMs = viewOffsetMs,
+            watchedDurationSec = watchedDurationSec,
+            pausedDurationSec = pausedDurationSec,
+            completionPercent = completionPercent,
+            isWatched = isWatched,
+            streamTech = streamTech,
+            player =
+                PlayerRecord(
+                    playerName = raw.player,
+                    playerPlatform = raw.platform,
+                    playerProduct = raw.product,
+                    playerMachineId = raw.machineId,
+                    ipAddress = raw.ipAddress,
+                    location = raw.location?.trim()?.lowercase()?.takeIf { it.isNotEmpty() },
+                ),
+            startedAtMs = startedAtMs,
+            stoppedAtMs = stoppedAtMs,
+        )
     }
+
+    private suspend fun flushBatch(
+        dryRun: Boolean,
+        state: BatchImportState,
+    ): Either<MiruError, Unit> =
+        either {
+            val chunk = state.buffer.toList()
+            state.buffer.clear()
+            state.batchIndex++
+
+            if (dryRun) {
+                val keys = chunk.mapNotNull { it.externalImportKey }.toSet()
+                val existing = playbackHistoryRepository.findExistingImportKeys(keys).bind()
+                val existingCount = chunk.count { it.externalImportKey in existing }
+                state.skippedDuplicateCount += existingCount
+                state.importedCount += (chunk.size - existingCount)
+            } else {
+                val inserted = playbackHistoryRepository.insertBatchIfAbsentByImportKey(chunk).bind()
+                state.importedCount += inserted
+                state.skippedDuplicateCount += (chunk.size - inserted)
+                logger.info(
+                    "Imported Tautulli history batch {} (batchSize={}, inserted={}, skipped={})",
+                    state.batchIndex,
+                    chunk.size,
+                    inserted,
+                    chunk.size - inserted,
+                )
+            }
+        }
 
     private fun mapStreamTech(raw: TautulliHistoryRow): StreamTechRecord {
         val videoDecision = normalizeDecisionOrNull(raw.videoDecision)
@@ -438,40 +540,6 @@ class TautulliImporterService(
     }
 
     private fun knownCodec(raw: String?): String? = raw?.trim()?.takeIf { it.isNotEmpty() && it != "*" }
-
-    private suspend fun processBatches(
-        dryRun: Boolean,
-        records: List<PlaybackHistoryRecord>,
-        batchSize: Int,
-    ): Either<MiruError, Pair<Int, Int>> =
-        either {
-            var imported = 0
-            var skippedDuplicate = 0
-
-            val chunks = records.chunked(batchSize)
-            chunks.forEachIndexed { index, chunk ->
-                if (dryRun) {
-                    val keys = chunk.mapNotNull { it.externalImportKey }.toSet()
-                    val existing = playbackHistoryRepository.findExistingImportKeys(keys).bind()
-                    val existingCount = chunk.count { it.externalImportKey in existing }
-                    skippedDuplicate += existingCount
-                    imported += (chunk.size - existingCount)
-                } else {
-                    val inserted = playbackHistoryRepository.insertBatchIfAbsentByImportKey(chunk).bind()
-                    imported += inserted
-                    skippedDuplicate += (chunk.size - inserted)
-                    logger.info(
-                        "Imported Tautulli history batch {}/{} (batchSize={}, inserted={}, skipped={})",
-                        index + 1,
-                        chunks.size,
-                        chunk.size,
-                        inserted,
-                        chunk.size - inserted,
-                    )
-                }
-            }
-            imported to skippedDuplicate
-        }
 
     private fun normalizeEpochMs(raw: Long?): Long {
         if (raw == null || raw <= 0L) return 0L

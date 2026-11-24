@@ -27,7 +27,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import net.logstash.logback.argument.StructuredArguments.kv
+import app.hononeko.miru.logging.kv
 import org.slf4j.LoggerFactory
 import java.util.UUID
 

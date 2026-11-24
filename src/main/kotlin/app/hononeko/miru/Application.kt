@@ -145,12 +145,11 @@ private fun runServer() {
             libraryRepository = libraryRepository,
             adapter = plexRuntimeManager.adapter,
         )
-    val plexOAuthHttpClient =
-        createClientOrCleanup(plexRuntimeManager, databaseHandle, oidcClient) { createPlexHttpClient() }
+    val plexOAuthHttpClient = LazyCloseableHttpClient { createPlexHttpClient() }
     val plexOAuthService =
         PlexOAuthService(
             plexConfig = appConfig.plex,
-            oauthClient = PlexOAuthClient(plexOAuthHttpClient, appConfig.plex.plexTvBaseUrl, appVersion),
+            oauthClient = PlexOAuthClient({ plexOAuthHttpClient.client }, appConfig.plex.plexTvBaseUrl, appVersion),
             mediaServerRepository = mediaServerRepository,
             runtimeManager = plexRuntimeManager,
         )
@@ -680,28 +679,28 @@ private fun Application.installDefaultStatusPages() {
     }
 }
 
-private inline fun <T> createClientOrCleanup(
-    realtime: RealtimeLifecycle,
-    databaseHandle: DatabaseHandle,
-    vararg extraClosables: AutoCloseable?,
-    factory: () -> T,
-): T =
-    try {
-        factory()
-    } catch (e: Throwable) {
-        runBlocking {
-            withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { realtime.stop() }
-        }
-        extraClosables.forEach { closeable ->
-            if (closeable != null) {
-                runCatching { closeable.close() }
-                    .onFailure { err -> logger.warn("Failed to close resource after startup failure: {}", err.message) }
+internal class LazyCloseableHttpClient(
+    private val factory: () -> io.ktor.client.HttpClient,
+) : AutoCloseable {
+    private val lock = Any()
+
+    @Volatile
+    private var instance: io.ktor.client.HttpClient? = null
+
+    val isInitialized: Boolean
+        get() = instance != null
+
+    val client: io.ktor.client.HttpClient
+        get() =
+            instance ?: synchronized(lock) {
+                instance ?: factory().also { instance = it }
             }
-        }
-        runCatching { databaseHandle.close() }
-            .onFailure { err -> logger.warn("Failed to close database handle after startup failure: {}", err.message) }
-        throw e
+
+    override fun close() {
+        val current = synchronized(lock) { instance.also { instance = null } }
+        current?.close()
     }
+}
 
 private fun resolveAppVersion(): String =
     object {}::class.java.`package`?.implementationVersion ?: "0.1.0-dev"

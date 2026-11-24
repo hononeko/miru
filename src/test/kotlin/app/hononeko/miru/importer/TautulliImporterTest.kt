@@ -642,4 +642,53 @@ class TautulliImporterTest :
                 item.isWatched shouldBe true
             }
         }
+
+        test("streams interleaved non-contiguous reference_id groups accurately across multiple small batches") {
+            createImporterHarness().use { harness ->
+                val dbFile = harness.tempDir.resolve("interleaved-stream.db")
+                DriverManager.getConnection("jdbc:sqlite:${dbFile.toAbsolutePath()}").use { conn ->
+                    conn.createStatement().use { stmt ->
+                        createRichTautulliSchema(stmt)
+                        stmt.executeUpdate("INSERT INTO users VALUES (101, 'alice', 'Alice', NULL, NULL, 1)")
+                        // Interleaved rows in session_history:
+                        // id=1 (ref=10), id=2 (ref=20), id=3 (ref=10 resumed), id=4 (ref=NULL -> id 4), id=5 (ref=20 resumed)
+                        val rows =
+                            listOf(
+                                Triple(1, "10", 1_700_000_000L to 1_700_000_300L),
+                                Triple(2, "20", 1_700_001_000L to 1_700_001_200L),
+                                Triple(3, "10", 1_700_000_400L to 1_700_000_900L),
+                                Triple(4, "NULL", 1_700_002_000L to 1_700_002_600L),
+                                Triple(5, "20", 1_700_001_300L to 1_700_001_700L),
+                            )
+                        for ((id, refExpr, times) in rows) {
+                            stmt.executeUpdate(
+                                "INSERT INTO session_history VALUES ($id, $refExpr, ${times.first}, ${times.second}, " +
+                                    "'rk-$refExpr', 101, 'alice', '10.0.0.1', 0, 'TV', 'Plex', 'tvOS', 'm1', 'lan', 'movie', 600000, '1')",
+                            )
+                            stmt.executeUpdate(
+                                "INSERT INTO session_history_metadata VALUES ($id, 'rk-$refExpr', 'Title $id', 'Title $id', " +
+                                    "NULL, NULL, NULL, NULL, 2024, NULL, 1000000)",
+                            )
+                            stmt.executeUpdate(
+                                "INSERT INTO session_history_media_info VALUES ($id, 'direct play', 'direct play', 'direct play', " +
+                                    "0, 0, 'h264', 'aac', '1080', NULL, NULL, NULL, 8000, 8000, 'mkv', 'mkv', NULL, NULL, NULL)",
+                            )
+                        }
+                    }
+                }
+
+                val report = harness.service.import(dbFile, TautulliImportOptions(batchSize = 2)).shouldBeRight()
+                report.historyRowsRead shouldBe 5
+                report.historyImported shouldBe 3
+                report.malformedRows shouldBe 0
+
+                val items = harness.historyRepo.query(HistoryFilter()).shouldBeRight().items.associateBy { it.externalImportKey }
+                items.keys shouldBe setOf("tautulli:4", "tautulli:10", "tautulli:20")
+                items.getValue("tautulli:10").watchedDurationSec shouldBe 800
+                items.getValue("tautulli:10").media.title shouldBe "Title 3"
+                items.getValue("tautulli:20").watchedDurationSec shouldBe 600
+                items.getValue("tautulli:20").media.title shouldBe "Title 5"
+                items.getValue("tautulli:4").watchedDurationSec shouldBe 600
+            }
+        }
     })

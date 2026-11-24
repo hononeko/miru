@@ -74,9 +74,13 @@ LABEL org.opencontainers.image.title="miru" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.version="${VERSION}"
 
+# G1PeriodicGCSystemLoadThreshold=0.0 disables the host-wide getloadavg() gate so idle Miru containers
+# still uncommit heap after 30s of GC inactivity even when other workloads are active on the host.
 ENV JAVA_HOME=/opt/java/openjdk \
     PATH="/opt/java/openjdk/bin:${PATH}" \
-    JDK_JAVA_OPTIONS="-XX:MaxRAMPercentage=50.0 -XX:MinRAMPercentage=25.0 -XX:ReservedCodeCacheSize=64m -XX:MaxDirectMemorySize=64m -XX:+ExitOnOutOfMemoryError" \
+    MALLOC_ARENA_MAX=2 \
+    MALLOC_TRIM_THRESHOLD_=65536 \
+    JDK_JAVA_OPTIONS="-XX:+UseCompactObjectHeaders -XX:+UseG1GC -XX:InitialRAMPercentage=10.0 -XX:MaxRAMPercentage=50.0 -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=25 -XX:G1PeriodicGCInterval=30000 -XX:-G1PeriodicGCInvokesConcurrent -XX:G1PeriodicGCSystemLoadThreshold=0.0 -XX:ReservedCodeCacheSize=48m -XX:MaxDirectMemorySize=48m -XX:+ExitOnOutOfMemoryError" \
     SQLITE_PATH="/data/miru.db" \
     STATIC_WEB_DIR="/opt/miru/static"
 

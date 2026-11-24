@@ -35,7 +35,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.encodeToString
-import net.logstash.logback.argument.StructuredArguments.kv
+import app.hononeko.miru.logging.kv
 import org.slf4j.LoggerFactory
 import java.util.UUID
 import kotlin.time.Duration
@@ -301,12 +301,12 @@ class LibraryStatsCollector(
             val leafTypeCode = leafMediaTypeCode(section.type)
 
             val seenKeys = linkedSetOf<String>()
-            val cachedItems = mutableListOf<MediaItemCacheRecord>()
             val byResolution = linkedMapOf<String, Int>()
             val byVideoCodec = linkedMapOf<String, Int>()
             val byAudioCodec = linkedMapOf<String, Int>()
             var totalSizeBytes = 0L
             var totalDurationMs = 0L
+            var itemsSynced = 0
 
             var start = 0
             while (true) {
@@ -323,6 +323,7 @@ class LibraryStatsCollector(
                 if (items.isEmpty()) break
 
                 val itemTimestampMs = clock()
+                val pageItems = ArrayList<MediaItemCacheRecord>(items.size)
                 for (item in items) {
                     if (item.ratingKey.isBlank() || !seenKeys.add(item.ratingKey)) {
                         continue
@@ -336,7 +337,12 @@ class LibraryStatsCollector(
                         byVideoCodec = byVideoCodec,
                         byAudioCodec = byAudioCodec,
                     )
-                    cachedItems += item.toCacheRecord(serverId = serverId, sectionKey = section.sectionKey, nowMs = itemTimestampMs)
+                    pageItems += item.toCacheRecord(serverId = serverId, sectionKey = section.sectionKey, nowMs = itemTimestampMs)
+                }
+
+                if (pageItems.isNotEmpty()) {
+                    libraryRepository.upsertMediaItems(pageItems).bind()
+                    itemsSynced += pageItems.size
                 }
 
                 val nextStart = start + items.size
@@ -345,9 +351,6 @@ class LibraryStatsCollector(
             }
 
             val completedAtMs = clock()
-            if (cachedItems.isNotEmpty()) {
-                libraryRepository.upsertMediaItems(cachedItems).bind()
-            }
             val pruned = libraryRepository.deleteItemsNotIn(serverId, section.sectionKey, seenKeys).bind()
 
             val sectionRecord =
@@ -388,7 +391,7 @@ class LibraryStatsCollector(
             libraryRepository.insertSnapshot(snapshot).bind()
 
             DeepSectionOutcome(
-                itemsSynced = cachedItems.size,
+                itemsSynced = itemsSynced,
                 prunedItems = pruned,
             )
         }

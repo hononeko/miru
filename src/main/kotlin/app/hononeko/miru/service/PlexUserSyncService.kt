@@ -19,7 +19,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import net.logstash.logback.argument.StructuredArguments.kv
+import app.hononeko.miru.logging.kv
 import org.slf4j.LoggerFactory
 import java.util.UUID
 import kotlin.time.Duration

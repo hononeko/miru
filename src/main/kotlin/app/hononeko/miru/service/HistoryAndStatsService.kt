@@ -2,31 +2,21 @@ package app.hononeko.miru.service
 
 import app.hononeko.miru.auth.MiruPrincipal
 import app.hononeko.miru.domain.error.MiruError
-import app.hononeko.miru.http.ClientBreakdownItemDto
 import app.hononeko.miru.http.ClientStatsResponse
-import app.hononeko.miru.http.DailyPlayStatDto
-import app.hononeko.miru.http.DecisionBreakdownStatDto
 import app.hononeko.miru.http.HeatmapCellDto
 import app.hononeko.miru.http.HeatmapStatsResponse
 import app.hononeko.miru.http.HistoryDetailResponse
 import app.hononeko.miru.http.HistoryListResponse
-import app.hononeko.miru.http.LibraryBreakdownStatDto
 import app.hononeko.miru.http.OverviewStatsResponse
-import app.hononeko.miru.http.PlatformStatDto
-import app.hononeko.miru.http.RewatchedMediaStatDto
-import app.hononeko.miru.http.TopMediaStatDto
 import app.hononeko.miru.http.UserStatsResponse
 import app.hononeko.miru.http.WrappedMonthStatDto
 import app.hononeko.miru.http.WrappedStatsResponse
-import app.hononeko.miru.http.buildThumbUrl
 import app.hononeko.miru.http.normalizedDisplayName
 import app.hononeko.miru.http.toHistoryDetailResponse
 import app.hononeko.miru.http.toHistoryItemDto
-import app.hononeko.miru.library.LibraryNormalizer
 import app.hononeko.miru.persistence.model.HistoryFilter
 import app.hononeko.miru.persistence.model.HistorySortDirection
 import app.hononeko.miru.persistence.model.HistorySortField
-import app.hononeko.miru.persistence.model.PlaybackHistoryStatsRow
 import app.hononeko.miru.persistence.model.UserRecord
 import app.hononeko.miru.persistence.repository.PlaybackHistoryRepository
 import app.hononeko.miru.persistence.repository.UserRepository
@@ -36,26 +26,18 @@ import arrow.core.raise.ensure
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
-import kotlin.math.roundToLong
 
 private const val DEFAULT_PAGE_SIZE = 50
 private const val MAX_PAGE_SIZE = 100
 private const val MILLIS_PER_DAY = 86_400_000L
-private const val TOP_MEDIA_LIMIT = 10
-private const val PERCENT_MULTIPLIER = 100.0
-private const val ROUNDING_SCALE = 100.0
-private const val MIN_POSITIVE_PERCENT = 0.01
 private const val DAYS_IN_WEEK = 7
 private const val HOURS_IN_DAY = 24
 private const val MIN_WRAPPED_YEAR = 1970
 private const val MAX_WRAPPED_YEAR = 2100
 
 private val DAY_NAMES = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
-private val MONTH_NAMES = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
-
 private val VALID_MEDIA_TYPES = setOf("movie", "episode", "track", "clip", "live_tv")
 private val VALID_DECISIONS = setOf("direct_play", "direct_stream", "transcode")
-private val COPY_DECISIONS = setOf("copy", "direct_stream", "directstream")
 
 enum class AnalyticsMetric(
     val code: String,
@@ -98,16 +80,6 @@ private data class ValidatedHistoryQuery(
 private data class StatsRange(
     val label: String,
     val fromMs: Long?,
-)
-
-private data class CommonStats(
-    val totalPlays: Long,
-    val totalWatchDurationSec: Long,
-    val activeUsers: Int,
-    val playsPerDay: List<DailyPlayStatDto>,
-    val topMovies: List<TopMediaStatDto>,
-    val topShows: List<TopMediaStatDto>,
-    val decisionBreakdown: DecisionBreakdownStatDto,
 )
 
 class HistoryAndStatsService(
@@ -198,9 +170,15 @@ class HistoryAndStatsService(
             val range = parseRange(rangeRaw).bind()
             val metric = parseMetric(metricRaw).bind()
             val scopedUserIds = if (principal.isAdmin()) null else principal.linkedMediaUserIds
-            val rows = playbackHistoryRepository.listForStats(userIds = scopedUserIds, fromMs = range.fromMs).bind()
-            val usersById = resolveUsers(rows.map { it.userId }.distinct()).bind()
-            val common = aggregateCommonStats(rows, metric, usersById = usersById)
+            val accumulator = CommonStatsAccumulator(includeDailyBreakdowns = true)
+
+            playbackHistoryRepository
+                .forEachOverviewStatsRow(userIds = scopedUserIds, fromMs = range.fromMs) { row ->
+                    accumulator.record(row)
+                }.bind()
+
+            val usersById = resolveUsers(accumulator.activeUserIds.toList()).bind()
+            val common = accumulator.build(metric = metric, usersById = usersById)
 
             OverviewStatsResponse(
                 range = range.label,
@@ -234,11 +212,17 @@ class HistoryAndStatsService(
 
             val range = parseRange(rangeRaw).bind()
             val metric = parseMetric(metricRaw).bind()
-            val rows = playbackHistoryRepository.listForStats(userIds = setOf(trimmedUserId), fromMs = range.fromMs).bind()
-            val common = aggregateCommonStats(rows, metric, usersById = mapOf(user.id to user))
-            val avgCompletion = computeAverageCompletionPercent(rows)
-            val completedPlays = rows.count { it.isWatched }.toLong()
-            val longestStreak = computeLongestBingeStreakDays(rows)
+            val commonAcc = CommonStatsAccumulator(includeDailyBreakdowns = true)
+            val detailsAcc = RewatchAndBreakdownAccumulator(trackLibraries = true)
+
+            playbackHistoryRepository
+                .forEachStatsRow(userIds = setOf(trimmedUserId), fromMs = range.fromMs) { row ->
+                    commonAcc.record(row)
+                    detailsAcc.record(row)
+                }.bind()
+
+            val common = commonAcc.build(metric = metric, usersById = mapOf(user.id to user))
+            val longestStreak = computeLongestStreakFromEpochDays(commonAcc.daily.distinctEpochDays())
             val maxDailyPlays = common.playsPerDay.maxOfOrNull { it.playCount.toInt() } ?: 0
 
             UserStatsResponse(
@@ -249,17 +233,17 @@ class HistoryAndStatsService(
                 fromMs = range.fromMs,
                 totalPlays = common.totalPlays,
                 totalWatchDurationSec = common.totalWatchDurationSec,
-                averageCompletionPercent = avgCompletion,
-                completedPlays = completedPlays,
+                averageCompletionPercent = detailsAcc.averageCompletionPercent(),
+                completedPlays = detailsAcc.completedPlays,
                 longestBingeStreakDays = longestStreak,
                 maxDailyPlays = maxDailyPlays,
                 playsPerDay = common.playsPerDay,
                 topMovies = common.topMovies,
                 topShows = common.topShows,
-                mostRewatched = aggregateMostRewatched(rows, metric),
+                mostRewatched = detailsAcc.buildMostRewatched(metric),
                 decisionBreakdown = common.decisionBreakdown,
-                topPlatforms = aggregatePlatforms(rows, common.totalPlays, common.totalWatchDurationSec, metric),
-                libraryBreakdown = aggregateLibraries(rows, common.totalPlays, common.totalWatchDurationSec, metric),
+                topPlatforms = detailsAcc.buildTopPlatforms(common.totalPlays, common.totalWatchDurationSec, metric),
+                libraryBreakdown = detailsAcc.buildLibraryBreakdown(common.totalPlays, common.totalWatchDurationSec, metric),
             )
         }
 
@@ -273,21 +257,22 @@ class HistoryAndStatsService(
             val range = parseRange(rangeRaw, defaultRange = "90d").bind()
             val metric = parseMetric(metricRaw).bind()
             val scopedUserIds = resolveScopedStatsUserIds(principal, userId).bind()
-            val rows = playbackHistoryRepository.listForStats(userIds = scopedUserIds, fromMs = range.fromMs).bind()
 
             val playMatrix = Array(DAYS_IN_WEEK) { LongArray(HOURS_IN_DAY) }
             val durationMatrix = Array(DAYS_IN_WEEK) { LongArray(HOURS_IN_DAY) }
+            var totalPlays = 0L
             var totalWatchDurationSec = 0L
 
-            for (row in rows) {
-                val zdt = Instant.ofEpochMilli(row.stoppedAtMs).atZone(ZoneOffset.UTC)
-                val dayIdx = (zdt.dayOfWeek.value - 1).coerceIn(0, DAYS_IN_WEEK - 1)
-                val hourIdx = zdt.hour.coerceIn(0, HOURS_IN_DAY - 1)
-                val duration = row.watchedDurationSec.toLong()
-                playMatrix[dayIdx][hourIdx] += 1L
-                durationMatrix[dayIdx][hourIdx] += duration
-                totalWatchDurationSec += duration
-            }
+            playbackHistoryRepository
+                .forEachHeatmapSample(userIds = scopedUserIds, fromMs = range.fromMs) { stoppedAtMs, watchedDurationSec ->
+                    val dayIdx = utcDayOfWeekIndex(utcEpochDay(stoppedAtMs))
+                    val hourIdx = utcHourOfDay(stoppedAtMs)
+                    val duration = watchedDurationSec.toLong()
+                    playMatrix[dayIdx][hourIdx] += 1L
+                    durationMatrix[dayIdx][hourIdx] += duration
+                    totalPlays += 1L
+                    totalWatchDurationSec += duration
+                }.bind()
 
             val cells = ArrayList<HeatmapCellDto>(DAYS_IN_WEEK * HOURS_IN_DAY)
             var maxCellPlays = 0L
@@ -323,7 +308,7 @@ class HistoryAndStatsService(
             HeatmapStatsResponse(
                 range = range.label,
                 fromMs = range.fromMs,
-                totalPlays = rows.size.toLong(),
+                totalPlays = totalPlays,
                 totalWatchDurationSec = totalWatchDurationSec,
                 maxCellPlays = maxCellPlays,
                 maxCellWatchDurationSec = maxCellWatchDurationSec,
@@ -343,69 +328,24 @@ class HistoryAndStatsService(
             val range = parseRange(rangeRaw, defaultRange = "30d").bind()
             val metric = parseMetric(metricRaw).bind()
             val scopedUserIds = resolveScopedStatsUserIds(principal, userId).bind()
-            val rows = playbackHistoryRepository.listForStats(userIds = scopedUserIds, fromMs = range.fromMs).bind()
-            val totalPlays = rows.size.toLong()
-            val totalWatchDurationSec = rows.sumOf { it.watchedDurationSec.toLong() }
+            val acc = ClientStatsAccumulator()
 
-            val players =
-                aggregateClientBreakdown(rows, totalPlays, totalWatchDurationSec, metric) { row ->
-                    row.playerProduct?.takeIf { it.isNotBlank() }
-                        ?: row.playerName?.takeIf { it.isNotBlank() }
-                        ?: "Unknown"
-                }
-            val platforms =
-                aggregateClientBreakdown(rows, totalPlays, totalWatchDurationSec, metric) { row ->
-                    row.playerPlatform?.takeIf { it.isNotBlank() } ?: "Unknown"
-                }
-            val videoCodecs =
-                aggregateClientBreakdown(rows, totalPlays, totalWatchDurationSec, metric) { row ->
-                    LibraryNormalizer.normalizeCodec(row.videoCodec)
-                }
-            val audioCodecs =
-                aggregateClientBreakdown(rows, totalPlays, totalWatchDurationSec, metric) { row ->
-                    LibraryNormalizer.normalizeCodec(row.audioCodec)
-                }
-
-            val nonDirectRows =
-                rows.mapNotNull { row ->
-                    describeConversions(row).takeIf { it.isNotEmpty() }?.let { labels -> labels to row }
-                }
-            val nonDirectTotalPlays = nonDirectRows.size.toLong()
-            val nonDirectTotalDuration = nonDirectRows.sumOf { it.second.watchedDurationSec.toLong() }
-            // A session that changes several things counts toward each of them, so each percentage is the
-            // share of non-Direct-Play sessions with that change and the list can add up to more than 100%.
-            val transcodeReasons =
-                nonDirectRows
-                    .flatMap { (labels, row) -> labels.map { label -> label to row } }
-                    .groupBy({ it.first }, { it.second })
-                    .map { (reason, group) ->
-                        val count = group.size.toLong()
-                        val duration = group.sumOf { it.watchedDurationSec.toLong() }
-                        val pct =
-                            when (metric) {
-                                AnalyticsMetric.PLAYS -> toPercent(count, nonDirectTotalPlays)
-                                AnalyticsMetric.DURATION -> toPercent(duration, nonDirectTotalDuration)
-                            }
-                        ClientBreakdownItemDto(
-                            name = reason,
-                            playCount = count,
-                            watchDurationSec = duration,
-                            percent = pct,
-                        )
-                    }.sortedWith(clientBreakdownComparator(metric))
-                    .take(TOP_MEDIA_LIMIT)
+            playbackHistoryRepository
+                .forEachClientStatsRow(userIds = scopedUserIds, fromMs = range.fromMs) { row ->
+                    acc.record(row)
+                }.bind()
 
             ClientStatsResponse(
                 range = range.label,
                 fromMs = range.fromMs,
-                totalPlays = totalPlays,
-                totalWatchDurationSec = totalWatchDurationSec,
-                transcodeOrRemuxPlays = nonDirectTotalPlays,
-                players = players,
-                platforms = platforms,
-                videoCodecs = videoCodecs,
-                audioCodecs = audioCodecs,
-                transcodeReasons = transcodeReasons,
+                totalPlays = acc.totalPlays,
+                totalWatchDurationSec = acc.totalWatchDurationSec,
+                transcodeOrRemuxPlays = acc.nonDirectTotalPlays,
+                players = acc.buildPlayers(metric),
+                platforms = acc.buildPlatforms(metric),
+                videoCodecs = acc.buildVideoCodecs(metric),
+                audioCodecs = acc.buildAudioCodecs(metric),
+                transcodeReasons = acc.buildTranscodeReasons(metric),
             )
         }
 
@@ -443,16 +383,19 @@ class HistoryAndStatsService(
 
             val fromMs = LocalDate.of(year, 1, 1).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
             val toMs = LocalDate.of(year + 1, 1, 1).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli() - 1L
-            val rows =
-                playbackHistoryRepository
-                    .listForStats(
-                        userIds = scopedUserIds,
-                        fromMs = fromMs,
-                        toMs = toMs,
-                    ).bind()
+            val commonAcc = CommonStatsAccumulator(includeDailyBreakdowns = false)
+            val detailsAcc = RewatchAndBreakdownAccumulator(trackClients = true)
+            val calendarAcc = WrappedCalendarAccumulator()
 
-            val common = aggregateCommonStats(rows, metric, includeDailyBreakdowns = false)
-            val playsByMonth = aggregatePlaysByMonth(rows)
+            playbackHistoryRepository
+                .forEachStatsRow(userIds = scopedUserIds, fromMs = fromMs, toMs = toMs) { row ->
+                    val epochDay = commonAcc.record(row)
+                    detailsAcc.record(row)
+                    calendarAcc.record(row, epochDay)
+                }.bind()
+
+            val common = commonAcc.build(metric = metric)
+            val playsByMonth = calendarAcc.buildPlaysByMonth()
             val peakMonthComparator =
                 when (metric) {
                     AnalyticsMetric.PLAYS -> compareBy<WrappedMonthStatDto> { it.playCount }.thenBy { it.watchDurationSec }
@@ -463,21 +406,6 @@ class HistoryAndStatsService(
                     .filter { it.playCount > 0L }
                     .maxWithOrNull(peakMonthComparator)
                     ?.monthName
-            val peakDayOfWeek = computePeakDayOfWeek(rows, metric)
-            val uniqueMoviesCount =
-                rows
-                    .asSequence()
-                    .filter { it.mediaType.equals("movie", ignoreCase = true) }
-                    .map { it.ratingKey }
-                    .distinct()
-                    .count()
-            val uniqueShowsCount =
-                rows
-                    .asSequence()
-                    .filter { it.mediaType.equals("episode", ignoreCase = true) }
-                    .map { (it.grandparentTitle?.takeIf { t -> t.isNotBlank() } ?: it.title).lowercase() }
-                    .distinct()
-                    .count()
 
             WrappedStatsResponse(
                 year = year,
@@ -486,24 +414,19 @@ class HistoryAndStatsService(
                 displayName = resolvedUser?.displayName.normalizedDisplayName(),
                 totalPlays = common.totalPlays,
                 totalWatchDurationSec = common.totalWatchDurationSec,
-                completedPlays = rows.count { it.isWatched }.toLong(),
-                averageCompletionPercent = computeAverageCompletionPercent(rows),
-                longestBingeStreakDays = computeLongestBingeStreakDays(rows),
-                activeDaysCount = common.playsPerDay.size,
-                uniqueMoviesCount = uniqueMoviesCount,
-                uniqueShowsCount = uniqueShowsCount,
+                completedPlays = detailsAcc.completedPlays,
+                averageCompletionPercent = detailsAcc.averageCompletionPercent(),
+                longestBingeStreakDays = computeLongestStreakFromEpochDays(commonAcc.daily.distinctEpochDays()),
+                activeDaysCount = commonAcc.daily.activeDaysCount,
+                uniqueMoviesCount = commonAcc.uniqueMoviesCount,
+                uniqueShowsCount = calendarAcc.uniqueShowsCount,
                 peakMonth = peakMonth,
-                peakDayOfWeek = peakDayOfWeek,
+                peakDayOfWeek = calendarAcc.peakDayOfWeek(metric),
                 topMovies = common.topMovies,
                 topShows = common.topShows,
-                mostRewatched = aggregateMostRewatched(rows, metric),
-                topPlatforms = aggregatePlatforms(rows, common.totalPlays, common.totalWatchDurationSec, metric),
-                topClients =
-                    aggregateClientBreakdown(rows, common.totalPlays, common.totalWatchDurationSec, metric) { row ->
-                        row.playerProduct?.takeIf { it.isNotBlank() }
-                            ?: row.playerName?.takeIf { it.isNotBlank() }
-                            ?: "Unknown"
-                    },
+                mostRewatched = detailsAcc.buildMostRewatched(metric),
+                topPlatforms = detailsAcc.buildTopPlatforms(common.totalPlays, common.totalWatchDurationSec, metric),
+                topClients = detailsAcc.buildTopClients(common.totalPlays, common.totalWatchDurationSec, metric),
                 decisionBreakdown = common.decisionBreakdown,
                 playsByMonth = playsByMonth,
             )
@@ -699,444 +622,6 @@ class HistoryAndStatsService(
             else -> null
         }
 
-    private fun aggregateCommonStats(
-        rows: List<PlaybackHistoryStatsRow>,
-        metric: AnalyticsMetric = AnalyticsMetric.PLAYS,
-        usersById: Map<String, UserRecord> = emptyMap(),
-        includeDailyBreakdowns: Boolean = true,
-    ): CommonStats {
-        val totalPlays = rows.size.toLong()
-        var totalWatchDurationSec = 0L
-        val activeUserIds = hashSetOf<String>()
-        var directPlay = 0L
-        var directStream = 0L
-        var transcode = 0L
-        var hwTranscode = 0L
-        var directPlayDurationSec = 0L
-        var directStreamDurationSec = 0L
-        var transcodeDurationSec = 0L
-        var hwTranscodeDurationSec = 0L
-
-        for (row in rows) {
-            val duration = row.watchedDurationSec.toLong()
-            totalWatchDurationSec += duration
-            activeUserIds += row.userId
-
-            when (row.streamDecision.lowercase()) {
-                "direct_play" -> {
-                    directPlay++
-                    directPlayDurationSec += duration
-                }
-                "direct_stream" -> {
-                    directStream++
-                    directStreamDurationSec += duration
-                }
-                "transcode" -> {
-                    transcode++
-                    transcodeDurationSec += duration
-                }
-            }
-            if (row.hwTranscode) {
-                hwTranscode++
-                hwTranscodeDurationSec += duration
-            }
-        }
-
-        val playsPerDay =
-            aggregatePlaysPerDay(
-                rows = rows,
-                usersById = usersById,
-                metric = metric,
-                includeBreakdowns = includeDailyBreakdowns,
-            )
-
-        val decisionBreakdown =
-            when (metric) {
-                AnalyticsMetric.PLAYS ->
-                    DecisionBreakdownStatDto(
-                        directPlay = directPlay,
-                        directStream = directStream,
-                        transcode = transcode,
-                        hwTranscode = hwTranscode,
-                        directPlayPercent = toPercent(directPlay, totalPlays),
-                        directStreamPercent = toPercent(directStream, totalPlays),
-                        transcodePercent = toPercent(transcode, totalPlays),
-                        hwTranscodePercent = toPercent(hwTranscode, totalPlays),
-                    )
-                AnalyticsMetric.DURATION ->
-                    DecisionBreakdownStatDto(
-                        directPlay = directPlay,
-                        directStream = directStream,
-                        transcode = transcode,
-                        hwTranscode = hwTranscode,
-                        directPlayPercent = toPercent(directPlayDurationSec, totalWatchDurationSec),
-                        directStreamPercent = toPercent(directStreamDurationSec, totalWatchDurationSec),
-                        transcodePercent = toPercent(transcodeDurationSec, totalWatchDurationSec),
-                        hwTranscodePercent = toPercent(hwTranscodeDurationSec, totalWatchDurationSec),
-                    )
-            }
-
-        return CommonStats(
-            totalPlays = totalPlays,
-            totalWatchDurationSec = totalWatchDurationSec,
-            activeUsers = activeUserIds.size,
-            playsPerDay = playsPerDay,
-            topMovies = aggregateTopMovies(rows, metric),
-            topShows = aggregateTopShows(rows, metric),
-            decisionBreakdown = decisionBreakdown,
-        )
-    }
-
-    private fun topMediaComparator(metric: AnalyticsMetric): Comparator<TopMediaStatDto> =
-        when (metric) {
-            AnalyticsMetric.PLAYS ->
-                compareByDescending<TopMediaStatDto> { it.playCount }
-                    .thenByDescending { it.watchDurationSec }
-                    .thenBy { it.title.lowercase() }
-            AnalyticsMetric.DURATION ->
-                compareByDescending<TopMediaStatDto> { it.watchDurationSec }
-                    .thenByDescending { it.playCount }
-                    .thenBy { it.title.lowercase() }
-        }
-
-    private fun clientBreakdownComparator(metric: AnalyticsMetric): Comparator<ClientBreakdownItemDto> =
-        when (metric) {
-            AnalyticsMetric.PLAYS ->
-                compareByDescending<ClientBreakdownItemDto> { it.playCount }
-                    .thenByDescending { it.watchDurationSec }
-                    .thenBy { it.name.lowercase() }
-            AnalyticsMetric.DURATION ->
-                compareByDescending<ClientBreakdownItemDto> { it.watchDurationSec }
-                    .thenByDescending { it.playCount }
-                    .thenBy { it.name.lowercase() }
-        }
-
-    private fun aggregateTopMovies(
-        rows: List<PlaybackHistoryStatsRow>,
-        metric: AnalyticsMetric = AnalyticsMetric.PLAYS,
-    ): List<TopMediaStatDto> =
-        rows
-            .filter { it.mediaType.equals("movie", ignoreCase = true) }
-            .groupBy { it.ratingKey }
-            .map { (ratingKey, group) ->
-                val title = group.last().title
-                val thumbUrl =
-                    group.firstNotNullOfOrNull { item ->
-                        buildThumbUrl(item.ratingKey, item.thumbPath)
-                    }
-                TopMediaStatDto(
-                    ratingKey = ratingKey,
-                    title = title,
-                    playCount = group.size.toLong(),
-                    watchDurationSec = group.sumOf { it.watchedDurationSec.toLong() },
-                    thumbUrl = thumbUrl,
-                )
-            }.sortedWith(topMediaComparator(metric))
-            .take(TOP_MEDIA_LIMIT)
-
-    private fun aggregateTopShows(
-        rows: List<PlaybackHistoryStatsRow>,
-        metric: AnalyticsMetric = AnalyticsMetric.PLAYS,
-    ): List<TopMediaStatDto> =
-        rows
-            .filter { it.mediaType.equals("episode", ignoreCase = true) }
-            .groupBy { it.grandparentTitle?.takeIf { title -> title.isNotBlank() } ?: it.title }
-            .map { (showTitle, group) ->
-                val thumbRow = group.firstOrNull { !it.thumbPath.isNullOrBlank() } ?: group.last()
-                TopMediaStatDto(
-                    ratingKey = thumbRow.ratingKey,
-                    title = showTitle,
-                    playCount = group.size.toLong(),
-                    watchDurationSec = group.sumOf { it.watchedDurationSec.toLong() },
-                    thumbUrl = buildThumbUrl(thumbRow.ratingKey, thumbRow.thumbPath),
-                )
-            }.sortedWith(topMediaComparator(metric))
-            .take(TOP_MEDIA_LIMIT)
-
-    private fun aggregatePlatforms(
-        rows: List<PlaybackHistoryStatsRow>,
-        totalPlays: Long,
-        totalWatchDurationSec: Long,
-        metric: AnalyticsMetric = AnalyticsMetric.PLAYS,
-    ): List<PlatformStatDto> =
-        rows
-            .groupBy { row ->
-                row.playerPlatform?.takeIf { it.isNotBlank() }
-                    ?: row.playerProduct?.takeIf { it.isNotBlank() }
-                    ?: "Unknown"
-            }.map { (platform, group) ->
-                val count = group.size.toLong()
-                val duration = group.sumOf { it.watchedDurationSec.toLong() }
-                val pct =
-                    when (metric) {
-                        AnalyticsMetric.PLAYS -> toPercent(count, totalPlays)
-                        AnalyticsMetric.DURATION -> toPercent(duration, totalWatchDurationSec)
-                    }
-                PlatformStatDto(
-                    platform = platform,
-                    playCount = count,
-                    watchDurationSec = duration,
-                    percent = pct,
-                )
-            }.sortedWith(
-                when (metric) {
-                    AnalyticsMetric.PLAYS ->
-                        compareByDescending<PlatformStatDto> { it.playCount }
-                            .thenByDescending { it.watchDurationSec }
-                            .thenBy { it.platform.lowercase() }
-                    AnalyticsMetric.DURATION ->
-                        compareByDescending<PlatformStatDto> { it.watchDurationSec }
-                            .thenByDescending { it.playCount }
-                            .thenBy { it.platform.lowercase() }
-                },
-            ).take(TOP_MEDIA_LIMIT)
-
-    private fun aggregateLibraries(
-        rows: List<PlaybackHistoryStatsRow>,
-        totalPlays: Long,
-        totalWatchDurationSec: Long,
-        metric: AnalyticsMetric = AnalyticsMetric.PLAYS,
-    ): List<LibraryBreakdownStatDto> =
-        rows
-            .groupBy { row -> row.librarySectionKey?.takeIf { it.isNotBlank() } ?: "unknown" }
-            .map { (librarySectionKey, group) ->
-                val count = group.size.toLong()
-                val duration = group.sumOf { it.watchedDurationSec.toLong() }
-                val pct =
-                    when (metric) {
-                        AnalyticsMetric.PLAYS -> toPercent(count, totalPlays)
-                        AnalyticsMetric.DURATION -> toPercent(duration, totalWatchDurationSec)
-                    }
-                LibraryBreakdownStatDto(
-                    librarySectionKey = librarySectionKey,
-                    playCount = count,
-                    watchDurationSec = duration,
-                    percent = pct,
-                )
-            }.sortedWith(
-                when (metric) {
-                    AnalyticsMetric.PLAYS ->
-                        compareByDescending<LibraryBreakdownStatDto> { it.playCount }
-                            .thenByDescending { it.watchDurationSec }
-                            .thenBy { it.librarySectionKey.lowercase() }
-                    AnalyticsMetric.DURATION ->
-                        compareByDescending<LibraryBreakdownStatDto> { it.watchDurationSec }
-                            .thenByDescending { it.playCount }
-                            .thenBy { it.librarySectionKey.lowercase() }
-                },
-            )
-
-    private fun aggregateMostRewatched(
-        rows: List<PlaybackHistoryStatsRow>,
-        metric: AnalyticsMetric = AnalyticsMetric.PLAYS,
-    ): List<RewatchedMediaStatDto> =
-        rows
-            .groupBy { it.ratingKey }
-            .filter { (_, group) -> group.size >= 2 }
-            .map { (ratingKey, group) ->
-                val latest = group.last()
-                val thumbUrl =
-                    group.firstNotNullOfOrNull { item ->
-                        buildThumbUrl(item.ratingKey, item.thumbPath)
-                    }
-                RewatchedMediaStatDto(
-                    ratingKey = ratingKey,
-                    mediaType = latest.mediaType,
-                    title = latest.title,
-                    grandparentTitle = latest.grandparentTitle,
-                    playCount = group.size.toLong(),
-                    watchDurationSec = group.sumOf { it.watchedDurationSec.toLong() },
-                    thumbUrl = thumbUrl,
-                )
-            }.sortedWith(
-                when (metric) {
-                    AnalyticsMetric.PLAYS ->
-                        compareByDescending<RewatchedMediaStatDto> { it.playCount }
-                            .thenByDescending { it.watchDurationSec }
-                            .thenBy { it.title.lowercase() }
-                    AnalyticsMetric.DURATION ->
-                        compareByDescending<RewatchedMediaStatDto> { it.watchDurationSec }
-                            .thenByDescending { it.playCount }
-                            .thenBy { it.title.lowercase() }
-                },
-            ).take(TOP_MEDIA_LIMIT)
-
-    private fun aggregateClientBreakdown(
-        rows: List<PlaybackHistoryStatsRow>,
-        totalPlays: Long,
-        totalWatchDurationSec: Long,
-        metric: AnalyticsMetric,
-        keySelector: (PlaybackHistoryStatsRow) -> String,
-    ): List<ClientBreakdownItemDto> =
-        rows
-            .groupBy { keySelector(it).ifBlank { "Unknown" } }
-            .map { (name, group) ->
-                val count = group.size.toLong()
-                val duration = group.sumOf { it.watchedDurationSec.toLong() }
-                val pct =
-                    when (metric) {
-                        AnalyticsMetric.PLAYS -> toPercent(count, totalPlays)
-                        AnalyticsMetric.DURATION -> toPercent(duration, totalWatchDurationSec)
-                    }
-                ClientBreakdownItemDto(
-                    name = name,
-                    playCount = count,
-                    watchDurationSec = duration,
-                    percent = pct,
-                )
-            }.sortedWith(clientBreakdownComparator(metric))
-            .take(TOP_MEDIA_LIMIT)
-
-    /**
-     * Names what a non-Direct-Play session changed, such as "Subtitle Burn-in", "Video HEVC → H.264",
-     * "Audio TRUEHD → AAC" or "Container MKV → MPEGTS". Plex reports what it converted, not why, so these
-     * describe the conversion. Rows recorded before conversion details were kept fall back to
-     * "Video Transcode", "Audio Transcode" or "Container Remux". Returns an empty list for Direct Play.
-     */
-    private fun describeConversions(row: PlaybackHistoryStatsRow): List<String> {
-        val streamDec = row.streamDecision.trim().lowercase()
-        val videoDec = row.videoDecision?.trim()?.lowercase()
-        val audioDec = row.audioDecision?.trim()?.lowercase()
-        val subtitleDec = row.subtitleDecision?.trim()?.lowercase()
-
-        val isVideoTranscode = videoDec == "transcode"
-        val isAudioTranscode = audioDec == "transcode"
-        val isVideoCopy = videoDec in COPY_DECISIONS
-        val isAudioCopy = audioDec in COPY_DECISIONS
-        val burnsSubtitles = subtitleDec == "burn" && (isVideoTranscode || streamDec == "transcode")
-        val transcodesSubtitles = subtitleDec == "transcode" && streamDec != "direct_play"
-
-        val labels = mutableListOf<String>()
-        if (burnsSubtitles) {
-            labels += "Subtitle Burn-in"
-        } else if (transcodesSubtitles) {
-            labels += "Subtitle Transcode"
-        }
-        if (isVideoTranscode) {
-            val from = knownCodec(row.videoCodec)
-            val to = knownCodec(row.transcodeVideoCodec)
-            val codecChanged = from != null && to != null && from != to
-            // Burning subtitles is itself a video transcode; only a known codec change is worth naming next to it.
-            if (!burnsSubtitles || codecChanged) {
-                labels += describeCodecChange("Video", from, to)
-            }
-        }
-        if (isAudioTranscode) {
-            labels += describeCodecChange("Audio", knownCodec(row.audioCodec), knownCodec(row.transcodeAudioCodec))
-        }
-        if (labels.isEmpty()) {
-            when {
-                streamDec == "direct_stream" || isVideoCopy || isAudioCopy ->
-                    labels += describeContainerChange(row.container, row.transcodeContainer)
-                streamDec == "transcode" -> labels += "Video Transcode"
-            }
-        }
-        return labels
-    }
-
-    private fun describeCodecChange(
-        kind: String,
-        from: String?,
-        to: String?,
-    ): String =
-        when {
-            from != null && to != null && from != to -> "$kind $from → $to"
-            from != null && to != null -> "$kind Re-encode ($to)"
-            to != null -> "$kind → $to"
-            else -> "$kind Transcode"
-        }
-
-    private fun knownCodec(raw: String?): String? =
-        raw
-            ?.takeIf { it.isNotBlank() && it.trim() != "*" }
-            ?.let(LibraryNormalizer::normalizeCodec)
-            ?.takeIf { !it.equals("unknown", ignoreCase = true) }
-
-    private fun describeContainerChange(
-        sourceContainer: String?,
-        targetContainer: String?,
-    ): String {
-        val from = sourceContainer?.trim()?.uppercase()?.takeIf { it.isNotEmpty() }
-        val to = targetContainer?.trim()?.uppercase()?.takeIf { it.isNotEmpty() }
-        return if (from != null && to != null && from != to) "Container $from → $to" else "Container Remux"
-    }
-
-    private fun computeAverageCompletionPercent(rows: List<PlaybackHistoryStatsRow>): Double {
-        if (rows.isEmpty()) return 0.0
-        val avg = rows.sumOf { it.completionPercent } / rows.size
-        return (avg * ROUNDING_SCALE).roundToLong() / ROUNDING_SCALE
-    }
-
-    private fun computeLongestBingeStreakDays(rows: List<PlaybackHistoryStatsRow>): Int {
-        if (rows.isEmpty()) return 0
-        val distinctDays =
-            rows
-                .map { Instant.ofEpochMilli(it.stoppedAtMs).atZone(ZoneOffset.UTC).toLocalDate() }
-                .distinct()
-                .sorted()
-        var longest = 1
-        var current = 1
-        for (idx in 1 until distinctDays.size) {
-            if (distinctDays[idx] == distinctDays[idx - 1].plusDays(1)) {
-                current++
-                if (current > longest) {
-                    longest = current
-                }
-            } else {
-                current = 1
-            }
-        }
-        return longest
-    }
-
-    private fun aggregatePlaysByMonth(rows: List<PlaybackHistoryStatsRow>): List<WrappedMonthStatDto> {
-        val counts = LongArray(MONTH_NAMES.size)
-        val durations = LongArray(MONTH_NAMES.size)
-        for (row in rows) {
-            val monthIdx = (Instant.ofEpochMilli(row.stoppedAtMs).atZone(ZoneOffset.UTC).monthValue - 1).coerceIn(0, 11)
-            counts[monthIdx] += 1L
-            durations[monthIdx] += row.watchedDurationSec.toLong()
-        }
-        return MONTH_NAMES.mapIndexed { idx, name ->
-            WrappedMonthStatDto(
-                month = idx + 1,
-                monthName = name,
-                playCount = counts[idx],
-                watchDurationSec = durations[idx],
-            )
-        }
-    }
-
-    private fun computePeakDayOfWeek(
-        rows: List<PlaybackHistoryStatsRow>,
-        metric: AnalyticsMetric,
-    ): String? {
-        if (rows.isEmpty()) return null
-        val counts = LongArray(DAYS_IN_WEEK)
-        val durations = LongArray(DAYS_IN_WEEK)
-        for (row in rows) {
-            val dayIdx = (Instant.ofEpochMilli(row.stoppedAtMs).atZone(ZoneOffset.UTC).dayOfWeek.value - 1).coerceIn(0, 6)
-            counts[dayIdx] += 1L
-            durations[dayIdx] += row.watchedDurationSec.toLong()
-        }
-        var bestIdx = 0
-        for (idx in 1 until DAYS_IN_WEEK) {
-            val isHigher =
-                when (metric) {
-                    AnalyticsMetric.PLAYS ->
-                        counts[idx] > counts[bestIdx] ||
-                            (counts[idx] == counts[bestIdx] && durations[idx] > durations[bestIdx])
-                    AnalyticsMetric.DURATION ->
-                        durations[idx] > durations[bestIdx] ||
-                            (durations[idx] == durations[bestIdx] && counts[idx] > counts[bestIdx])
-                }
-            if (isHigher) {
-                bestIdx = idx
-            }
-        }
-        return if (counts[bestIdx] > 0L) DAY_NAMES[bestIdx] else null
-    }
-
     private fun isHigherHeatmapPeak(
         candidate: HeatmapCellDto,
         current: HeatmapCellDto?,
@@ -1158,14 +643,5 @@ class HistoryAndStatsService(
                     candidate.playCount > current.playCount
                 }
         }
-    }
-
-    private fun toPercent(
-        part: Long,
-        total: Long,
-    ): Double {
-        if (total <= 0L || part <= 0L) return 0.0
-        val rounded = ((part * PERCENT_MULTIPLIER / total) * ROUNDING_SCALE).roundToLong() / ROUNDING_SCALE
-        return rounded.coerceAtLeast(MIN_POSITIVE_PERCENT)
     }
 }

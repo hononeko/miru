@@ -16,6 +16,12 @@ enum class AuthMode {
     NONE,
 }
 
+enum class CookieSecureMode {
+    AUTO,
+    ALWAYS,
+    NEVER,
+}
+
 data class ServerConfig(
     val host: String,
     val port: Int,
@@ -99,6 +105,7 @@ data class AuthConfig(
     val adminUsername: String? = null,
     val adminPassword: String? = null,
     val allowLocalLogin: Boolean = true,
+    val cookieSecure: CookieSecureMode = CookieSecureMode.AUTO,
     val oidc: OidcConfig = OidcConfig(),
 ) {
     val localLoginEnabled: Boolean
@@ -110,7 +117,7 @@ data class AuthConfig(
     override fun toString(): String =
         "AuthConfig(mode=$mode, sessionSecret=***, adminUsername=$adminUsername, " +
             "adminPassword=${if (adminPassword != null) "***" else "null"}, " +
-            "allowLocalLogin=$allowLocalLogin, oidc=$oidc)"
+            "allowLocalLogin=$allowLocalLogin, cookieSecure=$cookieSecure, oidc=$oidc)"
 }
 
 data class GuardrailsConfig(
@@ -430,6 +437,7 @@ object AppConfigLoader {
         }
 
         val oidc = parseOidcConfig(mode = mode, get = get, errors = errors)
+        val cookieSecure = parseCookieSecureMode(get = get, errors = errors)
         val effectiveAllowLocal = allowLocalLogin ?: true
         val localLoginEnabled = mode == AuthMode.LOCAL && effectiveAllowLocal
         val oidcEnabled = mode != AuthMode.NONE && oidc.enabled
@@ -445,8 +453,25 @@ object AppConfigLoader {
             adminUsername = adminUsername,
             adminPassword = adminPassword,
             allowLocalLogin = effectiveAllowLocal,
+            cookieSecure = cookieSecure,
             oidc = oidc,
         )
+    }
+
+    private fun parseCookieSecureMode(
+        get: (String, String, String?) -> String?,
+        errors: MutableMap<String, String>,
+    ): CookieSecureMode {
+        val raw = get("AUTH_COOKIE_SECURE", "miru.auth.cookieSecure", "COOKIE_SECURE") ?: return CookieSecureMode.AUTO
+        return when (raw.lowercase()) {
+            "auto" -> CookieSecureMode.AUTO
+            "true", "always" -> CookieSecureMode.ALWAYS
+            "false", "never" -> CookieSecureMode.NEVER
+            else -> {
+                errors["AUTH_COOKIE_SECURE"] = "must be 'auto', 'true', or 'false', got '$raw'"
+                CookieSecureMode.AUTO
+            }
+        }
     }
 
     private fun parseOidcConfig(

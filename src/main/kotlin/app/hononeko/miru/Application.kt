@@ -542,6 +542,7 @@ fun Application.miruModule(
             authRoutes(
                 authService = authService,
                 authMode = config.auth.mode,
+                cookieSecureMode = config.auth.cookieSecure,
                 oidcAuthService = oidcAuthService,
             )
             if (plexOAuthService != null) {

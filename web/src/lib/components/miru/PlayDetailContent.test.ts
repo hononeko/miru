@@ -54,7 +54,7 @@ describe('PlayDetailContent', () => {
 	});
 
 	it('renders stream conversion details including target codecs, container, and subtitle burn-in', () => {
-		render(PlayDetailContent, { props: { detail: makeDetail() } });
+		render(PlayDetailContent, { props: { detail: makeDetail(), onopenMedia: () => {} } });
 
 		expect(screen.getByText('Alice')).toBeTruthy();
 		expect(screen.getByText('4K · HEVC → H264 · transcode')).toBeTruthy();
@@ -65,7 +65,10 @@ describe('PlayDetailContent', () => {
 
 	it('falls back to username and then userId when displayName is absent', () => {
 		render(PlayDetailContent, {
-			props: { detail: makeDetail({ displayName: null, username: null, userId: 'u-fallback' }) }
+			props: {
+				detail: makeDetail({ displayName: null, username: null, userId: 'u-fallback' }),
+				onopenMedia: () => {}
+			}
 		});
 
 		expect(screen.getByText('u-fallback')).toBeTruthy();

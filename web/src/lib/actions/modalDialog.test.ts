@@ -106,4 +106,15 @@ describe('lockPageScroll', () => {
 		releaseSecond();
 		expect(isLocked()).toBe(false);
 	});
+
+	it('keeps the gutter of a scrollbar that a closing bits-ui dialog has already hidden', () => {
+		vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(window.innerWidth);
+		document.body.style.setProperty('--scrollbar-width', '15px');
+		const release = lockPageScroll();
+		expect(document.body.style.getPropertyValue('--scroll-lock-gutter')).toBe('15px');
+		release();
+		expect(document.body.style.getPropertyValue('--scroll-lock-gutter')).toBe('');
+		document.body.style.removeProperty('--scrollbar-width');
+		vi.restoreAllMocks();
+	});
 });

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { page } from '$app/state';
 	import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Search, X } from 'lucide-svelte';
 	import { api, MiruApiError, unwrap } from '$api/client';
@@ -168,6 +168,13 @@
 		} finally {
 			detailLoading = false;
 		}
+	}
+
+	/** The sheet closes first: its focus trap and dismiss handling do not work around a dialog on top of it. */
+	async function openMediaFromDetail(ratingKey: string) {
+		detailOpen = false;
+		await tick();
+		void mediaDetailsModal.open(ratingKey);
 	}
 
 	onMount(() => {
@@ -553,6 +560,6 @@
 			{detailError}
 		</div>
 	{:else if detail}
-		<PlayDetailContent {detail} />
+		<PlayDetailContent {detail} onopenMedia={(ratingKey) => void openMediaFromDetail(ratingKey)} />
 	{/if}
 </Sheet>

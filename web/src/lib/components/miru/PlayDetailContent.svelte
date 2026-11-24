@@ -3,7 +3,6 @@
 	import Badge from '$components/ui/Badge.svelte';
 	import ProxiedImage from './ProxiedImage.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
-	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
 	import {
 		formatBandwidthKbps,
 		formatClockMs,
@@ -15,9 +14,10 @@
 
 	type Props = {
 		detail: HistoryDetailResponse;
+		onopenMedia: (ratingKey: string) => void;
 	};
 
-	let { detail }: Props = $props();
+	let { detail, onopenMedia }: Props = $props();
 
 	const titles = $derived(formatMediaTitle(detail.media));
 	const decision = $derived(getDecisionMeta(detail.streamTech.streamDecision, detail.streamTech.hwTranscode));
@@ -70,7 +70,7 @@
 	<div class="flex items-start gap-3.5">
 		<button
 			type="button"
-			onclick={() => void mediaDetailsModal.open(detail.media.ratingKey)}
+			onclick={() => onopenMedia(detail.media.ratingKey)}
 			aria-label={`View media details for ${titles.primary}`}
 			class="shrink-0 cursor-pointer rounded-lg transition-transform hover:scale-[1.02] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan"
 		>
@@ -85,7 +85,7 @@
 		<div class="flex min-w-0 flex-1 flex-col gap-1.5">
 			<button
 				type="button"
-				onclick={() => void mediaDetailsModal.open(detail.media.ratingKey)}
+				onclick={() => onopenMedia(detail.media.ratingKey)}
 				class="cursor-pointer text-left hover:underline"
 			>
 				<h3 class="font-display text-xl font-bold leading-tight text-fg-primary">
@@ -104,7 +104,7 @@
 				{/if}
 				<button
 					type="button"
-					onclick={() => void mediaDetailsModal.open(detail.media.ratingKey)}
+					onclick={() => onopenMedia(detail.media.ratingKey)}
 					class="cursor-pointer font-mono text-[11px] font-semibold text-cyan-hi hover:underline"
 				>
 					Media info →

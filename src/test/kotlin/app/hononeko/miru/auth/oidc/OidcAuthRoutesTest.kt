@@ -409,6 +409,11 @@ private fun createOidcHarness(
     )
 }
 
+private const val FRESH_LOGIN_COOKIE = "miru_oidc_fresh_login"
+
+private fun HttpResponse.setCookieHeader(name: String): String? =
+    headers.getAll(HttpHeaders.SetCookie).orEmpty().firstOrNull { it.startsWith("$name=") }
+
 private fun HttpResponse.cookieValue(name: String): String =
     extractCookieValue(headers.getAll(HttpHeaders.SetCookie).orEmpty(), name).shouldNotBeNull()
 
@@ -1181,6 +1186,76 @@ class OidcAuthRoutesTest :
                 }
                 val stored = harness.accountRepo.findByProviderAndSubject("OIDC", "sub-noui").shouldBeRight().shouldNotBeNull()
                 stored.emailVerified shouldBe false
+            }
+        }
+
+        test("asks the provider for a fresh login after a logout that leaves its session alive, until a sign-in succeeds") {
+            var scenario = MockIdpScenario(subject = "sub-fresh", groupsInIdToken = listOf("miru-users"))
+            val expectedChallengeHolder = mutableMapOf<String, String>()
+
+            suspend fun HttpClient.startLogin(freshLoginCookie: String? = null): Url {
+                val start =
+                    get("/api/v1/auth/oidc/login") {
+                        freshLoginCookie?.let { cookie(FRESH_LOGIN_COOKIE, it) }
+                    }
+                return Url(start.headers[HttpHeaders.Location].shouldNotBeNull())
+            }
+
+            createOidcHarness(
+                includeEndSessionEndpoint = false,
+                scenarioProvider = { scenario },
+                expectedChallengeHolder = expectedChallengeHolder,
+            ).use { harness ->
+                testApplication {
+                    setupApp(harness)
+                    val client = createClient { followRedirects = false }
+
+                    // A browser that never logged out of Miru may be signed in silently
+                    client.startLogin().parameters["prompt"].shouldBeNull()
+                    val session = client.signInWithOidc("code-fresh", expectedChallengeHolder)
+
+                    val logout = client.get("/api/v1/auth/oidc/logout") { cookie(SESSION_COOKIE_NAME, session) }
+                    logout.headers[HttpHeaders.Location] shouldBe "/login"
+                    val freshLoginCookie = logout.setCookieHeader(FRESH_LOGIN_COOKIE).shouldNotBeNull()
+                    freshLoginCookie shouldContain "HttpOnly"
+                    freshLoginCookie shouldContain "SameSite=Lax"
+                    freshLoginCookie shouldContain "Path=/api/v1/auth/oidc"
+                    val value = extractCookieValue(listOf(freshLoginCookie), FRESH_LOGIN_COOKIE).shouldNotBeNull()
+                    client.startLogin(value).parameters["prompt"] shouldBe "login"
+
+                    // A failed sign-in keeps asking, a successful one stops
+                    scenario = MockIdpScenario(subject = "sub-outsider", groupsInIdToken = listOf("unrelated-group"))
+                    val refused = client.completeOidcCallback("code-refused", expectedChallengeHolder)
+                    refused.status shouldBe HttpStatusCode.Forbidden
+                    refused.setCookieHeader(FRESH_LOGIN_COOKIE).shouldBeNull()
+                    scenario = MockIdpScenario(subject = "sub-fresh", groupsInIdToken = listOf("miru-users"))
+                    val accepted = client.completeOidcCallback("code-accepted", expectedChallengeHolder)
+                    accepted.status shouldBe HttpStatusCode.Found
+                    accepted.setCookieHeader(FRESH_LOGIN_COOKIE).shouldNotBeNull() shouldContain "Max-Age=0"
+
+                    // The API logout never reaches the provider
+                    val apiLogout = client.post("/api/v1/auth/logout") { header("X-Forwarded-Proto", "https") }
+                    apiLogout.status shouldBe HttpStatusCode.NoContent
+                    apiLogout.setCookieHeader(FRESH_LOGIN_COOKIE).shouldNotBeNull() shouldContain "Secure"
+                }
+            }
+        }
+
+        test("does not ask for a fresh login when logging out ends the provider's session or single sign-on is off") {
+            createOidcHarness().use { harness ->
+                testApplication {
+                    setupApp(harness)
+                    val client = createClient { followRedirects = false }
+                    val logout = client.get("/api/v1/auth/oidc/logout")
+                    Url(logout.headers[HttpHeaders.Location].shouldNotBeNull()).encodedPath shouldBe "/o/miru/end-session"
+                    logout.setCookieHeader(FRESH_LOGIN_COOKIE).shouldBeNull()
+                }
+            }
+            createOidcHarness(mode = AuthMode.LOCAL, oidcEnabled = false).use { harness ->
+                testApplication {
+                    setupApp(harness)
+                    client.post("/api/v1/auth/logout").setCookieHeader(FRESH_LOGIN_COOKIE).shouldBeNull()
+                }
             }
         }
 

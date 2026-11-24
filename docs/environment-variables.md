@@ -114,6 +114,8 @@ Single sign-on is on with `AUTH_MODE=oidc`, or with `AUTH_MODE=local` and `OIDC_
 | `OIDC_AUTO_LINK_BY_EMAIL` | `true` | Automatically links SSO accounts to the Plex users with the same verified email address, which scopes what a `USER` account sees. Only an email the identity provider marks as verified (`email_verified`, from the ID token or userinfo) is used, and an account without one is unlinked. Sign-in records the email and whether it is verified; links are recomputed when that changes and after every hourly Plex user sync. Once an admin edits an account's links, Miru stops changing them until the admin switches the account back to email linking. Set to `false` to disable automatic email linking. |
 | `OIDC_POST_LOGOUT_REDIRECT_URI` | *(none)* | Where your provider sends the browser after logout, for example `https://<your-host>/login`. Must be an `http://` or `https://` URL. |
 
+Logging out of Miru also ends the session at your provider if it supports that (an `end_session_endpoint` in its discovery document). If it does not, as with Authelia, Miru asks it for a fresh login (`prompt=login`) the next time you sign in from that browser. How you confirm it, for example whether a passkey is accepted, is up to the provider.
+
 ## Logging
 
 Miru logs JSON lines to standard output.

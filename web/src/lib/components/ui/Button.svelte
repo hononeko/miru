@@ -17,7 +17,7 @@
 				outline: 'bg-transparent text-fg-primary border border-border-strong hover:bg-elevated',
 				ghost: 'bg-transparent text-fg-secondary hover:bg-elevated hover:text-fg-primary',
 				destructive:
-					'bg-danger-soft text-danger border border-danger/60 hover:bg-danger hover:text-white hover:-translate-y-px active:translate-y-0 motion-reduce:hover:translate-y-0'
+					'bg-danger-soft text-danger border border-danger/60 hover:bg-danger hover:text-danger-fg hover:-translate-y-px active:translate-y-0 motion-reduce:hover:translate-y-0'
 			},
 			size: {
 				sm: 'h-8 px-3 text-[11px]',

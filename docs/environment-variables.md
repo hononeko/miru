@@ -84,6 +84,7 @@ Automated stream guardrails default to `disabled`. Setting a rule's mode to `war
 | `AUTH_ALLOW_LOCAL_LOGIN` | `true` | With `AUTH_MODE=local`, `false` turns off username and password logins, leaving single sign-on (which then must be enabled with `OIDC_ENABLED=true`). Local logins are always off with `AUTH_MODE=oidc`. |
 | `MIRU_ADMIN_USERNAME` | *(none)* | Creates this admin account on startup if no admin exists yet, as an alternative to the first-run setup page. Set it together with `MIRU_ADMIN_PASSWORD`. Ignored when local logins are off. |
 | `MIRU_ADMIN_PASSWORD` 🔒 | *(none)* | Password for `MIRU_ADMIN_USERNAME`: at least 12 characters, with an uppercase letter, a lowercase letter and a digit. Used only to create the account; changing it later has no effect. |
+| `AUTH_COOKIE_SECURE` | `auto` | Controls the `Secure` attribute on session and OIDC cookies (`COOKIE_SECURE` fallback also accepted). `auto` sets `Secure` when the request arrives over TLS or includes `X-Forwarded-Proto=https` / `Forwarded: proto=https`; `true` (`always`) always sets `Secure`; `false` (`never`) omits `Secure` (only for plain-HTTP local development). |
 
 When `AUTH_MODE` is not `none`, at least one login method (local or single sign-on) must be enabled.
 

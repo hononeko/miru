@@ -1174,4 +1174,68 @@ class OidcAuthRoutesTest :
                 stored.emailVerified shouldBe false
             }
         }
+
+        test("sets Secure flag consistently on miru_oidc_tx, miru_session, miru_oidc_hint, and OIDC cookie-clearing paths") {
+            val expectedChallengeHolder = mutableMapOf<String, String>()
+            val scenario =
+                MockIdpScenario(
+                    subject = "sub-sec",
+                    preferredUsername = "secuser",
+                    email = "sec@miru.local",
+                    groupsInIdToken = listOf("miru-users"),
+                )
+
+            fun hasSecureFlag(setCookieHeaders: List<String>, name: String): Boolean {
+                val target = setCookieHeaders.first { it.startsWith("$name=") }
+                return target.split(';').any { it.trim().equals("Secure", ignoreCase = true) }
+            }
+
+            createOidcHarness(scenarioProvider = { scenario }, expectedChallengeHolder = expectedChallengeHolder).use { harness ->
+                testApplication {
+                    setupApp(harness)
+                    val client = createClient { followRedirects = false }
+
+                    // Plain HTTP omits Secure in AUTO mode
+                    val plainStart = client.get("/api/v1/auth/oidc/login")
+                    hasSecureFlag(plainStart.headers.getAll(HttpHeaders.SetCookie).orEmpty(), "miru_oidc_tx") shouldBe false
+
+                    // X-Forwarded-Proto: https sets Secure across login, callback (including cleared tx + session + hint), and logout
+                    val start =
+                        client.get("/api/v1/auth/oidc/login") {
+                            header("X-Forwarded-Proto", "https")
+                        }
+                    val startCookies = start.headers.getAll(HttpHeaders.SetCookie).orEmpty()
+                    hasSecureFlag(startCookies, "miru_oidc_tx") shouldBe true
+
+                    val loc = Url(start.headers[HttpHeaders.Location].shouldNotBeNull())
+                    val state = loc.parameters["state"].shouldNotBeNull()
+                    expectedChallengeHolder["code-sec"] = loc.parameters["code_challenge"].shouldNotBeNull()
+                    expectedChallengeHolder["nonce:code-sec"] = loc.parameters["nonce"].shouldNotBeNull()
+                    val txCookie = extractCookieValue(startCookies, "miru_oidc_tx").shouldNotBeNull()
+
+                    val callback =
+                        client.get("/api/v1/auth/oidc/callback?code=code-sec&state=$state") {
+                            header("X-Forwarded-Proto", "https")
+                            cookie("miru_oidc_tx", txCookie)
+                        }
+                    val callbackCookies = callback.headers.getAll(HttpHeaders.SetCookie).orEmpty()
+                    hasSecureFlag(callbackCookies, "miru_oidc_tx") shouldBe true
+                    hasSecureFlag(callbackCookies, SESSION_COOKIE_NAME) shouldBe true
+                    hasSecureFlag(callbackCookies, "miru_oidc_hint") shouldBe true
+
+                    val sessionCookie = extractCookieValue(callbackCookies, SESSION_COOKIE_NAME).shouldNotBeNull()
+                    val hintCookie = extractCookieValue(callbackCookies, "miru_oidc_hint").shouldNotBeNull()
+
+                    val logout =
+                        client.get("/api/v1/auth/oidc/logout") {
+                            header("X-Forwarded-Proto", "https")
+                            cookie(SESSION_COOKIE_NAME, sessionCookie)
+                            cookie("miru_oidc_hint", hintCookie)
+                        }
+                    val logoutCookies = logout.headers.getAll(HttpHeaders.SetCookie).orEmpty()
+                    hasSecureFlag(logoutCookies, SESSION_COOKIE_NAME) shouldBe true
+                    hasSecureFlag(logoutCookies, "miru_oidc_hint") shouldBe true
+                }
+            }
+        }
     })

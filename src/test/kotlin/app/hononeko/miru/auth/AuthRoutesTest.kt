@@ -4,6 +4,7 @@ import app.hononeko.miru.MiruJson
 import app.hononeko.miru.config.AppConfig
 import app.hononeko.miru.config.AuthConfig
 import app.hononeko.miru.config.AuthMode
+import app.hononeko.miru.config.CookieSecureMode
 import app.hononeko.miru.config.DatabaseConfig
 import app.hononeko.miru.config.PlexConfig
 import app.hononeko.miru.config.ServerConfig
@@ -1198,6 +1199,82 @@ class AuthRoutesTest :
                         ).shouldBeLeft()
                         .shouldBeInstanceOf<MiruError.ValidationError>()
                 invalidErr.fieldErrors.keys shouldContainExactly setOf("theme")
+            }
+        }
+
+        test("sets Secure flag on session cookies and logout clearing cookies according to CookieSecureMode and proxy headers") {
+            createHarness(adminUsername = "admin", adminPassword = "Admin-strong-password-1").use { harness ->
+                harness.authService.bootstrapAdminIfConfigured().shouldBeRight()
+
+                fun hasSecureFlag(setCookieHeaders: List<String>, name: String): Boolean {
+                    val target = setCookieHeaders.first { it.startsWith("$name=") }
+                    return target.split(';').any { it.trim().equals("Secure", ignoreCase = true) }
+                }
+
+                // AUTO mode: plain HTTP omits Secure, X-Forwarded-Proto: https and Forwarded proto=https set Secure
+                testApplication {
+                    application { miruModule(config = harness.appConfig, authService = harness.authService) }
+
+                    val httpLogin =
+                        client.post("/api/v1/auth/login") {
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(LoginRequest("admin", "Admin-strong-password-1")))
+                        }
+                    hasSecureFlag(httpLogin.headers.getAll(HttpHeaders.SetCookie).orEmpty(), SESSION_COOKIE_NAME) shouldBe false
+
+                    val httpsLogin =
+                        client.post("/api/v1/auth/login") {
+                            header("X-Forwarded-Proto", "https, http")
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(LoginRequest("admin", "Admin-strong-password-1")))
+                        }
+                    val httpsCookies = httpsLogin.headers.getAll(HttpHeaders.SetCookie).orEmpty()
+                    hasSecureFlag(httpsCookies, SESSION_COOKIE_NAME) shouldBe true
+                    val token = extractCookieValue(httpsCookies.first()).shouldNotBeNull()
+
+                    val forwardedLogout =
+                        client.post("/api/v1/auth/logout") {
+                            header(HttpHeaders.Forwarded, "for=192.0.2.1;proto=\"https\"")
+                            cookie(SESSION_COOKIE_NAME, token)
+                        }
+                    hasSecureFlag(
+                        forwardedLogout.headers.getAll(HttpHeaders.SetCookie).orEmpty(),
+                        SESSION_COOKIE_NAME,
+                    ) shouldBe true
+                }
+
+                // ALWAYS mode sets Secure even over plain HTTP
+                testApplication {
+                    application {
+                        miruModule(
+                            config = harness.appConfig.copy(auth = harness.appConfig.auth.copy(cookieSecure = CookieSecureMode.ALWAYS)),
+                            authService = harness.authService,
+                        )
+                    }
+                    val login =
+                        client.post("/api/v1/auth/login") {
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(LoginRequest("admin", "Admin-strong-password-1")))
+                        }
+                    hasSecureFlag(login.headers.getAll(HttpHeaders.SetCookie).orEmpty(), SESSION_COOKIE_NAME) shouldBe true
+                }
+
+                // NEVER mode omits Secure even when X-Forwarded-Proto: https is present
+                testApplication {
+                    application {
+                        miruModule(
+                            config = harness.appConfig.copy(auth = harness.appConfig.auth.copy(cookieSecure = CookieSecureMode.NEVER)),
+                            authService = harness.authService,
+                        )
+                    }
+                    val login =
+                        client.post("/api/v1/auth/login") {
+                            header("X-Forwarded-Proto", "https")
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(LoginRequest("admin", "Admin-strong-password-1")))
+                        }
+                    hasSecureFlag(login.headers.getAll(HttpHeaders.SetCookie).orEmpty(), SESSION_COOKIE_NAME) shouldBe false
+                }
             }
         }
     })

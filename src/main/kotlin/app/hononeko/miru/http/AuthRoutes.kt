@@ -7,6 +7,7 @@ import app.hononeko.miru.auth.authenticated
 import app.hononeko.miru.auth.oidc.OidcAuthService
 import app.hononeko.miru.auth.requireMiruPrincipal
 import app.hononeko.miru.config.AuthMode
+import app.hononeko.miru.config.CookieSecureMode
 import app.hononeko.miru.domain.error.MiruError
 import arrow.core.Either
 import arrow.core.raise.either
@@ -34,12 +35,14 @@ fun Route.authRoutes(
     authService: AuthService,
     authMode: AuthMode,
     sessionMaxAgeSeconds: Int = DEFAULT_COOKIE_MAX_AGE_SECONDS,
+    cookieSecureMode: CookieSecureMode = CookieSecureMode.AUTO,
     oidcAuthService: OidcAuthService? = null,
 ) {
     route("/api/v1/auth") {
         publicAuthRoutes(
             authService = authService,
             sessionMaxAgeSeconds = sessionMaxAgeSeconds,
+            cookieSecureMode = cookieSecureMode,
             oidcAuthService = oidcAuthService,
         )
         authenticated(authService = authService, authMode = authMode) {
@@ -85,6 +88,7 @@ fun Route.authRoutes(
 private fun Route.publicAuthRoutes(
     authService: AuthService,
     sessionMaxAgeSeconds: Int,
+    cookieSecureMode: CookieSecureMode,
     oidcAuthService: OidcAuthService?,
 ) {
     get("/status") {
@@ -117,7 +121,8 @@ private fun Route.publicAuthRoutes(
         result.fold(
             ifLeft = { call.respondError(it) },
             ifRight = { loginResult ->
-                call.appendSessionCookie(loginResult.signedToken, sessionMaxAgeSeconds)
+                val secure = call.shouldUseSecureCookies(cookieSecureMode)
+                call.appendSessionCookie(loginResult.signedToken, sessionMaxAgeSeconds, secure = secure)
                 call.respond(HttpStatusCode.Created, loginResult.principal.toResponse())
             },
         )
@@ -134,7 +139,8 @@ private fun Route.publicAuthRoutes(
         result.fold(
             ifLeft = { call.respondError(it) },
             ifRight = { (loginResult, response) ->
-                call.appendSessionCookie(loginResult.signedToken, sessionMaxAgeSeconds)
+                val secure = call.shouldUseSecureCookies(cookieSecureMode)
+                call.appendSessionCookie(loginResult.signedToken, sessionMaxAgeSeconds, secure = secure)
                 call.respond(HttpStatusCode.OK, response)
             },
         )
@@ -145,8 +151,9 @@ private fun Route.publicAuthRoutes(
         authService.logout(signedToken).fold(
             ifLeft = { call.respondError(it) },
             ifRight = {
-                call.clearSessionCookie()
-                call.clearOidcHintCookie()
+                val secure = call.shouldUseSecureCookies(cookieSecureMode)
+                call.clearSessionCookie(secure = secure)
+                call.clearOidcHintCookie(secure = secure)
                 call.respond(HttpStatusCode.NoContent)
             },
         )
@@ -156,6 +163,7 @@ private fun Route.publicAuthRoutes(
         authService = authService,
         oidcAuthService = oidcAuthService,
         sessionMaxAgeSeconds = sessionMaxAgeSeconds,
+        cookieSecureMode = cookieSecureMode,
     )
 }
 
@@ -163,6 +171,7 @@ private fun Route.oidcRoutes(
     authService: AuthService,
     oidcAuthService: OidcAuthService?,
     sessionMaxAgeSeconds: Int,
+    cookieSecureMode: CookieSecureMode,
 ) {
     route("/oidc") {
         get("/login") {
@@ -173,7 +182,8 @@ private fun Route.oidcRoutes(
             oidcAuthService.startAuthorization().fold(
                 ifLeft = { call.respondError(it) },
                 ifRight = { start ->
-                    call.appendOidcTxCookie(start.txCookieValue)
+                    val secure = call.shouldUseSecureCookies(cookieSecureMode)
+                    call.appendOidcTxCookie(start.txCookieValue, secure = secure)
                     call.respondRedirect(start.authorizationUrl, permanent = false)
                 },
             )
@@ -190,6 +200,7 @@ private fun Route.oidcRoutes(
             val errorParam = call.request.queryParameters["error"]
             val errorDescription = call.request.queryParameters["error_description"]
             val txCookie = call.request.cookies[OIDC_TX_COOKIE_NAME]
+            val secure = call.shouldUseSecureCookies(cookieSecureMode)
 
             val result =
                 oidcAuthService.handleCallback(
@@ -199,15 +210,15 @@ private fun Route.oidcRoutes(
                     errorParam = errorParam,
                     errorDescription = errorDescription,
                 )
-            call.clearOidcTxCookie()
+            call.clearOidcTxCookie(secure = secure)
 
             result.fold(
                 ifLeft = { err -> call.respondOidcFailure(err) },
                 ifRight = { callbackResult ->
-                    call.appendSessionCookie(callbackResult.loginResult.signedToken, sessionMaxAgeSeconds)
+                    call.appendSessionCookie(callbackResult.loginResult.signedToken, sessionMaxAgeSeconds, secure = secure)
                     val hint = callbackResult.idTokenHint
                     if (!hint.isNullOrBlank() && oidcAuthService.hasEndSessionEndpoint()) {
-                        call.appendOidcHintCookie(hint, sessionMaxAgeSeconds)
+                        call.appendOidcHintCookie(hint, sessionMaxAgeSeconds, secure = secure)
                     }
                     call.respondRedirect("/", permanent = false)
                 },
@@ -217,9 +228,10 @@ private fun Route.oidcRoutes(
         get("/logout") {
             val signedToken = call.request.cookies[SESSION_COOKIE_NAME]
             val idTokenHint = call.request.cookies[OIDC_HINT_COOKIE_NAME]
+            val secure = call.shouldUseSecureCookies(cookieSecureMode)
             authService.logout(signedToken)
-            call.clearSessionCookie()
-            call.clearOidcHintCookie()
+            call.clearSessionCookie(secure = secure)
+            call.clearOidcHintCookie(secure = secure)
             val endSessionUrl = oidcAuthService?.buildEndSessionUrl(idTokenHint)
             call.respondRedirect(endSessionUrl ?: "/login", permanent = false)
         }
@@ -337,9 +349,41 @@ private fun Route.adminApiKeyRoutes(authService: AuthService) {
     }
 }
 
+internal fun ApplicationCall.shouldUseSecureCookies(mode: CookieSecureMode): Boolean =
+    when (mode) {
+        CookieSecureMode.ALWAYS -> true
+        CookieSecureMode.NEVER -> false
+        CookieSecureMode.AUTO ->
+            request.local.scheme.equals("https", ignoreCase = true) || isForwardedHttps(this)
+    }
+
+private fun isForwardedHttps(call: ApplicationCall): Boolean {
+    val xForwardedProto =
+        call.request.headers["X-Forwarded-Proto"]
+            ?.substringBefore(',')
+            ?.trim()
+    if (xForwardedProto.equals("https", ignoreCase = true)) {
+        return true
+    }
+
+    val forwardedFirst =
+        call.request.headers[HttpHeaders.Forwarded]
+            ?.substringBefore(',')
+            ?: return false
+    return forwardedFirst
+        .split(';')
+        .any { param ->
+            val parts = param.split('=', limit = 2)
+            parts.size == 2 &&
+                parts[0].trim().equals("proto", ignoreCase = true) &&
+                parts[1].trim().trim('"').equals("https", ignoreCase = true)
+        }
+}
+
 private fun ApplicationCall.appendSessionCookie(
     value: String,
     maxAgeSeconds: Int,
+    secure: Boolean,
 ) {
     response.cookies.append(
         Cookie(
@@ -347,45 +391,52 @@ private fun ApplicationCall.appendSessionCookie(
             value = value,
             maxAge = maxAgeSeconds,
             path = "/",
+            secure = secure,
             httpOnly = true,
             extensions = mapOf("SameSite" to "Lax"),
         ),
     )
 }
 
-private fun ApplicationCall.clearSessionCookie() {
+private fun ApplicationCall.clearSessionCookie(secure: Boolean) {
     response.cookies.append(
         Cookie(
             name = SESSION_COOKIE_NAME,
             value = "",
             maxAge = 0,
             path = "/",
+            secure = secure,
             httpOnly = true,
             extensions = mapOf("SameSite" to "Lax"),
         ),
     )
 }
 
-private fun ApplicationCall.appendOidcTxCookie(value: String) {
+private fun ApplicationCall.appendOidcTxCookie(
+    value: String,
+    secure: Boolean,
+) {
     response.cookies.append(
         Cookie(
             name = OIDC_TX_COOKIE_NAME,
             value = value,
             maxAge = OIDC_TX_COOKIE_MAX_AGE_SECONDS,
             path = OIDC_COOKIE_PATH,
+            secure = secure,
             httpOnly = true,
             extensions = mapOf("SameSite" to "Lax"),
         ),
     )
 }
 
-private fun ApplicationCall.clearOidcTxCookie() {
+private fun ApplicationCall.clearOidcTxCookie(secure: Boolean) {
     response.cookies.append(
         Cookie(
             name = OIDC_TX_COOKIE_NAME,
             value = "",
             maxAge = 0,
             path = OIDC_COOKIE_PATH,
+            secure = secure,
             httpOnly = true,
             extensions = mapOf("SameSite" to "Lax"),
         ),
@@ -395,6 +446,7 @@ private fun ApplicationCall.clearOidcTxCookie() {
 private fun ApplicationCall.appendOidcHintCookie(
     value: String,
     maxAgeSeconds: Int,
+    secure: Boolean,
 ) {
     response.cookies.append(
         Cookie(
@@ -402,19 +454,21 @@ private fun ApplicationCall.appendOidcHintCookie(
             value = value,
             maxAge = maxAgeSeconds,
             path = OIDC_COOKIE_PATH,
+            secure = secure,
             httpOnly = true,
             extensions = mapOf("SameSite" to "Lax"),
         ),
     )
 }
 
-private fun ApplicationCall.clearOidcHintCookie() {
+private fun ApplicationCall.clearOidcHintCookie(secure: Boolean) {
     response.cookies.append(
         Cookie(
             name = OIDC_HINT_COOKIE_NAME,
             value = "",
             maxAge = 0,
             path = OIDC_COOKIE_PATH,
+            secure = secure,
             httpOnly = true,
             extensions = mapOf("SameSite" to "Lax"),
         ),

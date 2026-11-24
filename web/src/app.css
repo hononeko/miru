@@ -58,13 +58,14 @@
 	--destructive: #d4174a;
 	--destructive-soft: #fff1f2;
 
-	/* Chart series (identity only — never status). Hononeko-anchored, fixed order, validated for CVD separation:
-	   1 tabby (primary hue) · 2 steel (cool counterpart) · 3 wheat (warm neighbour) · 4 heather (plum, pairs with pine)
-	   No green/teal series: at chart strength it either reads gray or impersonates Direct Play. */
-	--chart-1: #bd6009;
-	--chart-2: #3260a3;
-	--chart-3: #a07e1e;
-	--chart-4: #9b4a83;
+	/* Chart series (identity only — never status). Hononeko-anchored, fixed order:
+	   1 tabby (primary hue) · 2 steel · 3 heather · 4 plum.
+	   Validated across ALL pairs, not just neighbours: stacked bars skip empty segments, so any two series can touch.
+	   No green/teal series (reads gray or impersonates Direct Play); no wheat (collides with tabby for colour-blind viewers). */
+	--chart-1: #bb6127;
+	--chart-2: #2750a2;
+	--chart-3: #7e3963;
+	--chart-4: #9076be;
 }
 
 .dark {
@@ -108,10 +109,10 @@
 	--destructive: #f43f5e;
 	--destructive-soft: #331115;
 
-	--chart-1: #ca7231;
-	--chart-2: #4d78b7;
-	--chart-3: #b09142;
-	--chart-4: #ab6595;
+	--chart-1: #cc7038;
+	--chart-2: #6593eb;
+	--chart-3: #d06fa9;
+	--chart-4: #6d5398;
 }
 
 @theme inline {

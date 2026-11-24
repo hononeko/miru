@@ -8,7 +8,11 @@ plugins {
 }
 
 group = "app.hononeko.miru"
-version = "0.1.0"
+version =
+    findProperty("version")
+        ?.toString()
+        ?.takeIf { it != "unspecified" && it.isNotBlank() }
+        ?: "0.1.0"
 
 repositories {
     // Google's mirror of Maven Central first: Central rate-limits CI runners (HTTP 429), and Gradle moves to the next
@@ -95,11 +99,20 @@ tasks.register<Test>("integrationTest") {
     shouldRunAfter(testTask)
 }
 
+tasks.jar {
+    manifest {
+        attributes["Implementation-Version"] = project.version.toString()
+    }
+}
+
 tasks.shadowJar {
     archiveFileName.set("miru-all.jar")
     duplicatesStrategy = DuplicatesStrategy.INCLUDE
     mergeServiceFiles()
     exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA")
+    manifest {
+        attributes["Implementation-Version"] = project.version.toString()
+    }
 }
 
 // Everything `shadowJar` resolves: the libraries, plus the Kotlin compiler and its serialization plugin.

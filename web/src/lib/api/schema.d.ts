@@ -229,6 +229,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/me/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Change the current local account's password
+         * @description Verifies the caller's current password, validates the new password against the password policy, revokes existing sessions for the account, and rotates the session cookie when called with a session cookie. Rejects `AUTH_MODE=none` and OIDC accounts with `409 Conflict`.
+         */
+        post: operations["changeOwnPassword"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/accounts": {
         parameters: {
             query?: never;
@@ -261,7 +281,11 @@ export interface paths {
         delete: operations["deleteAccount"];
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Update an account's role, disabled status, or local password
+         * @description Updates role (`ADMIN` / `USER`), `disabled` status, and/or resets a `LOCAL` account's password. Prevents self-demotion, self-disabling, and demoting or disabling the last active admin. Revokes active sessions whenever the account is disabled, downgraded, or has its password reset.
+         */
+        patch: operations["updateAccount"];
         trace?: never;
     };
     "/api/v1/admin/accounts/{id}/media-users": {
@@ -954,7 +978,7 @@ export interface components {
             status: string;
             /** @example miru */
             service: string;
-            /** @example 0.1.0 */
+            /** @example 1.0.0 */
             version: string;
         };
         DependencyCheckStatus: {
@@ -1036,7 +1060,27 @@ export interface components {
             role: components["schemas"]["MiruRole"];
             linkedMediaUserIds: string[];
             authSource: components["schemas"]["AuthSource"];
+            /** @example LOCAL */
+            authProvider?: string;
             avatarUrl?: string | null;
+        };
+        ChangePasswordRequest: {
+            /** Format: password */
+            currentPassword: string;
+            /**
+             * Format: password
+             * @description Must be at least 12 characters and include at least 1 lowercase letter, 1 uppercase letter, and 1 digit.
+             */
+            newPassword: string;
+        };
+        UpdateAccountRequest: {
+            role?: components["schemas"]["MiruRole"] | null;
+            disabled?: boolean | null;
+            /**
+             * Format: password
+             * @description New password for LOCAL accounts. Must satisfy the password policy.
+             */
+            password?: string | null;
         };
         UserPreferencesResponse: {
             /** @enum {string} */
@@ -2564,6 +2608,55 @@ export interface operations {
             };
         };
     };
+    changeOwnPassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChangePasswordRequest"];
+            };
+        };
+        responses: {
+            /** @description Password updated and existing sessions revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation error (e.g. blank current password or weak new password) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Missing credentials, disabled account, or incorrect current password */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Password change unsupported for OIDC accounts or when AUTH_MODE=none */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
     listAccounts: {
         parameters: {
             query?: never;
@@ -2717,6 +2810,77 @@ export interface operations {
                 };
             };
             /** @description Cannot delete self or last remaining admin */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    updateAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateAccountRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated account */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountResponse"];
+                };
+            };
+            /** @description Validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Account not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Self-demotion/disable, last active admin protection, or password reset on OIDC account */
             409: {
                 headers: {
                     [name: string]: unknown;

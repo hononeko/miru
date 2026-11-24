@@ -21,6 +21,7 @@ data class MiruPrincipal(
     val role: MiruRole,
     val linkedMediaUserIds: Set<String> = emptySet(),
     val authSource: AuthSource = AuthSource.SESSION_COOKIE,
+    val authProvider: String = "LOCAL",
 ) {
     fun isAdmin(): Boolean = role == MiruRole.ADMIN
 

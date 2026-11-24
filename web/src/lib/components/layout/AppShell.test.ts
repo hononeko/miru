@@ -1,5 +1,6 @@
-import { cleanup, render, screen } from '@testing-library/svelte';
+import { cleanup, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { api } from '$api/client';
 import { authStore } from '$stores/auth.svelte';
 import AppShell from './AppShell.svelte';
 
@@ -15,6 +16,7 @@ vi.mock('$app/navigation', () => ({
 
 describe('AppShell user avatars', () => {
 	afterEach(() => {
+		vi.restoreAllMocks();
 		cleanup();
 		authStore.principal = null;
 	});
@@ -95,5 +97,26 @@ describe('AppShell user avatars', () => {
 		render(AppShell);
 		expect(screen.getAllByRole('link', { name: 'Users' }).length).toBeGreaterThan(0);
 		expect(screen.getAllByRole('link', { name: 'Admin' }).length).toBeGreaterThan(0);
+	});
+
+	it('displays server version from /healthz in the sidebar footer', async () => {
+		vi.spyOn(api, 'GET').mockResolvedValueOnce({
+			data: { status: 'ok', service: 'miru', version: '1.0.0-rc1' },
+			response: new Response(null, { status: 200 })
+		} as never);
+
+		authStore.principal = {
+			accountId: 'acc-1',
+			username: 'sergiu',
+			role: 'ADMIN',
+			linkedMediaUserIds: [],
+			authSource: 'SESSION_COOKIE',
+			avatarUrl: null
+		};
+
+		render(AppShell);
+		await waitFor(() => {
+			expect(screen.getByText('Miru v1.0.0-rc1')).toBeTruthy();
+		});
 	});
 });

@@ -1,7 +1,9 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
+	import { api } from '$api/client';
 	import {
 		Radio,
 		History,
@@ -28,6 +30,20 @@
 	};
 
 	let { children }: Props = $props();
+
+	let serverVersion = $state<string | null>(null);
+
+	onMount(() => {
+		if (typeof window === 'undefined') return;
+		void api
+			.GET('/healthz')
+			.then((res) => {
+				if (res.data?.version) {
+					serverVersion = res.data.version;
+				}
+			})
+			.catch(() => {});
+	});
 
 	const navItems = $derived.by(() => {
 		const items = [
@@ -200,6 +216,11 @@
 					{/if}
 				</div>
 			</div>
+			{#if serverVersion}
+				<p class="px-1 text-center font-mono text-[10px] text-fg-muted">
+					Miru v{serverVersion}
+				</p>
+			{/if}
 		</div>
 	</aside>
 

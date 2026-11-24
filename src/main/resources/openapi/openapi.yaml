@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Miru API
-  version: 0.1.0
+  version: 1.0.0
   description: >-
     Lightweight media server telemetry, live stream monitor, playback history tracker,
     and library analytics API.
@@ -368,6 +368,47 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /api/v1/auth/me/password:
+    post:
+      tags: [Auth]
+      operationId: changeOwnPassword
+      summary: Change the current local account's password
+      description: >-
+        Verifies the caller's current password, validates the new password against the password
+        policy, revokes existing sessions for the account, and rotates the session cookie when called
+        with a session cookie. Rejects `AUTH_MODE=none` and OIDC accounts with `409 Conflict`.
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        '204':
+          description: Password updated and existing sessions revoked
+        '400':
+          description: Validation error (e.g. blank current password or weak new password)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Missing credentials, disabled account, or incorrect current password
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Password change unsupported for OIDC accounts or when AUTH_MODE=none
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
   /api/v1/admin/accounts:
     get:
       tags: [Admin]
@@ -449,6 +490,68 @@ paths:
                 $ref: '#/components/schemas/ProblemDetails'
 
   /api/v1/admin/accounts/{id}:
+    patch:
+      tags: [Admin]
+      operationId: updateAccount
+      summary: Update an account's role, disabled status, or local password
+      description: >-
+        Updates role (`ADMIN` / `USER`), `disabled` status, and/or resets a `LOCAL` account's
+        password. Prevents self-demotion, self-disabling, and demoting or disabling the last active
+        admin. Revokes active sessions whenever the account is disabled, downgraded, or has its
+        password reset.
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAccountRequest'
+      responses:
+        '200':
+          description: Updated account
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '400':
+          description: Validation error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Account not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Self-demotion/disable, last active admin protection, or password reset on OIDC account
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
     delete:
       tags: [Admin]
       operationId: deleteAccount
@@ -2768,7 +2871,7 @@ components:
           example: miru
         version:
           type: string
-          example: 0.1.0
+          example: 1.0.0
 
     DependencyCheckStatus:
       type: object
@@ -2922,9 +3025,42 @@ components:
             type: string
         authSource:
           $ref: '#/components/schemas/AuthSource'
+        authProvider:
+          type: string
+          example: LOCAL
         avatarUrl:
           type: string
           nullable: true
+
+    ChangePasswordRequest:
+      type: object
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword:
+          type: string
+          format: password
+        newPassword:
+          type: string
+          format: password
+          minLength: 12
+          description: Must be at least 12 characters and include at least 1 lowercase letter, 1 uppercase letter, and 1 digit.
+
+    UpdateAccountRequest:
+      type: object
+      properties:
+        role:
+          oneOf:
+            - $ref: '#/components/schemas/MiruRole'
+            - type: 'null'
+        disabled:
+          type: boolean
+          nullable: true
+        password:
+          type: string
+          format: password
+          minLength: 12
+          nullable: true
+          description: New password for LOCAL accounts. Must satisfy the password policy.
 
     UserPreferencesResponse:
       type: object

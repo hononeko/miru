@@ -22,6 +22,7 @@ import io.ktor.server.response.respondRedirect
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
+import io.ktor.server.routing.patch
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.route
@@ -78,6 +79,30 @@ fun Route.authRoutes(
                         authService.updatePreferences(principal, request).bind()
                     }
                 call.respondEither(result)
+            }
+
+            post("/me/password") {
+                val request = call.receive<ChangePasswordRequest>()
+                val result =
+                    either {
+                        val principal = call.requireMiruPrincipal().bind()
+                        authService
+                            .changeOwnPassword(
+                                principal = principal,
+                                currentPassword = request.currentPassword,
+                                newPassword = request.newPassword,
+                            ).bind()
+                    }
+                result.fold(
+                    ifLeft = { call.respondError(it) },
+                    ifRight = { rotatedLogin ->
+                        if (rotatedLogin != null) {
+                            val secure = call.shouldUseSecureCookies(cookieSecureMode)
+                            call.appendSessionCookie(rotatedLogin.signedToken, sessionMaxAgeSeconds, secure = secure)
+                        }
+                        call.respond(HttpStatusCode.NoContent)
+                    },
+                )
             }
         }
     }
@@ -294,6 +319,25 @@ private fun Route.adminAccountRoutes(authService: AuthService) {
                         linkedMediaUserIds = request.linkedMediaUserIds,
                     ).map { it.toResponse() }
             call.respondEither(result, HttpStatusCode.Created)
+        }
+
+        patch("/{id}") {
+            val targetId = call.parameters["id"].orEmpty()
+            val request = call.receive<UpdateAccountRequest>()
+            val result =
+                either {
+                    val acting = call.requireMiruPrincipal().bind()
+                    authService
+                        .updateAccount(
+                            id = targetId,
+                            actingAccountId = acting.accountId,
+                            role = request.role,
+                            disabled = request.disabled,
+                            password = request.password,
+                        ).bind()
+                        .toResponse()
+                }
+            call.respondEither(result)
         }
 
         delete("/{id}") {

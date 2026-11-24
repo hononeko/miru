@@ -26,6 +26,7 @@
 		GuardrailMode,
 		GuardrailRuleDto,
 		GuardrailRuleType,
+		HealthResponse,
 		MiruRole,
 		PlexConnectionOptionDto,
 		PlexConnectionStatus,
@@ -37,6 +38,7 @@
 		TerminationAuditAction,
 		TerminationAuditEntryDto,
 		TerminationAuditSource,
+		UpdateAccountRequest,
 		UserSummaryDto
 	} from '$api/types';
 	import Badge from '$components/ui/Badge.svelte';
@@ -66,6 +68,7 @@
 	let emailLinkingEnabled = $state(false);
 	let apiKeys = $state<ApiKeyResponse[]>([]);
 	let mediaUsers = $state<UserSummaryDto[]>([]);
+	let health = $state<HealthResponse | null>(null);
 	let readiness = $state<ReadinessResponse | null>(null);
 	let plexStatus = $state<PlexConnectionStatus | null>(null);
 	let guardrails = $state<GuardrailRuleDto[]>([]);
@@ -98,6 +101,17 @@
 	let newRole = $state<MiruRole>('USER');
 	let accountSubmitting = $state(false);
 	let createAccountError = $state<string | null>(null);
+
+	// Manage Account Sheet & inline actions
+	let accountNotice = $state<string | null>(null);
+	let accountActionBusyId = $state<string | null>(null);
+	let manageTarget = $state<AccountResponse | null>(null);
+	let manageOpen = $state(false);
+	let manageRole = $state<MiruRole>('USER');
+	let manageDisabled = $state(false);
+	let managePassword = $state('');
+	let manageSubmitting = $state(false);
+	let manageError = $state<string | null>(null);
 
 	// Link Media Users Sheet
 	let linkTarget = $state<AccountResponse | null>(null);
@@ -194,10 +208,11 @@
 		error = null;
 		guardrailError = null;
 		try {
-			const [accRes, keyRes, usrRes, readyRes, plexRes, guardrailsRes, auditRes] = await Promise.all([
+			const [accRes, keyRes, usrRes, healthRes, readyRes, plexRes, guardrailsRes, auditRes] = await Promise.all([
 				api.GET('/api/v1/admin/accounts'),
 				api.GET('/api/v1/admin/api-keys'),
 				api.GET('/api/v1/users'),
+				api.GET('/healthz'),
 				api.GET('/readyz'),
 				api.GET('/api/v1/admin/plex/status'),
 				api.GET('/api/v1/admin/guardrails'),
@@ -216,6 +231,7 @@
 			emailLinkingEnabled = accountList.emailLinkingEnabled;
 			apiKeys = unwrap(keyRes).apiKeys;
 			mediaUsers = usrRes.data?.users ?? [];
+			health = healthRes.data ?? null;
 			readiness = readyRes.data ?? null;
 			plexStatus = plexRes.data ?? null;
 			if (guardrailsRes.data) {
@@ -555,6 +571,7 @@
 
 	async function handleDeleteAccount(id: string) {
 		error = null;
+		accountNotice = null;
 		try {
 			const res = await api.DELETE('/api/v1/admin/accounts/{id}', {
 				params: { path: { id } }
@@ -563,6 +580,108 @@
 			await loadAll();
 		} catch (err) {
 			error = err instanceof MiruApiError ? err.detail : 'Failed to delete account';
+		}
+	}
+
+	const activeAdminCount = $derived(accounts.filter((a) => a.role === 'ADMIN' && !a.disabled).length);
+
+	function isSelfAccount(acc: AccountResponse | null): boolean {
+		return acc !== null && acc.id === authStore.principal?.accountId;
+	}
+
+	function isLastActiveAdmin(acc: AccountResponse | null): boolean {
+		return acc !== null && acc.role === 'ADMIN' && !acc.disabled && activeAdminCount <= 1;
+	}
+
+	function disableToggleGuardReason(acc: AccountResponse): string | null {
+		if (isSelfAccount(acc)) return 'Cannot disable your own account';
+		if (!acc.disabled && isLastActiveAdmin(acc)) return 'Cannot disable the last active admin account';
+		return null;
+	}
+
+	function roleChangeGuardReason(acc: AccountResponse | null): string | null {
+		if (!acc) return null;
+		if (isSelfAccount(acc)) return 'Cannot demote your own account';
+		if (isLastActiveAdmin(acc)) return 'Cannot demote the last active admin account';
+		return null;
+	}
+
+	async function handleToggleDisabled(acc: AccountResponse) {
+		error = null;
+		accountNotice = null;
+		accountActionBusyId = acc.id;
+		const nextDisabled = !acc.disabled;
+		try {
+			const updated = unwrap(
+				await api.PATCH('/api/v1/admin/accounts/{id}', {
+					params: { path: { id: acc.id } },
+					body: { disabled: nextDisabled }
+				})
+			);
+			accounts = accounts.map((a) => (a.id === updated.id ? updated : a));
+			accountNotice = nextDisabled
+				? `Disabled account '${updated.username}' and revoked active sessions.`
+				: `Enabled account '${updated.username}'.`;
+		} catch (err) {
+			error = err instanceof MiruApiError ? err.detail : 'Failed to update account status';
+		} finally {
+			accountActionBusyId = null;
+		}
+	}
+
+	function openManageAccount(acc: AccountResponse) {
+		manageTarget = acc;
+		manageRole = acc.role;
+		manageDisabled = acc.disabled;
+		managePassword = '';
+		manageError = null;
+		manageOpen = true;
+	}
+
+	async function handleSaveManagedAccount(e: SubmitEvent) {
+		e.preventDefault();
+		if (!manageTarget || manageSubmitting) return;
+		manageError = null;
+		accountNotice = null;
+		error = null;
+
+		const body: UpdateAccountRequest = {};
+		if (manageRole !== manageTarget.role) {
+			body.role = manageRole;
+		}
+		if (manageDisabled !== manageTarget.disabled) {
+			body.disabled = manageDisabled;
+		}
+		if (managePassword.length > 0) {
+			const pwdError = validatePassword(managePassword);
+			if (pwdError) {
+				manageError = pwdError;
+				return;
+			}
+			body.password = managePassword;
+		}
+
+		if (body.role === undefined && body.disabled === undefined && body.password === undefined) {
+			manageError = 'Make at least one change or enter a new password before saving.';
+			return;
+		}
+
+		manageSubmitting = true;
+		try {
+			const updated = unwrap(
+				await api.PATCH('/api/v1/admin/accounts/{id}', {
+					params: { path: { id: manageTarget.id } },
+					body
+				})
+			);
+			accounts = accounts.map((a) => (a.id === updated.id ? updated : a));
+			manageOpen = false;
+			managePassword = '';
+			accountNotice = `Updated account '${updated.username}'.`;
+		} catch (err) {
+			manageError = err instanceof MiruApiError ? err.detail : 'Failed to update account';
+		} finally {
+			manageSubmitting = false;
 		}
 	}
 
@@ -820,6 +939,12 @@
 			<Badge tone="neutral" mono>AUTH = {activeProviderLabel}</Badge>
 		</div>
 
+		{#if accountNotice}
+			<p role="status" class="rounded-xl border border-direct-play/50 bg-direct-play-soft px-3.5 py-2.5 text-xs text-direct-play">
+				{accountNotice}
+			</p>
+		{/if}
+
 		{#if loading}
 			<p class="py-6 text-center font-mono text-xs text-fg-muted">Loading accounts…</p>
 		{:else if accounts.length === 0}
@@ -827,6 +952,7 @@
 		{:else}
 			<div class="flex flex-col gap-2.5">
 				{#each accounts as acc (acc.id)}
+					{@const disableReason = disableToggleGuardReason(acc)}
 					<div class="flex flex-col gap-3 rounded-xl border border-border bg-elevated p-3.5 md:flex-row md:items-center md:justify-between">
 						<div class="flex items-center gap-3">
 							<div
@@ -848,6 +974,9 @@
 							<Badge tone={acc.authProvider === 'OIDC' ? 'cyan' : 'neutral'} mono>
 								{acc.authProvider}
 							</Badge>
+							{#if acc.disabled}
+								<Badge tone="danger" mono>DISABLED</Badge>
+							{/if}
 							{#if acc.authProvider === 'OIDC' && acc.role !== 'ADMIN'}
 								<Badge tone="neutral" mono>
 									{acc.mediaUserLinkMode === 'MANUAL'
@@ -869,10 +998,23 @@
 							{/if}
 						</div>
 
-						<div class="flex items-center gap-2">
+						<div class="flex flex-wrap items-center gap-2">
 							<Button variant="outline" size="sm" onclick={() => openLinkSheet(acc)}>
 								<Link2 class="h-3.5 w-3.5" />
 								Link Users
+							</Button>
+							<Button variant="outline" size="sm" onclick={() => openManageAccount(acc)}>
+								<SlidersHorizontal class="h-3.5 w-3.5" />
+								Manage
+							</Button>
+							<Button
+								variant={acc.disabled ? 'cyan' : 'outline'}
+								size="sm"
+								disabled={accountActionBusyId === acc.id || disableReason !== null}
+								title={disableReason ?? undefined}
+								onclick={() => handleToggleDisabled(acc)}
+							>
+								{acc.disabled ? 'Enable' : 'Disable'}
 							</Button>
 							{#if acc.id !== authStore.principal?.accountId}
 								<Button variant="destructive" size="sm" onclick={() => handleDeleteAccount(acc.id)}>
@@ -1249,17 +1391,24 @@
 		{/if}
 	</section>
 
-	<!-- System Health (/readyz) -->
-	{#if readiness}
+	<!-- System Health (/readyz & /healthz) -->
+	{#if readiness || health}
 		<section class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface px-4 py-3">
-			<span class="font-heading text-xs font-semibold text-fg-primary">System Readiness (/readyz)</span>
 			<div class="flex flex-wrap items-center gap-2">
-				{#each Object.entries(readiness.checks) as [name, check]}
-					<Badge tone={check.status === 'healthy' ? 'direct-play' : 'danger'} dot mono>
-						{name.toUpperCase()} · {check.status.toUpperCase()}
-					</Badge>
-				{/each}
+				<span class="font-heading text-xs font-semibold text-fg-primary">System Readiness (/readyz)</span>
+				{#if health?.version}
+					<Badge tone="cyan" mono>v{health.version}</Badge>
+				{/if}
 			</div>
+			{#if readiness}
+				<div class="flex flex-wrap items-center gap-2">
+					{#each Object.entries(readiness.checks) as [name, check]}
+						<Badge tone={check.status === 'healthy' ? 'direct-play' : 'danger'} dot mono>
+							{name.toUpperCase()} · {check.status.toUpperCase()}
+						</Badge>
+					{/each}
+				</div>
+			{/if}
 		</section>
 	{/if}
 </div>
@@ -1776,6 +1925,102 @@
 
 			<Button type="submit" variant="primary" size="lg" disabled={editRuleSubmitting} class="mt-2 w-full">
 				{editRuleSubmitting ? 'Saving…' : 'Save Guardrail Rule'}
+			</Button>
+		</form>
+	{/if}
+</Sheet>
+
+<!-- Manage Account Sheet -->
+<Sheet
+	bind:open={manageOpen}
+	onOpenChange={(v) => {
+		manageOpen = v;
+		if (!v) {
+			manageError = null;
+			managePassword = '';
+		}
+	}}
+	title={`Manage Account · ${manageTarget?.username ?? ''}`}
+	description="Update account role, active status, or reset a local password"
+>
+	{#if manageTarget}
+		{@const roleGuard = roleChangeGuardReason(manageTarget)}
+		{@const disableGuard = disableToggleGuardReason(manageTarget)}
+		<form onsubmit={handleSaveManagedAccount} class="flex flex-col gap-3.5">
+			{#if manageError}
+				<div role="alert" class="rounded-lg border border-danger/50 bg-danger-soft px-3 py-2 text-xs text-danger">
+					{manageError}
+				</div>
+			{/if}
+
+			<label class="flex flex-col gap-1">
+				<span class="font-heading text-xs font-semibold text-fg-primary">Account Role</span>
+				<select
+					value={manageRole}
+					onchange={(e) => {
+						manageRole = e.currentTarget.value as MiruRole;
+					}}
+					disabled={roleGuard !== null}
+					class="rounded-lg border border-input-border bg-canvas px-3 py-2 text-sm text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan disabled:cursor-not-allowed disabled:opacity-60"
+				>
+					<option value="USER">USER (scoped to linked media users)</option>
+					<option value="ADMIN">ADMIN (full access)</option>
+				</select>
+				{#if roleGuard}
+					<span class="text-[10px] text-fg-muted">{roleGuard}.</span>
+				{/if}
+			</label>
+
+			<div class="flex items-center justify-between gap-3 rounded-xl border border-border bg-elevated px-3.5 py-3">
+				<div class="min-w-0">
+					<p id="manage-account-disabled-label" class="text-xs font-semibold text-fg-primary">
+						Disable Account
+					</p>
+					<p class="text-[11px] text-fg-muted">
+						{disableGuard ?? 'Blocks sign-in and revokes all active browser sessions immediately.'}
+					</p>
+				</div>
+				<button
+					type="button"
+					role="switch"
+					aria-checked={manageDisabled}
+					aria-labelledby="manage-account-disabled-label"
+					disabled={disableGuard !== null && !manageDisabled}
+					onclick={() => (manageDisabled = !manageDisabled)}
+					class={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+						manageDisabled ? 'border-danger bg-danger' : 'border-border-strong bg-subtle'
+					}`}
+				>
+					<span
+						class={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform duration-200 ease-[var(--ease-out-quart)] ${
+							manageDisabled ? 'translate-x-5.5' : 'translate-x-1'
+						}`}
+					></span>
+				</button>
+			</div>
+
+			{#if manageTarget.authProvider === 'LOCAL'}
+				<label class="flex flex-col gap-1">
+					<span class="font-heading text-xs font-semibold text-fg-primary">Reset Password (optional)</span>
+					<input
+						type="password"
+						autocomplete="new-password"
+						placeholder="Leave blank to keep current password"
+						bind:value={managePassword}
+						class="rounded-lg border border-input-border bg-canvas px-3 py-2 font-mono text-sm text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
+					/>
+					<span class="text-[10px] text-fg-muted">
+						At least 12 characters with 1 lowercase, 1 uppercase, and 1 digit. Revokes active sessions.
+					</span>
+				</label>
+			{:else}
+				<p class="rounded-lg border border-border bg-elevated px-3 py-2.5 text-[11px] text-fg-secondary">
+					Password resets are unavailable for {manageTarget.authProvider} accounts; credentials are managed by the identity provider.
+				</p>
+			{/if}
+
+			<Button type="submit" variant="primary" size="lg" disabled={manageSubmitting} class="mt-2 w-full">
+				{manageSubmitting ? 'Saving…' : 'Save Account Changes'}
 			</Button>
 		</form>
 	{/if}

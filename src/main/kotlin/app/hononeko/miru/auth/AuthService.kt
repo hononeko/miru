@@ -314,6 +314,7 @@ class AuthService(
                 role = effectiveRole,
                 linkedMediaUserIds = linkedIds,
                 authSource = AuthSource.API_KEY,
+                authProvider = account.authProvider,
             )
         }
 
@@ -381,6 +382,143 @@ class AuthService(
             AccountWithLinks(account = account, linkedMediaUserIds = normalizedLinks)
         }
 
+    suspend fun changeOwnPassword(
+        principal: MiruPrincipal,
+        currentPassword: String,
+        newPassword: String,
+    ): Either<MiruError, LoginResult?> =
+        either {
+            ensure(authConfig.mode != AuthMode.NONE && principal.authSource != AuthSource.DEV_BYPASS) {
+                MiruError.Conflict("Password management is disabled when authentication is disabled")
+            }
+
+            val errors = linkedMapOf<String, String>()
+            if (currentPassword.isEmpty()) {
+                errors["currentPassword"] = "must not be blank"
+            }
+            PasswordPolicy.validationError(newPassword)?.let { message ->
+                errors["newPassword"] = message
+            }
+            ensure(errors.isEmpty()) {
+                MiruError.ValidationError("Invalid password change request", fieldErrors = errors)
+            }
+
+            val account =
+                accountRepository.findById(principal.accountId).bind()
+                    ?: raise(MiruError.NotFound(resource = "Account", id = principal.accountId))
+            ensure(account.authProvider.equals("LOCAL", ignoreCase = true)) {
+                MiruError.Conflict("Password change is only supported for local accounts")
+            }
+            ensure(!account.disabled) {
+                MiruError.Unauthorized("Account is disabled")
+            }
+
+            val matches = verifyPassword(currentPassword, account.passwordHash)
+            ensure(matches) {
+                MiruError.Unauthorized("Current password is incorrect")
+            }
+
+            val newHash = hashPassword(newPassword)
+            val updated =
+                accountRepository
+                    .updatePasswordHash(account.id, newHash, clock())
+                    .bind()
+                    ?: raise(MiruError.NotFound(resource = "Account", id = account.id))
+
+            sessionRepository.deleteByAccountId(account.id).bind()
+            logger.info("Password changed for local account '{}'", updated.username)
+
+            if (principal.authSource == AuthSource.SESSION_COOKIE) {
+                val linkedIds = accountRepository.findLinkedMediaUserIds(account.id).bind()
+                issueSession(updated, linkedIds).bind()
+            } else {
+                null
+            }
+        }
+
+    suspend fun updateAccount(
+        id: String,
+        actingAccountId: String,
+        role: String? = null,
+        disabled: Boolean? = null,
+        password: String? = null,
+    ): Either<MiruError, AccountWithLinks> =
+        either {
+            ensure(role != null || disabled != null || password != null) {
+                MiruError.ValidationError("At least one field (role, disabled, password) must be provided")
+            }
+
+            val errors = linkedMapOf<String, String>()
+            val parsedRole =
+                role?.let { raw ->
+                    parseExplicitRole(raw).also { parsed ->
+                        if (parsed == null) {
+                            errors["role"] = "must be 'ADMIN' or 'USER'"
+                        }
+                    }
+                }
+            if (password != null) {
+                PasswordPolicy.validationError(password)?.let { message ->
+                    errors["password"] = message
+                }
+            }
+            ensure(errors.isEmpty()) {
+                MiruError.ValidationError("Invalid account update request", fieldErrors = errors)
+            }
+
+            val target =
+                accountRepository.findById(id).bind()
+                    ?: raise(MiruError.NotFound(resource = "Account", id = id))
+
+            if (password != null) {
+                ensure(target.authProvider.equals("LOCAL", ignoreCase = true)) {
+                    MiruError.Conflict("Password reset is only supported for local accounts")
+                }
+            }
+
+            val currentRole = parseRole(target.role)
+            val nextRole = parsedRole ?: currentRole
+            val nextDisabled = disabled ?: target.disabled
+
+            if (id == actingAccountId) {
+                ensure(nextRole == MiruRole.ADMIN) {
+                    MiruError.Conflict("Cannot demote your own account")
+                }
+                ensure(!nextDisabled) {
+                    MiruError.Conflict("Cannot disable your own account")
+                }
+            }
+
+            val isTargetActiveAdmin = currentRole == MiruRole.ADMIN && !target.disabled
+            val losingActiveAdmin = isTargetActiveAdmin && (nextRole != MiruRole.ADMIN || nextDisabled)
+            if (losingActiveAdmin) {
+                val activeAdmins = accountRepository.countActiveAdmins().bind()
+                ensure(activeAdmins > 1L) {
+                    MiruError.Conflict("Cannot demote or disable the last active admin account")
+                }
+            }
+
+            val newPasswordHash = password?.let { hashPassword(it) }
+            val updated =
+                accountRepository
+                    .updateAccount(
+                        id = id,
+                        role = nextRole.name,
+                        disabled = nextDisabled,
+                        passwordHash = newPasswordHash,
+                        updatedAtMs = clock(),
+                    ).bind()
+                    ?: raise(MiruError.NotFound(resource = "Account", id = id))
+
+            val roleDowngraded = currentRole == MiruRole.ADMIN && nextRole != MiruRole.ADMIN
+            if (nextDisabled || roleDowngraded || newPasswordHash != null) {
+                sessionRepository.deleteByAccountId(id).bind()
+            }
+
+            val links = accountRepository.findLinkedMediaUserIds(id).bind()
+            AccountWithLinks(account = updated, linkedMediaUserIds = links)
+        }
+
     suspend fun deleteAccount(
         id: String,
         actingAccountId: String,
@@ -392,10 +530,10 @@ class AuthService(
             val target =
                 accountRepository.findById(id).bind()
                     ?: raise(MiruError.NotFound(resource = "Account", id = id))
-            if (parseRole(target.role) == MiruRole.ADMIN) {
-                val adminCount = accountRepository.countAdmins().bind()
-                ensure(adminCount > 1L) {
-                    MiruError.Conflict("Cannot delete the last remaining admin account")
+            if (parseRole(target.role) == MiruRole.ADMIN && !target.disabled) {
+                val activeAdminCount = accountRepository.countActiveAdmins().bind()
+                ensure(activeAdminCount > 1L) {
+                    MiruError.Conflict("Cannot delete the last remaining active admin account")
                 }
             }
             val deleted = accountRepository.delete(id).bind()
@@ -667,12 +805,20 @@ class AuthService(
             role = parseRole(role),
             linkedMediaUserIds = linkedMediaUserIds,
             authSource = authSource,
+            authProvider = authProvider,
         )
 
     private fun parseRole(raw: String): MiruRole =
         when (raw.uppercase()) {
             "ADMIN" -> MiruRole.ADMIN
             else -> MiruRole.USER
+        }
+
+    private fun parseExplicitRole(raw: String): MiruRole? =
+        when (raw.trim().uppercase()) {
+            "ADMIN" -> MiruRole.ADMIN
+            "USER" -> MiruRole.USER
+            else -> null
         }
 
     private fun validatePreferences(

@@ -82,7 +82,8 @@ ENV JAVA_HOME=/opt/java/openjdk \
     MALLOC_TRIM_THRESHOLD_=65536 \
     JDK_JAVA_OPTIONS="-XX:+UseCompactObjectHeaders -XX:+UseG1GC -XX:InitialRAMPercentage=10.0 -XX:MaxRAMPercentage=50.0 -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=25 -XX:G1PeriodicGCInterval=30000 -XX:-G1PeriodicGCInvokesConcurrent -XX:G1PeriodicGCSystemLoadThreshold=0.0 -XX:ReservedCodeCacheSize=48m -XX:MaxDirectMemorySize=48m -XX:+ExitOnOutOfMemoryError" \
     SQLITE_PATH="/data/miru.db" \
-    STATIC_WEB_DIR="/opt/miru/static"
+    STATIC_WEB_DIR="/opt/miru/static" \
+    MIRU_VERSION="${VERSION}"
 
 # App code, JRE, static assets, and native library are owned by root (read-only to UID 10001).
 # Only /data is owned by UID/GID 10001 so named volumes keep existing ownership compatibility.

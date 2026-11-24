@@ -15,7 +15,7 @@
 	class={className}
 >
 	<rect width="64" height="64" rx="16" class="fill-primary" />
-	<circle cx="32" cy="32" r="20" stroke="#FFFFFF" stroke-opacity="0.92" stroke-width="4" />
-	<circle cx="32" cy="32" r="10" class="fill-cyan stroke-cyan-hi" stroke-width="1.5" />
-	<circle cx="38" cy="24" r="3.5" fill="#FFFFFF" />
+	<circle cx="32" cy="32" r="20" stroke="#FBF6EE" stroke-opacity="0.95" stroke-width="4" />
+	<circle cx="32" cy="32" r="10" fill="#1F4D3A" stroke="#8FB09C" stroke-width="1.5" />
+	<circle cx="38" cy="24" r="3.5" fill="#FBF6EE" />
 </svg>

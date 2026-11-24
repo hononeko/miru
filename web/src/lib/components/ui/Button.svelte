@@ -8,8 +8,8 @@
 		base: 'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg font-heading text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan disabled:pointer-events-none disabled:opacity-50 cursor-pointer',
 		variants: {
 			variant: {
-				primary: 'bg-primary text-primary-fg hover:bg-primary-hover',
-				cyan: 'bg-cyan text-white hover:bg-cyan-hi',
+				primary: 'bg-primary text-primary-fg hover:bg-primary/85',
+				cyan: 'bg-cyan text-cyan-fg hover:bg-cyan/85',
 				secondary: 'bg-elevated text-fg-primary border border-border hover:border-border-strong',
 				outline: 'bg-transparent text-fg-primary border border-border-strong hover:bg-elevated',
 				ghost: 'bg-transparent text-fg-secondary hover:bg-elevated hover:text-fg-primary',

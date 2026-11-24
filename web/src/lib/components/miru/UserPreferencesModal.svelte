@@ -168,7 +168,7 @@
 	<div class="flex items-start gap-3 border-b border-border px-5 py-4">
 		<div class="flex min-w-0 items-center gap-3">
 			<div
-				class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary font-heading text-sm font-bold text-white"
+				class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary font-heading text-sm font-bold text-primary-fg"
 			>
 				{safeInitial(authStore.principal?.username)}
 			</div>
@@ -235,7 +235,7 @@
 									: 'text-fg-secondary hover:text-fg-primary border border-transparent'
 							)}
 						>
-							<Icon class={cn('h-3.5 w-3.5', active ? 'text-primary' : 'text-fg-muted')} />
+							<Icon class={cn('h-3.5 w-3.5', active ? 'text-primary-text' : 'text-fg-muted')} />
 							{opt.label}
 						</button>
 					{/each}
@@ -281,7 +281,7 @@
 						<select
 							bind:value={draft.dateFormat}
 							aria-label="Date layout"
-							class="h-[38px] rounded-xl border border-border bg-elevated px-3 text-xs font-medium text-fg-primary focus:border-cyan focus:outline-none"
+							class="h-[38px] rounded-xl border border-input-border bg-elevated px-3 text-xs font-medium text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 						>
 							{#each DATE_OPTIONS as opt}
 								<option value={opt.value}>{opt.label}</option>
@@ -384,14 +384,14 @@
 						class={cn(
 							'relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border transition-colors',
 							draft.relativeTimestamps
-								? 'border-cyan bg-cyan'
+								? 'border-switch-on bg-switch-on'
 								: 'border-border-strong bg-subtle'
 						)}
 					>
 						<span
 							class={cn(
-								'inline-block h-4 w-4 rounded-full bg-white shadow transition-transform',
-								draft.relativeTimestamps ? 'translate-x-5.5' : 'translate-x-1'
+								'inline-block h-4 w-4 rounded-full shadow transition-transform',
+								draft.relativeTimestamps ? 'translate-x-5.5 bg-switch-knob-on' : 'translate-x-1 bg-white'
 							)}
 						></span>
 					</button>

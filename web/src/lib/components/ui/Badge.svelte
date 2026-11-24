@@ -8,12 +8,13 @@
 		variants: {
 			tone: {
 				neutral: 'bg-elevated text-fg-secondary border border-border',
-				primary: 'bg-primary-soft text-primary-hover border border-primary/50',
+				primary: 'bg-primary-soft text-primary-text border border-primary/50',
 				cyan: 'bg-cyan-soft text-cyan-hi border border-cyan/50',
 				'direct-play': 'bg-direct-play-soft text-direct-play',
 				'direct-stream': 'bg-direct-stream-soft text-direct-stream',
 				'hw-transcode': 'bg-hw-transcode-soft text-hw-transcode',
 				'sw-transcode': 'bg-sw-transcode-soft text-sw-transcode',
+				warning: 'bg-warning-soft text-warning',
 				danger: 'bg-danger-soft text-danger'
 			},
 			mono: {

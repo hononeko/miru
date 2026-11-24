@@ -64,7 +64,7 @@ describe('ThemeStore', () => {
 		Object.defineProperty(window, 'localStorage', { value: storage, configurable: true });
 		document.documentElement.classList.remove('dark');
 		document.head.innerHTML =
-			'<meta name="color-scheme" content="light dark"><meta name="theme-color" content="#090A0F">';
+			'<meta name="color-scheme" content="light dark"><meta name="theme-color" content="#030705">';
 	});
 
 	afterEach(() => {
@@ -90,7 +90,7 @@ describe('ThemeStore', () => {
 		expect(store.systemTheme).toBe('dark');
 		expect(store.resolved).toBe('dark');
 		expect(document.documentElement.classList.contains('dark')).toBe(true);
-		expect(document.querySelector('meta[name="theme-color"]')?.getAttribute('content')).toBe('#090A0F');
+		expect(document.querySelector('meta[name="theme-color"]')?.getAttribute('content')).toBe('#030705');
 
 		// Pinning light ignores subsequent system changes
 		store.set('light');

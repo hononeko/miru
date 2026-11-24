@@ -142,8 +142,8 @@
 					aria-busy={oidcRedirecting ? 'true' : undefined}
 					tabindex={oidcRedirecting || submitting ? -1 : undefined}
 					class={cn(
-						'inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-cyan px-4 font-heading text-sm font-semibold text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan/50',
-						oidcRedirecting || submitting ? 'cursor-wait opacity-60' : 'hover:bg-cyan-hi'
+						'inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-cyan px-4 font-heading text-sm font-semibold text-cyan-fg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fg-primary/80 focus-visible:ring-offset-2 focus-visible:ring-offset-surface',
+						oidcRedirecting || submitting ? 'cursor-wait opacity-60' : 'hover:bg-cyan/85'
 					)}
 				>
 					{#if oidcRedirecting}
@@ -175,7 +175,7 @@
 							required
 							bind:value={username}
 							placeholder="username"
-							class="rounded-lg border border-border-strong bg-canvas px-3 py-2.5 text-sm text-fg-primary placeholder:text-fg-muted focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan/30"
+							class="rounded-lg border border-input-border bg-canvas px-3 py-2.5 text-sm text-fg-primary placeholder:text-fg-muted focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 						/>
 					</label>
 
@@ -187,7 +187,7 @@
 							autocomplete="current-password"
 							required
 							bind:value={password}
-							class="rounded-lg border border-border-strong bg-canvas px-3 py-2.5 font-mono text-sm text-fg-primary placeholder:text-fg-muted focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan/30"
+							class="rounded-lg border border-input-border bg-canvas px-3 py-2.5 font-mono text-sm text-fg-primary placeholder:text-fg-muted focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 						/>
 					</label>
 

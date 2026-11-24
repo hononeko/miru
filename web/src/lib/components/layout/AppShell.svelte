@@ -52,7 +52,7 @@
 	const sseTone = $derived.by(() => {
 		if (streamsStore.status === 'connected') return 'direct-play' as const;
 		if (streamsStore.status === 'connecting' || streamsStore.status === 'reconnecting') {
-			return 'hw-transcode' as const;
+			return 'warning' as const;
 		}
 		return 'danger' as const;
 	});
@@ -110,11 +110,11 @@
 						)}
 					>
 						<span class="flex items-center gap-2.5">
-							<Icon class={cn('h-4 w-4', active ? 'text-primary-hover' : 'text-fg-muted')} />
+							<Icon class={cn('h-4 w-4', active ? 'text-primary-text' : 'text-fg-muted')} />
 							{item.label}
 						</span>
 						{#if item.badge}
-							<span class="rounded-full bg-cyan px-2 py-0.5 font-mono text-[10px] font-semibold text-white">
+							<span class="rounded-full bg-cyan px-2 py-0.5 font-mono text-[10px] font-semibold text-cyan-fg">
 								{item.badge}
 							</span>
 						{/if}
@@ -133,7 +133,7 @@
 								? 'bg-direct-play'
 								: streamsStore.status === 'offline'
 									? 'bg-danger'
-									: 'bg-hw-transcode animate-pulse'
+									: 'bg-warning animate-pulse'
 						)}
 					></span>
 					<span class="truncate" title={streamsStore.serverName ?? 'Telemetry'}>
@@ -217,7 +217,7 @@
 						<span
 							class={cn(
 								'flex h-8 w-14 items-center justify-center rounded-full transition-colors',
-								active ? 'bg-primary-soft text-primary-hover' : 'text-fg-muted hover:bg-elevated hover:text-fg-primary'
+								active ? 'bg-primary-soft text-primary-text' : 'text-fg-muted hover:bg-elevated hover:text-fg-primary'
 							)}
 						>
 							<Icon class="h-4 w-4" />
@@ -318,13 +318,13 @@
 					<span
 						class={cn(
 							'relative flex h-7 w-13 items-center justify-center rounded-full transition-colors',
-							active ? 'bg-primary-soft text-primary-hover' : 'text-fg-muted'
+							active ? 'bg-primary-soft text-primary-text' : 'text-fg-muted'
 						)}
 					>
 						<Icon class="h-4 w-4" />
 						{#if item.badge}
 							<span
-								class="absolute -top-0.5 right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-cyan px-1 font-mono text-[9px] font-bold text-white"
+								class="absolute -top-0.5 right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-cyan px-1 font-mono text-[9px] font-bold text-cyan-fg"
 							>
 								{item.badge}
 							</span>

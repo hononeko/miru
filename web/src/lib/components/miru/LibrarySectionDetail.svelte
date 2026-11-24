@@ -51,7 +51,7 @@
 		{ value: 'age_desc', label: 'Oldest first' }
 	];
 
-	const paletteColors = ['bg-cyan', 'bg-primary', 'bg-direct-play', 'bg-hw-transcode', 'bg-fg-muted'];
+	const paletteColors = ['bg-chart-1', 'bg-chart-2', 'bg-chart-3', 'bg-chart-4', 'bg-fg-muted'];
 
 	function mapToDist(map: Record<string, number> | undefined) {
 		const entries = Object.entries(map ?? {})
@@ -142,7 +142,7 @@
 			class={cn(
 				'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-heading text-xs font-semibold transition-colors cursor-pointer',
 				activeTab === 'hygiene'
-					? 'bg-primary-soft text-primary-hover border border-primary/50'
+					? 'bg-primary-soft text-primary-text border border-primary/50'
 					: 'text-fg-secondary hover:text-fg-primary border border-transparent'
 			)}
 		>
@@ -294,7 +294,7 @@
 				label="Never Played"
 				value={staleReport ? staleReport.neverPlayedCount.toLocaleString() : '—'}
 				subtitle="Zero recorded playback sessions in Miru"
-				dotClass="bg-hw-transcode"
+				dotClass="bg-warning"
 			/>
 		</div>
 
@@ -348,7 +348,7 @@
 								class={cn(
 									'rounded-md px-2.5 py-1 font-heading text-[11px] font-semibold transition-colors cursor-pointer',
 									active
-										? 'bg-primary-soft text-primary-hover border border-primary/50'
+										? 'bg-primary-soft text-primary-text border border-primary/50'
 										: 'text-fg-secondary hover:text-fg-primary border border-transparent'
 								)}
 							>
@@ -391,7 +391,7 @@
 									<p class="truncate font-heading text-xs font-semibold text-fg-primary group-hover:text-cyan-hi">
 										{item.grandparentTitle ? `${item.grandparentTitle} · ${item.title}` : item.title}
 									</p>
-									<span class="shrink-0 font-mono text-xs font-bold text-primary-hover tabular-nums">
+									<span class="shrink-0 font-mono text-xs font-bold text-primary-text tabular-nums">
 										{formatBytes(item.fileSizeBytes)}
 									</span>
 								</div>
@@ -407,7 +407,7 @@
 										<Badge tone="neutral" mono>{item.videoCodec.toUpperCase()}</Badge>
 									{/if}
 									{#if item.playCount === 0 || !item.lastPlayedAtMs}
-										<Badge tone="hw-transcode">NEVER PLAYED</Badge>
+										<Badge tone="warning">NEVER PLAYED</Badge>
 									{:else}
 										<Badge tone="neutral" mono>
 											{item.playCount} {item.playCount === 1 ? 'play' : 'plays'}

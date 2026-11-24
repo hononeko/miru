@@ -1,7 +1,7 @@
 @import 'tailwindcss';
 
 /* ==========================================================================
-   Miru (見る) Design Tokens — Prism Rose & Deep Optical Cyan (#0891B2)
+   Miru (見る) Design Tokens — Hononeko: Tabby Orange on Spruce Green (hononeko.app)
    1:1 parity with Penpot Token Sets (Theme/Light & Theme/Dark).
    Tweak primary/accent colors right here in :root / .dark at any time.
    ========================================================================== */
@@ -17,69 +17,102 @@
 		color-scheme: light;
 	}
 
-	--background: #f9fafc;
+	--background: #f5f7f5;
 	--card: #ffffff;
-	--secondary: #f1f3f8;
-	--muted: #e2e6f0;
-	--border: #e2e6f0;
-	--ring-muted: #cbd2e1;
+	--secondary: #e9eee9;
+	--muted: #d6dcd6;
+	--border: #d6dcd6;
+	--ring-muted: #bcc3bb;
 
-	--foreground: #10121c;
-	--muted-fg: #4e556b;
-	--subtle-fg: #6b738a;
+	--foreground: #16302a;
+	--muted-fg: #4d6359;
+	--subtle-fg: #57695f;
 
-	--primary: #be123c;
-	--primary-hover: #9f1239;
-	--primary-soft: #fff1f2;
-	--primary-fg: #ffffff;
+	--primary: #e07a2c;
+	--primary-text: #a84b18;
+	--primary-soft: #fdf0e3;
+	--primary-fg: #16302a;
 
-	--accent-cyan: #0891b2;
-	--accent-cyan-hi: #0e7490;
-	--accent-cyan-soft: #ecfeff;
+	--accent-cyan: #1f4d3a;
+	--accent-cyan-hi: #12301f;
+	--accent-cyan-soft: #e6efe9;
+	--accent-cyan-fg: #ffffff;
 
-	--status-direct-play: #059669;
+	/* Form-control boundary: >= 3:1 against cards and page (WCAG 1.4.11) */
+	--input-border: #7b8a82;
+
+	/* Toggle switch "on" state (light: follows the secondary) */
+	--switch-on: var(--accent-cyan);
+	--switch-knob-on: #ffffff;
+
+	--status-direct-play: #047857;
 	--status-direct-play-soft: #ecfdf5;
-	--status-direct-stream: #0284c7;
+	--status-direct-stream: #0369a1;
 	--status-direct-stream-soft: #f0f9ff;
-	--status-hw-transcode: #d97706;
-	--status-hw-transcode-soft: #fffbeb;
-	--status-sw-transcode: #ea580c;
-	--status-sw-transcode-soft: #fff7ed;
-	--destructive: #dc2626;
-	--destructive-soft: #fef2f2;
+	--status-hw-transcode: #6b35b5;
+	--status-hw-transcode-soft: #f8f4ff;
+	--status-sw-transcode: #9e1071;
+	--status-sw-transcode-soft: #fff2fa;
+	--warning: #694e00;
+	--warning-soft: #fdf6e8;
+	--destructive: #d4174a;
+	--destructive-soft: #fff1f2;
+
+	/* Chart series (identity only — never status). Hononeko-anchored, fixed order:
+	   1 tabby (primary hue) · 2 steel · 3 heather · 4 plum.
+	   Validated across ALL pairs, not just neighbours: stacked bars skip empty segments, so any two series can touch.
+	   No green/teal series (reads gray or impersonates Direct Play); no wheat (collides with tabby for colour-blind viewers). */
+	--chart-1: #bb6127;
+	--chart-2: #2750a2;
+	--chart-3: #7e3963;
+	--chart-4: #9076be;
 }
 
 .dark {
-	--background: #090a0f;
-	--card: #12141e;
-	--secondary: #1a1e2b;
-	--muted: #232838;
-	--border: #272d3f;
-	--ring-muted: #3a425b;
+	--background: #030705;
+	--card: #08130d;
+	--secondary: #112019;
+	--muted: #192921;
+	--border: #24382d;
+	--ring-muted: #31453a;
 
-	--foreground: #f4f5fa;
-	--muted-fg: #9aa1b5;
-	--subtle-fg: #676f85;
+	--foreground: #e7ebe4;
+	--muted-fg: #a9bbaf;
+	--subtle-fg: #7d9186;
 
-	--primary: #e12d54;
-	--primary-hover: #f45b7a;
-	--primary-soft: #2e131e;
-	--primary-fg: #ffffff;
+	--primary: #f08a3c;
+	--primary-text: #f4a259;
+	--primary-soft: #311602;
+	--primary-fg: #1a0e05;
 
-	--accent-cyan: #0891b2;
-	--accent-cyan-hi: #1cb5d8;
-	--accent-cyan-soft: #0b2530;
+	--accent-cyan: #5c7a68;
+	--accent-cyan-hi: #b7cfc0;
+	--accent-cyan-soft: #15261c;
+	--accent-cyan-fg: #ffffff;
+
+	--input-border: #536a5d;
+
+	/* Lighter than the secondary so "on" reads at a glance; dark knob flips with it */
+	--switch-on: #7d9d89;
+	--switch-knob-on: #08130d;
 
 	--status-direct-play: #10b981;
-	--status-direct-play-soft: #0d2922;
+	--status-direct-play-soft: #002616;
 	--status-direct-stream: #38bdf8;
-	--status-direct-stream-soft: #102838;
-	--status-hw-transcode: #f59e0b;
-	--status-hw-transcode-soft: #2e2312;
-	--status-sw-transcode: #f97316;
-	--status-sw-transcode-soft: #301e13;
-	--destructive: #ef4444;
-	--destructive-soft: #2e1416;
+	--status-direct-stream-soft: #002233;
+	--status-hw-transcode: #9c7fd7;
+	--status-hw-transcode-soft: #211734;
+	--status-sw-transcode: #ff8acd;
+	--status-sw-transcode-soft: #301223;
+	--warning: #eccd8c;
+	--warning-soft: #2a1b00;
+	--destructive: #f43f5e;
+	--destructive-soft: #331115;
+
+	--chart-1: #cc7038;
+	--chart-2: #6593eb;
+	--chart-3: #d06fa9;
+	--chart-4: #6d5398;
 }
 
 @theme inline {
@@ -100,13 +133,18 @@
 	--color-fg-muted: var(--subtle-fg);
 
 	--color-primary: var(--primary);
-	--color-primary-hover: var(--primary-hover);
+	--color-primary-text: var(--primary-text);
 	--color-primary-soft: var(--primary-soft);
 	--color-primary-fg: var(--primary-fg);
 
 	--color-cyan: var(--accent-cyan);
 	--color-cyan-hi: var(--accent-cyan-hi);
 	--color-cyan-soft: var(--accent-cyan-soft);
+	--color-cyan-fg: var(--accent-cyan-fg);
+
+	--color-input-border: var(--input-border);
+	--color-switch-on: var(--switch-on);
+	--color-switch-knob-on: var(--switch-knob-on);
 
 	--color-direct-play: var(--status-direct-play);
 	--color-direct-play-soft: var(--status-direct-play-soft);
@@ -116,8 +154,15 @@
 	--color-hw-transcode-soft: var(--status-hw-transcode-soft);
 	--color-sw-transcode: var(--status-sw-transcode);
 	--color-sw-transcode-soft: var(--status-sw-transcode-soft);
+	--color-warning: var(--warning);
+	--color-warning-soft: var(--warning-soft);
 	--color-danger: var(--destructive);
 	--color-danger-soft: var(--destructive-soft);
+
+	--color-chart-1: var(--chart-1);
+	--color-chart-2: var(--chart-2);
+	--color-chart-3: var(--chart-3);
+	--color-chart-4: var(--chart-4);
 }
 
 @layer base {

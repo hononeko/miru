@@ -95,7 +95,7 @@
 							{#if activeSegments.length > 0}
 								<div
 									class={cn(
-										'flex w-full flex-col-reverse overflow-hidden rounded-t-sm transition-all duration-300',
+										'flex w-full flex-col-reverse gap-[2px] overflow-hidden rounded-t-sm transition-all duration-300 group-focus-visible:ring-2 group-focus-visible:ring-fg-primary/80 group-focus-visible:ring-offset-1 group-focus-visible:ring-offset-surface',
 										isOpen && 'ring-2 ring-fg-primary/80 ring-offset-1 ring-offset-surface'
 									)}
 									style:height={`${barHeightPct}%`}
@@ -114,11 +114,11 @@
 							{:else}
 								<div
 									class={cn(
-										'w-full rounded-t-sm transition-all duration-300',
+										'w-full rounded-t-sm transition-all duration-300 group-focus-visible:ring-2 group-focus-visible:ring-fg-primary/80 group-focus-visible:ring-offset-1 group-focus-visible:ring-offset-surface',
 										point.value <= 0
 											? 'bg-subtle/80 group-hover:bg-border-strong'
 											: isPeak
-												? 'bg-primary group-hover:bg-primary-hover'
+												? 'bg-primary group-hover:bg-primary/85'
 												: 'bg-cyan/85 group-hover:bg-cyan-hi',
 										isOpen && 'ring-2 ring-fg-primary/80 ring-offset-1 ring-offset-surface'
 									)}
@@ -131,7 +131,7 @@
 							<span
 								class={cn(
 									'truncate font-mono text-[9px] tabular-nums',
-									isOpen || isPeak ? 'font-semibold text-primary-hover' : 'text-fg-muted'
+									isOpen || isPeak ? 'font-semibold text-primary-text' : 'text-fg-muted'
 								)}
 							>
 								{point.label}

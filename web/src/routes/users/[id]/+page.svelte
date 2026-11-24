@@ -282,7 +282,7 @@
 						Daily Activity ({range})
 					</h2>
 					{#if peakDay && (analyticsMetric === 'duration' ? peakDay.watchDurationSec > 0 : peakDay.playCount > 0)}
-						<span class="font-mono text-[11px] font-medium text-primary-hover">
+						<span class="font-mono text-[11px] font-medium text-primary-text">
 							Peak: {analyticsMetric === 'duration' ? formatDurationSec(peakDay.watchDurationSec) : `${peakDay.playCount} plays`} ({peakDay.date})
 						</span>
 					{/if}
@@ -355,7 +355,7 @@
 									<div class="flex min-w-0 items-center gap-2.5">
 										<span
 											class={idx === 0
-												? 'font-mono text-xs font-bold text-primary'
+												? 'font-mono text-xs font-bold text-primary-text'
 												: 'font-mono text-xs font-bold text-cyan-hi'}
 										>
 											{String(idx + 1).padStart(2, '0')}
@@ -445,7 +445,7 @@
 								class={cn(
 									'rounded-md px-2.5 py-1 font-mono text-[11px] font-medium transition-colors cursor-pointer',
 									wrappedYear === yr
-										? 'bg-primary text-white font-semibold'
+										? 'bg-primary text-primary-fg font-semibold'
 										: 'text-fg-secondary hover:text-fg-primary'
 								)}
 							>
@@ -507,7 +507,7 @@
 						<span class="text-[10px] font-semibold uppercase tracking-wider text-fg-muted">
 							Peak Activity
 						</span>
-						<p class="mt-1 font-mono text-sm font-bold text-primary-hover">
+						<p class="mt-1 font-mono text-sm font-bold text-primary-text">
 							{wrapped.peakMonth ? `${wrapped.peakMonth} · ${wrapped.peakDayOfWeek ?? ''}` : 'No plays'}
 						</p>
 						<p class="text-[10px] text-fg-secondary">
@@ -588,7 +588,7 @@
 				</div>
 				<div class="rounded-lg border border-border bg-elevated p-3">
 					<span class="text-[10px] font-semibold uppercase text-fg-muted">Longest Streak</span>
-					<p class="mt-1 flex items-center gap-1 font-mono text-lg font-bold text-primary-hover tabular-nums">
+					<p class="mt-1 flex items-center gap-1 font-mono text-lg font-bold text-primary-text tabular-nums">
 						<Flame class="h-4 w-4" />
 						{wrapped.longestBingeStreakDays} days
 					</p>

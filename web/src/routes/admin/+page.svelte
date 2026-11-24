@@ -280,12 +280,12 @@
 		}
 	}
 
-	function guardrailModeTone(mode: GuardrailMode): 'neutral' | 'hw-transcode' | 'danger' {
+	function guardrailModeTone(mode: GuardrailMode): 'neutral' | 'warning' | 'danger' {
 		switch (mode) {
 			case 'DISABLED':
 				return 'neutral';
 			case 'WARN':
-				return 'hw-transcode';
+				return 'warning';
 			case 'ENFORCE':
 				return 'danger';
 		}
@@ -313,12 +313,12 @@
 		}
 	}
 
-	function auditActionTone(action: TerminationAuditAction): 'primary' | 'hw-transcode' | 'danger' {
+	function auditActionTone(action: TerminationAuditAction): 'primary' | 'warning' | 'danger' {
 		switch (action) {
 			case 'TERMINATED':
 				return 'primary';
 			case 'WARNED':
-				return 'hw-transcode';
+				return 'warning';
 			case 'TERMINATE_FAILED':
 				return 'danger';
 		}
@@ -729,7 +729,7 @@
 	<section class="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
 		<div class="flex flex-wrap items-center justify-between gap-2">
 			<div class="flex items-center gap-2">
-				<Server class="h-4 w-4 text-primary" />
+				<Server class="h-4 w-4 text-primary-text" />
 				<h2 class="font-heading text-sm font-semibold text-fg-primary">
 					Media Server · Plex Connection
 				</h2>
@@ -737,7 +737,7 @@
 			{#if plexStatus}
 				<div class="flex flex-wrap items-center gap-1.5">
 					<Badge
-						tone={plexStatus.reachable ? 'direct-play' : plexStatus.configured ? 'hw-transcode' : 'neutral'}
+						tone={plexStatus.reachable ? 'direct-play' : plexStatus.configured ? 'warning' : 'neutral'}
 						dot
 						mono
 					>
@@ -771,10 +771,10 @@
 			{/if}
 
 			{#if !plexStatus.encryptionKeyConfigured}
-				<div class="flex items-start gap-2.5 rounded-xl border border-hw-transcode/50 bg-hw-transcode-soft px-3.5 py-2.5 text-xs text-fg-secondary">
-					<AlertTriangle class="mt-0.5 h-4 w-4 shrink-0 text-hw-transcode" />
+				<div class="flex items-start gap-2.5 rounded-xl border border-warning/50 bg-warning-soft px-3.5 py-2.5 text-xs text-fg-secondary">
+					<AlertTriangle class="mt-0.5 h-4 w-4 shrink-0 text-warning" />
 					<div>
-						<p class="font-heading font-semibold text-hw-transcode">MIRU_ENCRYPTION_KEY is not configured</p>
+						<p class="font-heading font-semibold text-warning">MIRU_ENCRYPTION_KEY is not configured</p>
 						<p class="mt-0.5 text-[11px]">
 							Set <code class="font-mono text-fg-primary">MIRU_ENCRYPTION_KEY</code> (at least 32 characters) in your environment to save Plex OAuth credentials encrypted at rest.
 						</p>
@@ -830,7 +830,7 @@
 						<div class="flex items-center gap-3">
 							<div
 								class={acc.role === 'ADMIN'
-									? 'flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary bg-primary-soft font-heading text-xs font-bold text-primary-hover'
+									? 'flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary bg-primary-soft font-heading text-xs font-bold text-primary-text'
 									: 'flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-cyan bg-cyan-soft font-heading text-xs font-bold text-cyan-hi'}
 							>
 								{safeInitial(acc.username)}
@@ -935,7 +935,7 @@
 							</p>
 						</div>
 						<div class="flex items-center gap-2">
-							<Badge tone={revoked ? 'danger' : expired ? 'hw-transcode' : 'direct-play'} dot>
+							<Badge tone={revoked ? 'danger' : expired ? 'warning' : 'direct-play'} dot>
 								{status}
 							</Badge>
 							{#if !revoked}
@@ -1276,7 +1276,7 @@
 
 		{#if wizardStep === 'starting' || wizardStep === 'discovering' || wizardStep === 'saving'}
 			<div class="flex flex-col items-center justify-center gap-3 py-8 text-center">
-				<Loader2 class="h-6 w-6 animate-spin text-primary" />
+				<Loader2 class="h-6 w-6 animate-spin text-primary-text" />
 				<p class="font-heading text-sm font-semibold text-fg-primary">
 					{#if wizardStep === 'starting'}
 						Creating Plex OAuth PIN…
@@ -1304,7 +1304,7 @@
 						href={oauthAuthUrl}
 						target="_blank"
 						rel="noopener noreferrer"
-						class="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-white hover:bg-primary-hover"
+						class="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-fg hover:bg-primary/85"
 					>
 						<ExternalLink class="h-3.5 w-3.5" />
 						Open app.plex.tv Sign-In
@@ -1326,7 +1326,7 @@
 			</Button>
 		{:else if wizardStep === 'expired'}
 			<div class="flex flex-col items-center gap-3 rounded-xl border border-border bg-elevated p-5 text-center">
-				<AlertTriangle class="h-6 w-6 text-hw-transcode" />
+				<AlertTriangle class="h-6 w-6 text-warning" />
 				<div>
 					<p class="font-heading text-sm font-semibold text-fg-primary">Plex Sign-In Expired or Interrupted</p>
 					<p class="mt-1 text-xs text-fg-secondary">
@@ -1409,7 +1409,7 @@
 										<span class="truncate font-mono text-[11px] text-fg-primary">{conn.uri}</span>
 									</div>
 									<div class="flex shrink-0 items-center gap-1">
-										<Badge tone={conn.local ? 'direct-play' : conn.relay ? 'hw-transcode' : 'cyan'} mono>
+										<Badge tone={conn.local ? 'direct-play' : conn.relay ? 'warning' : 'cyan'} mono>
 											{connectionLabel(conn)}
 										</Badge>
 										<Badge tone="neutral" mono>{conn.protocol.toUpperCase()}</Badge>
@@ -1425,7 +1425,7 @@
 									type="url"
 									bind:value={selectedConnectionUri}
 									placeholder="http://192.168.1.50:32400"
-									class="rounded-lg border border-border-strong bg-canvas px-3 py-2 font-mono text-xs text-fg-primary focus:border-cyan focus:outline-none"
+									class="rounded-lg border border-input-border bg-canvas px-3 py-2 font-mono text-xs text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 								/>
 							</label>
 						</div>
@@ -1489,7 +1489,7 @@
 				type="text"
 				required
 				bind:value={newUsername}
-				class="rounded-lg border border-border-strong bg-canvas px-3 py-2 text-sm text-fg-primary focus:border-cyan focus:outline-none"
+				class="rounded-lg border border-input-border bg-canvas px-3 py-2 text-sm text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 			/>
 		</label>
 		<label class="flex flex-col gap-1">
@@ -1497,7 +1497,7 @@
 			<input
 				type="email"
 				bind:value={newEmail}
-				class="rounded-lg border border-border-strong bg-canvas px-3 py-2 text-sm text-fg-primary focus:border-cyan focus:outline-none"
+				class="rounded-lg border border-input-border bg-canvas px-3 py-2 text-sm text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 			/>
 		</label>
 		<label class="flex flex-col gap-1">
@@ -1507,7 +1507,7 @@
 				required
 				minlength={12}
 				bind:value={newPassword}
-				class="rounded-lg border border-border-strong bg-canvas px-3 py-2 font-mono text-sm text-fg-primary focus:border-cyan focus:outline-none"
+				class="rounded-lg border border-input-border bg-canvas px-3 py-2 font-mono text-sm text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 			/>
 			<span class="text-[10px] text-fg-muted">
 				At least 12 characters with 1 lowercase, 1 uppercase, and 1 digit
@@ -1517,7 +1517,7 @@
 			<span class="font-heading text-xs font-semibold text-fg-primary">Role</span>
 			<select
 				bind:value={newRole}
-				class="rounded-lg border border-border-strong bg-canvas px-3 py-2 text-sm text-fg-primary focus:border-cyan focus:outline-none"
+				class="rounded-lg border border-input-border bg-canvas px-3 py-2 text-sm text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 			>
 				<option value="USER">USER (scoped to linked media users)</option>
 				<option value="ADMIN">ADMIN (full access)</option>
@@ -1633,14 +1633,14 @@
 				required
 				placeholder="e.g. Homepage Widget"
 				bind:value={newKeyName}
-				class="rounded-lg border border-border-strong bg-canvas px-3 py-2 text-sm text-fg-primary focus:border-cyan focus:outline-none"
+				class="rounded-lg border border-input-border bg-canvas px-3 py-2 text-sm text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 			/>
 		</label>
 		<label class="flex flex-col gap-1">
 			<span class="font-heading text-xs font-semibold text-fg-primary">Role</span>
 			<select
 				bind:value={newKeyRole}
-				class="rounded-lg border border-border-strong bg-canvas px-3 py-2 text-sm text-fg-primary focus:border-cyan focus:outline-none"
+				class="rounded-lg border border-input-border bg-canvas px-3 py-2 text-sm text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 			>
 				<option value="USER">USER</option>
 				<option value="ADMIN">ADMIN</option>
@@ -1650,7 +1650,7 @@
 			<span class="font-heading text-xs font-semibold text-fg-primary">Expiration</span>
 			<select
 				bind:value={newKeyExpiryPreset}
-				class="rounded-lg border border-border-strong bg-canvas px-3 py-2 text-sm text-fg-primary focus:border-cyan focus:outline-none"
+				class="rounded-lg border border-input-border bg-canvas px-3 py-2 text-sm text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 			>
 				{#each API_KEY_EXPIRY_PRESETS as preset}
 					<option value={preset.value}>{preset.label}</option>
@@ -1664,7 +1664,7 @@
 					type="date"
 					required
 					bind:value={newKeyCustomDate}
-					class="rounded-lg border border-border-strong bg-canvas px-3 py-2 font-mono text-sm text-fg-primary focus:border-cyan focus:outline-none"
+					class="rounded-lg border border-input-border bg-canvas px-3 py-2 font-mono text-sm text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 				/>
 			</label>
 		{/if}
@@ -1699,7 +1699,7 @@
 					onchange={(e) => {
 						editRuleMode = e.currentTarget.value as GuardrailMode;
 					}}
-					class="rounded-lg border border-border-strong bg-canvas px-3 py-2 text-sm text-fg-primary focus:border-cyan focus:outline-none"
+					class="rounded-lg border border-input-border bg-canvas px-3 py-2 text-sm text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 				>
 					<option value="DISABLED">DISABLED — Rule inactive</option>
 					<option value="WARN">DRY-RUN WARN — Log &amp; audit only (do not kill)</option>
@@ -1718,7 +1718,7 @@
 						max={1440}
 						required
 						bind:value={editRuleThreshold}
-						class="rounded-lg border border-border-strong bg-canvas px-3 py-2 font-mono text-sm text-fg-primary focus:border-cyan focus:outline-none"
+						class="rounded-lg border border-input-border bg-canvas px-3 py-2 font-mono text-sm text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 					/>
 					<span class="text-[10px] text-fg-muted">
 						Continuous paused minutes before triggering (1–1440; resets when resumed).
@@ -1735,7 +1735,7 @@
 						max={50}
 						required
 						bind:value={editRuleThreshold}
-						class="rounded-lg border border-border-strong bg-canvas px-3 py-2 font-mono text-sm text-fg-primary focus:border-cyan focus:outline-none"
+						class="rounded-lg border border-input-border bg-canvas px-3 py-2 font-mono text-sm text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 					/>
 					<span class="text-[10px] text-fg-muted">
 						Oldest active streams are kept; newest excess streams are targeted (1–50).
@@ -1763,7 +1763,7 @@
 					rows={3}
 					maxlength={500}
 					bind:value={editRuleMessage}
-					class="rounded-lg border border-border-strong bg-canvas px-3 py-2 text-sm text-fg-primary focus:border-cyan focus:outline-none"
+					class="rounded-lg border border-input-border bg-canvas px-3 py-2 text-sm text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 				></textarea>
 				<span class="text-[10px] text-fg-muted">
 					Shown to the viewer on termination ({editRuleMessage.trim().length}/500).

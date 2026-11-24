@@ -401,8 +401,8 @@
 							<section class="flex flex-col gap-3 rounded-xl border border-border bg-elevated/70 p-4">
 								<div class="flex items-start justify-between gap-2">
 									<div class="flex items-center gap-2">
-										<Layers class="h-4 w-4 text-primary-hover" />
-										<h2 class="font-heading text-xs font-semibold uppercase tracking-wider text-primary-hover">
+										<Layers class="h-4 w-4 text-primary-text" />
+										<h2 class="font-heading text-xs font-semibold uppercase tracking-wider text-primary-text">
 											Season Details
 										</h2>
 									</div>
@@ -436,7 +436,7 @@
 											onclick={() => {
 												if (data.season?.ratingKey) void mediaDetailsModal.open(data.season.ratingKey);
 											}}
-											class="shrink-0 cursor-pointer font-mono text-[11px] font-semibold text-primary-hover hover:underline"
+											class="shrink-0 cursor-pointer font-mono text-[11px] font-semibold text-primary-text hover:underline"
 										>
 											View Season →
 										</button>

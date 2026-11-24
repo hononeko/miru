@@ -81,7 +81,7 @@
 				bind:value={query}
 				placeholder="Filter users…"
 				aria-label="Filter users"
-				class="w-full rounded-lg border border-border bg-surface py-2 pl-9 pr-3 text-xs text-fg-primary placeholder:text-fg-muted focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan/25"
+				class="w-full rounded-lg border border-input-border bg-surface py-2 pl-9 pr-3 text-xs text-fg-primary placeholder:text-fg-muted focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 			/>
 		</div>
 	</div>

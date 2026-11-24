@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { api } from '$api/client';
 import type { LibraryGrowthDayResponse, LibraryStatsResponse } from '$api/types';
 import { authStore } from '$stores/auth.svelte';
 import LibrarySectionDetail from './LibrarySectionDetail.svelte';
@@ -102,5 +103,34 @@ describe('LibrarySectionDetail', () => {
 
 		render(LibrarySectionDetail, { props: { stats: makeStats([]), recentItems: [] } });
 		expect(screen.getByText('No additions or removals recorded yet')).toBeTruthy();
+	});
+
+	it('offers the hygiene report to admins only', async () => {
+		const getSpy = vi.spyOn(api, 'GET').mockResolvedValue({
+			data: {
+				sectionId: '1',
+				unwatchedDays: 180,
+				sort: 'size_desc',
+				totalStaleCount: 0,
+				totalReclaimableBytes: 0,
+				neverPlayedCount: 0,
+				items: []
+			},
+			response: new Response(null, { status: 200 })
+		} as never);
+
+		render(LibrarySectionDetail, { props: { stats: makeStats([]), recentItems: [] } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Hygiene / Stale Media' }));
+		expect(screen.getByText('Reclaimable Storage')).toBeTruthy();
+		expect(getSpy).toHaveBeenCalledTimes(1);
+		cleanup();
+		getSpy.mockClear();
+
+		signInAs('USER');
+		render(LibrarySectionDetail, { props: { stats: makeStats([]), recentItems: [] } });
+		expect(screen.queryByRole('group', { name: 'Library view mode' })).toBeNull();
+		expect(screen.queryByText(/Hygiene/)).toBeNull();
+		expect(screen.getByText('Growth History')).toBeTruthy();
+		expect(getSpy).not.toHaveBeenCalled();
 	});
 });

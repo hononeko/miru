@@ -709,6 +709,9 @@ class LibraryRoutesTest :
                         HttpStatusCode.OK
                     client.get("/api/v1/libraries/1/recent") { cookie(SESSION_COOKIE_NAME, bobLogin.signedToken) }.status shouldBe
                         HttpStatusCode.OK
+                    // The stale report is ADMIN only, even for a section shared with Bob
+                    client.get("/api/v1/libraries/1/stale") { cookie(SESSION_COOKIE_NAME, bobLogin.signedToken) }.status shouldBe
+                        HttpStatusCode.Forbidden
                     client.get("/api/v1/libraries/2") { cookie(SESSION_COOKIE_NAME, bobLogin.signedToken) }.status shouldBe
                         HttpStatusCode.Forbidden
                     client.get("/api/v1/libraries/2/stats") { cookie(SESSION_COOKIE_NAME, bobLogin.signedToken) }.status shouldBe

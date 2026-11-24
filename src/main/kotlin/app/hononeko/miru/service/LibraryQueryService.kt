@@ -169,6 +169,7 @@ class LibraryQueryService(
             )
         }
 
+    /** Admin only: the report covers every user's playback, not just the caller's. */
     suspend fun getStaleMedia(
         principal: MiruPrincipal,
         sectionId: String,
@@ -178,6 +179,7 @@ class LibraryQueryService(
         limit: Int = DEFAULT_STALE_LIMIT,
     ): Either<MiruError, LibraryStaleResult> =
         either {
+            principal.requireAdmin().bind()
             val errors = linkedMapOf<String, String>()
             if (unwatchedDays !in 0..MAX_STALE_UNWATCHED_DAYS) {
                 errors["unwatchedDays"] = "must be between 0 and $MAX_STALE_UNWATCHED_DAYS"

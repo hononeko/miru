@@ -942,7 +942,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get stale or unwatched media items for a library section ranked by disk footprint or age */
+        /** Get stale or unwatched media items for a library section ranked by disk footprint or age (ADMIN only) */
         get: operations["getLibraryStaleMedia"];
         put?: never;
         post?: never;
@@ -5203,7 +5203,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
-            /** @description Access to the requested library section is forbidden */
+            /** @description Administrator role is required */
             403: {
                 headers: {
                     [name: string]: unknown;

@@ -2,6 +2,7 @@ package app.hononeko.miru.persistence
 
 import app.hononeko.miru.auth.MiruPrincipal
 import app.hononeko.miru.auth.MiruRole
+import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.importer.TautulliImportOptions
 import app.hononeko.miru.importer.TautulliImporterService
 import app.hononeko.miru.persistence.model.ActiveSessionKey
@@ -82,6 +83,7 @@ import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.types.shouldBeInstanceOf
 import io.kotest.matchers.string.shouldNotContain
 import java.nio.file.Files
 import java.nio.file.Path
@@ -1018,6 +1020,14 @@ private fun FunSpecRootScope.staleMediaTests(ctxProvider: () -> ContractContext)
                     ).shouldBeRight()
             staleOldest.report.items.map { it.item.ratingKey } shouldContainExactly
                 listOf("mov-never-oldest", "mov-never-medium", "mov-stale-large")
+
+            // USER principals never see the report
+            queryService
+                .getStaleMedia(
+                    principal = admin.copy(role = MiruRole.USER, linkedMediaUserIds = setOf("u-1")),
+                    sectionId = "sec-movies",
+                ).shouldBeLeft()
+                .shouldBeInstanceOf<MiruError.Forbidden>()
 
             // Never played only (unwatchedDays = 0)
             val neverPlayed =

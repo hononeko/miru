@@ -11,6 +11,7 @@
 	import BarChart, { type BarPoint } from '$components/miru/BarChart.svelte';
 	import KpiCard from '$components/miru/KpiCard.svelte';
 	import ProxiedImage from '$components/miru/ProxiedImage.svelte';
+	import { authStore } from '$stores/auth.svelte';
 	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
 	import {
@@ -35,6 +36,8 @@
 
 	type SectionTab = 'overview' | 'hygiene';
 	let activeTab = $state<SectionTab>('overview');
+	// The hygiene report covers the whole server's playback and is only useful to someone who can delete media.
+	const showHygiene = $derived(authStore.isAdmin && activeTab === 'hygiene');
 	let unwatchedDays = $state<number>(180);
 	let staleSort = $state<StaleMediaSort>('size_desc');
 	let staleReport = $state<StaleMediaListResponse | null>(null);
@@ -136,51 +139,53 @@
 		const sectionKey = stats.section.sectionKey;
 		const days = unwatchedDays;
 		const sort = staleSort;
-		if (activeTab === 'hygiene' && sectionKey) {
+		if (showHygiene && sectionKey) {
 			void loadStaleMedia(sectionKey, days, sort);
 		}
 	});
 </script>
 
 <!-- Section View Mode Switcher (Overview vs Hygiene / Stale Media) -->
-<div class="flex flex-wrap items-center justify-between gap-3">
-	<div
-		role="group"
-		aria-label="Library view mode"
-		class="inline-flex items-center gap-1 rounded-xl border border-border bg-surface p-1"
-	>
-		<button
-			type="button"
-			aria-pressed={activeTab === 'overview'}
-			onclick={() => (activeTab = 'overview')}
-			class={cn(
-				'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-heading text-xs font-semibold transition-[background-color,border-color,color,transform] duration-150 ease-[var(--ease-out-quart)] active:scale-[0.98] motion-reduce:active:scale-100 cursor-pointer',
-				activeTab === 'overview'
-					? 'bg-cyan-soft text-cyan-hi border border-cyan/50'
-					: 'text-fg-secondary hover:text-fg-primary border border-transparent'
-			)}
+{#if authStore.isAdmin}
+	<div class="flex flex-wrap items-center justify-between gap-3">
+		<div
+			role="group"
+			aria-label="Library view mode"
+			class="inline-flex items-center gap-1 rounded-xl border border-border bg-surface p-1"
 		>
-			<Sparkles class="h-3.5 w-3.5" />
-			Overview & Recent
-		</button>
-		<button
-			type="button"
-			aria-pressed={activeTab === 'hygiene'}
-			onclick={() => (activeTab = 'hygiene')}
-			class={cn(
-				'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-heading text-xs font-semibold transition-[background-color,border-color,color,transform] duration-150 ease-[var(--ease-out-quart)] active:scale-[0.98] motion-reduce:active:scale-100 cursor-pointer',
-				activeTab === 'hygiene'
-					? 'bg-primary-soft text-primary-text border border-primary/50'
-					: 'text-fg-secondary hover:text-fg-primary border border-transparent'
-			)}
-		>
-			<HardDrive class="h-3.5 w-3.5" />
-			Hygiene / Stale Media
-		</button>
+			<button
+				type="button"
+				aria-pressed={activeTab === 'overview'}
+				onclick={() => (activeTab = 'overview')}
+				class={cn(
+					'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-heading text-xs font-semibold transition-[background-color,border-color,color,transform] duration-150 ease-[var(--ease-out-quart)] active:scale-[0.98] motion-reduce:active:scale-100 cursor-pointer',
+					activeTab === 'overview'
+						? 'bg-cyan-soft text-cyan-hi border border-cyan/50'
+						: 'text-fg-secondary hover:text-fg-primary border border-transparent'
+				)}
+			>
+				<Sparkles class="h-3.5 w-3.5" />
+				Overview & Recent
+			</button>
+			<button
+				type="button"
+				aria-pressed={activeTab === 'hygiene'}
+				onclick={() => (activeTab = 'hygiene')}
+				class={cn(
+					'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-heading text-xs font-semibold transition-[background-color,border-color,color,transform] duration-150 ease-[var(--ease-out-quart)] active:scale-[0.98] motion-reduce:active:scale-100 cursor-pointer',
+					activeTab === 'hygiene'
+						? 'bg-primary-soft text-primary-text border border-primary/50'
+						: 'text-fg-secondary hover:text-fg-primary border border-transparent'
+				)}
+			>
+				<HardDrive class="h-3.5 w-3.5" />
+				Hygiene / Stale Media
+			</button>
+		</div>
 	</div>
-</div>
+{/if}
 
-{#if activeTab === 'overview'}
+{#if !showHygiene}
 	<!-- Breakdown + Growth Row -->
 	<section class="grid grid-cols-1 gap-4 lg:grid-cols-12">
 		<div class="flex flex-col gap-4 rounded-xl border border-border bg-surface p-4 lg:col-span-7">

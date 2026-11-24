@@ -113,6 +113,12 @@ test.describe('Libraries browsing, admin-triggered deep sync & media details', (
 		await expect(page.getByRole('button', { name: /TV Shows/ })).toHaveCount(0);
 		await expect(page.getByRole('button', { name: 'Sync Libraries' })).toHaveCount(0);
 
+		// The hygiene report is for admins only, in the UI and the API
+		await expect(page.getByRole('heading', { name: 'Movies · Technical Breakdown' })).toBeVisible();
+		await expect(page.getByText('Hygiene / Stale Media')).toHaveCount(0);
+		const staleReport = await page.request.get(`${miru.baseUrl}/api/v1/libraries/1/stale`);
+		expect(staleReport.status()).toBe(403);
+
 		// Direct navigation to unshared section shows access unavailable instead of crashing
 		await page.goto(`${miru.baseUrl}/libraries/2`);
 		await expect(page.getByText('Library access unavailable')).toBeVisible();

@@ -6,6 +6,7 @@ import app.hononeko.miru.adapter.plex.PlexOAuthService
 import app.hononeko.miru.adapter.plex.PlexRuntimeManager
 import app.hononeko.miru.adapter.plex.createPlexHttpClient
 import app.hononeko.miru.artwork.ArtworkProxyService
+import app.hononeko.miru.artwork.DnsResolver
 import app.hononeko.miru.artwork.createAvatarHttpClient
 import app.hononeko.miru.auth.Argon2Params
 import app.hononeko.miru.auth.Argon2idPasswordHasher
@@ -49,6 +50,7 @@ import io.ktor.http.headersOf
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import kotlinx.serialization.encodeToString
+import java.net.InetAddress
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicLong
@@ -216,6 +218,7 @@ private fun createOAuthHarness(
             userRepository = userRepo,
             externalAvatarClient = createAvatarHttpClient(engine = MockEngine { respond(ByteArray(0), HttpStatusCode.NotFound) }),
             plexBaseUrlProvider = { runtimeManager.currentBaseUrl() },
+            dnsResolver = DnsResolver { listOf(InetAddress.getByName("93.184.216.34")) },
         )
     val appConfig =
         AppConfig(

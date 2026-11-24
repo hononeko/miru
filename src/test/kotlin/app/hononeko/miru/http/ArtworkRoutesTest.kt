@@ -8,6 +8,7 @@ import app.hononeko.miru.adapter.plex.createPlexHttpClient
 import app.hononeko.miru.artwork.ArtworkKind
 import app.hononeko.miru.artwork.ArtworkProxyService
 import app.hononeko.miru.artwork.BoundedArtworkCache
+import app.hononeko.miru.artwork.DnsResolver
 import app.hononeko.miru.artwork.createAvatarHttpClient
 import app.hononeko.miru.auth.Argon2Params
 import app.hononeko.miru.auth.Argon2idPasswordHasher
@@ -65,6 +66,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
+import java.net.InetAddress
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicLong
@@ -167,6 +169,7 @@ private fun createArtworkHarness(
             cache = cache,
             plexBaseUrl = TEST_PLEX_URL,
             libraryRepository = libraryRepo,
+            dnsResolver = DnsResolver { listOf(InetAddress.getByName("93.184.216.34")) },
         )
 
     return ArtworkTestHarness(
@@ -1099,7 +1102,6 @@ class ArtworkRoutesTest :
                         createArtworkProxyService(
                             plexRuntimeManager = runtimeManager,
                             userRepository = harness.userRepo,
-                            externalAvatarClient = harness.externalClient,
                             libraryRepository = harness.libraryRepo,
                             sectionAccessChecker = checker,
                         )

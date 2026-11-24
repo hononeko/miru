@@ -725,6 +725,51 @@ private fun FunSpecRootScope.playbackHistorySortAndStatsTests(ctxProvider: () ->
             ctx.history.forEachHeatmapSample(userIds = emptySet()) { _, _ -> emptyCallbackCalls++ }.shouldBeRight()
             emptyCallbackCalls shouldBe 0
         }
+
+        test("sorts titles as displayed: episodes under their show, in season and episode order") {
+            val ctx = ctxProvider()
+            ctx.servers.upsert(sampleServer(id = "srv-1")).shouldBeRight()
+            ctx.users.upsert(sampleUser(id = "u-1", serverId = "srv-1", externalUserId = "1", username = "alice")).shouldBeRight()
+
+            suspend fun insert(
+                id: String,
+                title: String,
+                show: String? = null,
+                season: Int? = null,
+                episode: Int? = null,
+            ) {
+                val record = sampleHistory(id = id, userId = "u-1", ratingKey = id, startedAtMs = 1_000L, stoppedAtMs = 2_000L)
+                ctx.history
+                    .insert(
+                        record.copy(
+                            media =
+                                record.media.copy(
+                                    mediaType = if (show != null) "episode" else "movie",
+                                    title = title,
+                                    grandparentTitle = show,
+                                    parentIndex = season,
+                                    mediaIndex = episode,
+                                ),
+                        ),
+                    ).shouldBeRight()
+            }
+            insert(id = "toy", title = "Toy Story")
+            insert(id = "sev-1-10", title = "Aardvark", show = "Severance", season = 1, episode = 10)
+            insert(id = "rocky", title = "rocky")
+            insert(id = "sev-2-1", title = "Hello", show = "Severance", season = 2, episode = 1)
+            insert(id = "sev-1-2", title = "Zebra", show = "Severance", season = 1, episode = 2)
+            // Same name as the show
+            insert(id = "sev-movie", title = "Severance")
+
+            val ascending = listOf("rocky", "sev-movie", "sev-1-2", "sev-1-10", "sev-2-1", "toy")
+            val filter = HistoryFilter(sortBy = HistorySortField.TITLE, sortDir = HistorySortDirection.ASC)
+            ctx.history.query(filter).shouldBeRight().items.map { it.id } shouldContainExactly ascending
+            ctx.history
+                .query(filter.copy(sortDir = HistorySortDirection.DESC))
+                .shouldBeRight()
+                .items
+                .map { it.id } shouldContainExactly ascending.reversed()
+        }
     }
 }
 

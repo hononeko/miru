@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
-	import { Search, ChevronLeft, ChevronRight, X } from 'lucide-svelte';
+	import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Search, X } from 'lucide-svelte';
 	import { api, MiruApiError, unwrap } from '$api/client';
 	import type { HistoryDetailResponse, HistoryItemDto, UserSummaryDto } from '$api/types';
 	import Badge from '$components/ui/Badge.svelte';
@@ -22,7 +22,26 @@
 
 	type MediaFilter = '' | 'movie' | 'episode' | 'track' | 'clip' | 'live_tv';
 	type DecisionFilter = '' | 'direct_play' | 'direct_stream' | 'transcode';
-	type SortField = 'stopped_at' | 'started_at' | 'watched_duration' | 'completion_percent' | 'title';
+	type SortField = 'stopped_at' | 'title' | 'watched_duration' | 'completion_percent';
+	type SortDirection = 'asc' | 'desc';
+
+	const COLUMNS: ReadonlyArray<{ label: string; sort?: SortField; alignRight?: boolean }> = [
+		{ label: 'When', sort: 'stopped_at' },
+		{ label: 'User' },
+		{ label: 'Media', sort: 'title' },
+		{ label: 'Player' },
+		{ label: 'Decision' },
+		{ label: 'Duration', sort: 'watched_duration', alignRight: true },
+		{ label: 'Done', sort: 'completion_percent', alignRight: true }
+	];
+
+	/** The direction a column starts with: newest, longest or most complete first, but titles from A to Z. */
+	const INITIAL_SORT_DIR: Record<SortField, SortDirection> = {
+		stopped_at: 'desc',
+		title: 'asc',
+		watched_duration: 'desc',
+		completion_percent: 'desc'
+	};
 
 	let items = $state<HistoryItemDto[]>([]);
 	let users = $state<UserSummaryDto[]>([]);
@@ -39,7 +58,7 @@
 	let mediaType = $state<MediaFilter>('');
 	let decision = $state<DecisionFilter>('');
 	let sortBy = $state<SortField>('stopped_at');
-	let sortDir = $state<'asc' | 'desc'>('desc');
+	let sortDir = $state<SortDirection>('desc');
 
 	// Detail drawer / mobile bottom sheet
 	let selectedId = $state<string | null>(null);
@@ -59,7 +78,18 @@
 		}, 250);
 	}
 
+	function sortByField(field: SortField) {
+		if (sortBy === field) {
+			sortDir = sortDir === 'desc' ? 'asc' : 'desc';
+		} else {
+			sortBy = field;
+			sortDir = INITIAL_SORT_DIR[field];
+		}
+		pageNum = 1;
+	}
+
 	function clearFilters() {
+		if (debounceTimer) clearTimeout(debounceTimer);
 		searchInput = '';
 		q = '';
 		userId = '';
@@ -207,8 +237,22 @@
 				oninput={(e) => onSearchInput(e.currentTarget.value)}
 				placeholder="Search title, show, season…"
 				aria-label="Search playback history"
-				class="w-full rounded-lg border border-input-border bg-surface py-2 pl-9 pr-3 text-sm text-fg-primary placeholder:text-fg-muted focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
+				class={cn(
+					'w-full rounded-lg border border-input-border bg-surface py-2 pl-9 text-sm text-fg-primary placeholder:text-fg-muted focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan [&::-webkit-search-cancel-button]:hidden',
+					hasActiveFilters ? 'pr-24' : 'pr-3'
+				)}
 			/>
+			{#if hasActiveFilters}
+				<Button
+					variant="ghost"
+					size="sm"
+					onclick={clearFilters}
+					class="absolute right-1 top-1/2 h-7 -translate-y-1/2 gap-1.5 px-2.5"
+				>
+					Reset
+					<X class="h-3.5 w-3.5" />
+				</Button>
+			{/if}
 		</div>
 
 		<div class="flex flex-wrap items-center gap-2">
@@ -251,37 +295,33 @@
 				<option value="transcode">Transcode</option>
 			</select>
 
-			<select
-				bind:value={sortBy}
-				onchange={() => (pageNum = 1)}
-				aria-label="Sort field"
-				class="rounded-lg border border-input-border bg-surface px-2.5 py-2 text-xs font-medium text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
-			>
-				<option value="stopped_at">Sort: Stopped</option>
-				<option value="started_at">Sort: Started</option>
-				<option value="watched_duration">Sort: Duration</option>
-				<option value="completion_percent">Sort: Completion</option>
-				<option value="title">Sort: Title</option>
-			</select>
-
-			<Button
-				variant="outline"
-				size="sm"
-				onclick={() => {
-					sortDir = sortDir === 'desc' ? 'asc' : 'desc';
-					pageNum = 1;
-				}}
-				aria-label="Toggle sort direction"
-			>
-				{sortDir === 'desc' ? '↓ Desc' : '↑ Asc'}
-			</Button>
-
-			{#if hasActiveFilters}
-				<Button variant="ghost" size="sm" onclick={clearFilters}>
-					<X class="h-3.5 w-3.5" />
-					Reset
+			<!-- The compact cards below md have no column headers to sort by -->
+			<div class="flex items-center gap-2 md:hidden">
+				<select
+					value={sortBy}
+					onchange={(e) => sortByField(e.currentTarget.value as SortField)}
+					aria-label="Sort by"
+					class="rounded-lg border border-input-border bg-surface px-2.5 py-2 text-xs font-medium text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
+				>
+					{#each COLUMNS as column (column.label)}
+						{#if column.sort}
+							<option value={column.sort}>Sort: {column.label}</option>
+						{/if}
+					{/each}
+				</select>
+				<Button
+					variant="outline"
+					size="icon"
+					onclick={() => sortByField(sortBy)}
+					aria-label={sortDir === 'desc' ? 'Sorted descending, switch to ascending' : 'Sorted ascending, switch to descending'}
+				>
+					{#if sortDir === 'desc'}
+						<ArrowDown class="h-3.5 w-3.5" />
+					{:else}
+						<ArrowUp class="h-3.5 w-3.5" />
+					{/if}
 				</Button>
-			{/if}
+			</div>
 		</div>
 	</div>
 
@@ -297,13 +337,37 @@
 			<table class="w-full border-collapse text-left">
 				<thead>
 					<tr class="border-b border-border bg-elevated font-heading text-[10px] font-semibold uppercase tracking-wider text-fg-muted">
-						<th class="px-4 py-2.5">When</th>
-						<th class="px-4 py-2.5">User</th>
-						<th class="px-4 py-2.5">Media</th>
-						<th class="px-4 py-2.5">Player</th>
-						<th class="px-4 py-2.5">Decision</th>
-						<th class="px-4 py-2.5 text-right">Duration</th>
-						<th class="px-4 py-2.5 text-right">Done</th>
+						{#each COLUMNS as column (column.label)}
+							{#if column.sort}
+								{@const sort = column.sort}
+								{@const active = sortBy === sort}
+								<th
+									aria-sort={active ? (sortDir === 'desc' ? 'descending' : 'ascending') : 'none'}
+									class={cn('p-0', column.alignRight && 'text-right')}
+								>
+									<button
+										type="button"
+										onclick={() => sortByField(sort)}
+										class={cn(
+											'group inline-flex w-full cursor-pointer items-center gap-1 px-4 py-2.5 uppercase transition-colors hover:text-fg-primary focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-cyan',
+											column.alignRight && 'justify-end',
+											active && 'text-fg-primary'
+										)}
+									>
+										{column.label}
+										{#if !active}
+											<ArrowUpDown class="h-3 w-3 opacity-50 transition-opacity group-hover:opacity-100" />
+										{:else if sortDir === 'desc'}
+											<ArrowDown class="h-3 w-3 text-primary-text" />
+										{:else}
+											<ArrowUp class="h-3 w-3 text-primary-text" />
+										{/if}
+									</button>
+								</th>
+							{:else}
+								<th class="px-4 py-2.5">{column.label}</th>
+							{/if}
+						{/each}
 					</tr>
 				</thead>
 				<tbody class="divide-y divide-border text-xs">

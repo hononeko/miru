@@ -17,6 +17,8 @@ import app.hononeko.miru.persistence.model.UserPlaybackSummary
 import app.hononeko.miru.persistence.table.PlaybackHistoryTable
 import app.hononeko.miru.persistence.table.UsersTable
 import arrow.core.Either
+import org.jetbrains.exposed.v1.core.Case
+import org.jetbrains.exposed.v1.core.Coalesce
 import org.jetbrains.exposed.v1.core.Expression
 import org.jetbrains.exposed.v1.core.LikePattern
 import org.jetbrains.exposed.v1.core.LongColumnType
@@ -28,6 +30,8 @@ import org.jetbrains.exposed.v1.core.count
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.intLiteral
+import org.jetbrains.exposed.v1.core.isNotNull
 import org.jetbrains.exposed.v1.core.lessEq
 import org.jetbrains.exposed.v1.core.like
 import org.jetbrains.exposed.v1.core.lowerCase
@@ -310,13 +314,13 @@ class ExposedPlaybackHistoryRepository(
                     HistorySortDirection.ASC -> SortOrder.ASC
                     HistorySortDirection.DESC -> SortOrder.DESC
                 }
-            val sortExpression: Expression<*> =
+            val sortExpressions: List<Expression<*>> =
                 when (filter.sortBy) {
-                    HistorySortField.STOPPED_AT -> PlaybackHistoryTable.stoppedAtMs
-                    HistorySortField.STARTED_AT -> PlaybackHistoryTable.startedAtMs
-                    HistorySortField.WATCHED_DURATION -> PlaybackHistoryTable.watchedDurationSec
-                    HistorySortField.COMPLETION_PERCENT -> PlaybackHistoryTable.completionPercent
-                    HistorySortField.TITLE -> PlaybackHistoryTable.title.lowerCase()
+                    HistorySortField.STOPPED_AT -> listOf(PlaybackHistoryTable.stoppedAtMs)
+                    HistorySortField.STARTED_AT -> listOf(PlaybackHistoryTable.startedAtMs)
+                    HistorySortField.WATCHED_DURATION -> listOf(PlaybackHistoryTable.watchedDurationSec)
+                    HistorySortField.COMPLETION_PERCENT -> listOf(PlaybackHistoryTable.completionPercent)
+                    HistorySortField.TITLE -> displayTitleSortExpressions()
                 }
 
             val totalCount =
@@ -329,10 +333,10 @@ class ExposedPlaybackHistoryRepository(
                 if (safeLimit == 0) {
                     emptyList()
                 } else {
-                    PlaybackHistoryTable
-                        .selectAll()
-                        .where { condition }
-                        .orderBy(sortExpression to sortOrder, PlaybackHistoryTable.id to SortOrder.ASC)
+                    val matching = PlaybackHistoryTable.selectAll().where { condition }
+                    sortExpressions
+                        .fold(matching) { query, expression -> query.orderBy(expression to sortOrder) }
+                        .orderBy(PlaybackHistoryTable.id to SortOrder.ASC)
                         .limit(safeLimit)
                         .offset(safeOffset.toLong())
                         .map { it.toPlaybackHistoryRecord() }
@@ -504,6 +508,20 @@ class ExposedPlaybackHistoryRepository(
                     onRow(row[PlaybackHistoryTable.stoppedAtMs], row[PlaybackHistoryTable.watchedDurationSec])
                 }
         }
+    }
+
+    /** Titles as the UI lists them: episodes under their show, in season and episode order. */
+    private fun displayTitleSortExpressions(): List<Expression<*>> {
+        val isEpisodeOfShow = (PlaybackHistoryTable.mediaType eq "episode") and PlaybackHistoryTable.grandparentTitle.isNotNull()
+        return listOf(
+            Case()
+                .When(isEpisodeOfShow, PlaybackHistoryTable.grandparentTitle.lowerCase())
+                .Else(PlaybackHistoryTable.title.lowerCase()),
+            // Coalesced because SQLite and PostgreSQL order NULLs differently
+            Coalesce(PlaybackHistoryTable.parentIndex, intLiteral(0)),
+            Coalesce(PlaybackHistoryTable.mediaIndex, intLiteral(0)),
+            PlaybackHistoryTable.title.lowerCase(),
+        )
     }
 
     private fun buildStatsCondition(

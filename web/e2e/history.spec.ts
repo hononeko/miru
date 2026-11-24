@@ -57,9 +57,17 @@ test.describe('Playback History filtering, search, pagination, sorting & detail 
 		await expect(desktopRows).toHaveCount(6);
 		await expect(desktopRows.first()).toContainText('Spirited Away');
 
-		// Reset clears search
+		// Reset sits inside the search bar, on its right side, and clears the search
+		const searchBox = (await page.getByLabel('Search playback history').boundingBox())!;
+		const resetBox = (await page.getByRole('button', { name: 'Reset' }).boundingBox())!;
+		expect(resetBox.x).toBeGreaterThan(searchBox.x + searchBox.width / 2);
+		expect(resetBox.x + resetBox.width).toBeLessThanOrEqual(searchBox.x + searchBox.width);
+		expect(resetBox.y).toBeGreaterThanOrEqual(searchBox.y);
+		expect(resetBox.y + resetBox.height).toBeLessThanOrEqual(searchBox.y + searchBox.height);
 		await page.getByRole('button', { name: 'Reset' }).click();
+		await expect(page.getByLabel('Search playback history')).toHaveValue('');
 		await expect(page.getByText('30 PLAYS')).toBeVisible();
+		await expect(page.getByRole('button', { name: 'Reset' })).toHaveCount(0);
 
 		// Filter by User (Bob Viewer has 13 plays)
 		const userSelect = page.getByLabel('Filter by user');
@@ -85,11 +93,30 @@ test.describe('Playback History filtering, search, pagination, sorting & detail 
 		await page.getByRole('button', { name: 'Reset' }).click();
 		await expect(page.getByText('30 PLAYS')).toBeVisible();
 
-		// Sorting by Title Ascending -> Akira comes first; Descending -> Spirited Away comes first
-		await page.getByLabel('Sort field').selectOption('title');
+		// Column headers sort by one column at a time; clicking the active one flips its direction
+		const header = (name: string) => page.getByRole('columnheader', { name, exact: true });
+		const sortedColumns = page.locator('th[aria-sort="ascending"], th[aria-sort="descending"]');
+		await expect(header('When')).toHaveAttribute('aria-sort', 'descending');
+
+		await header('Duration').getByRole('button').click();
+		await expect(header('Duration')).toHaveAttribute('aria-sort', 'descending');
+		await expect(header('When')).toHaveAttribute('aria-sort', 'none');
+		await expect(sortedColumns).toHaveCount(1);
+
+		await page.getByRole('button', { name: 'Next' }).click();
+		await expect(page.getByText('Page 2 of 2 · 30 total')).toBeVisible();
+		await header('Media').getByRole('button').click();
+		await expect(page.getByText('Page 1 of 2 · 30 total')).toBeVisible();
+		await expect(header('Media')).toHaveAttribute('aria-sort', 'ascending');
+		await expect(sortedColumns).toHaveCount(1);
+		await expect(desktopRows.first()).toContainText('Akira');
+
+		await header('Media').getByRole('button').click();
+		await expect(header('Media')).toHaveAttribute('aria-sort', 'descending');
 		await expect(desktopRows.first()).toContainText('Spirited Away');
-		await page.getByRole('button', { name: 'Toggle sort direction' }).click();
-		await expect(page.getByRole('button', { name: 'Toggle sort direction' })).toContainText('Asc');
+
+		await header('Media').getByRole('button').click();
+		await expect(header('Media')).toHaveAttribute('aria-sort', 'ascending');
 		await expect(desktopRows.first()).toContainText('Akira');
 
 		// Open Play Detail Drawer by clicking the first row (non-title cell)

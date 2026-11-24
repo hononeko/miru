@@ -4549,6 +4549,7 @@ export interface operations {
                 to?: string;
                 /** @description Case-insensitive title, season, or series search query */
                 q?: string;
+                /** @description Sort field; title orders episodes by show, then season and episode number */
                 sortBy?: "stopped_at" | "started_at" | "watched_duration" | "completion_percent" | "title";
                 sortDir?: "asc" | "desc";
                 page?: number;

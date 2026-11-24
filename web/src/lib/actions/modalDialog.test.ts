@@ -1,0 +1,109 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { lockPageScroll } from '$lib/scrollLock';
+import { modalDialog } from './modalDialog';
+
+const INSIDE = { clientX: 300, clientY: 200 };
+const OUTSIDE = { clientX: 20, clientY: 200 };
+
+function createDialog() {
+	const dialog = document.createElement('dialog');
+	const button = document.createElement('button');
+	dialog.appendChild(button);
+	document.body.appendChild(dialog);
+	dialog.getBoundingClientRect = () => ({ left: 100, right: 500, top: 100, bottom: 300 }) as DOMRect;
+	dialog.close = vi.fn(() => dialog.removeAttribute('open'));
+	dialog.setAttribute('open', '');
+	return { dialog, button };
+}
+
+function send(target: EventTarget, type: string, point: { clientX: number; clientY: number }) {
+	target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, ...point }));
+}
+
+const isLocked = () => document.body.hasAttribute('data-scroll-locked');
+
+describe('modalDialog', () => {
+	let action: ReturnType<typeof modalDialog> | null = null;
+
+	beforeEach(() => {
+		document.body.innerHTML = '';
+	});
+
+	afterEach(() => {
+		action?.destroy();
+		action = null;
+	});
+
+	it('closes on the click of a backdrop press, not on its pointerdown or pointerup', () => {
+		const { dialog } = createDialog();
+		action = modalDialog(dialog);
+
+		send(dialog, 'pointerdown', OUTSIDE);
+		send(dialog, 'pointerup', OUTSIDE);
+		expect(dialog.close).not.toHaveBeenCalled();
+
+		send(dialog, 'click', OUTSIDE);
+		expect(dialog.close).toHaveBeenCalledTimes(1);
+	});
+
+	it('stays open for clicks inside it and for drags that cross its edge', () => {
+		const { dialog, button } = createDialog();
+		action = modalDialog(dialog);
+
+		send(button, 'pointerdown', INSIDE);
+		send(button, 'click', INSIDE);
+		// Pressing Enter on a button reports a click at 0,0
+		send(button, 'click', { clientX: 0, clientY: 0 });
+
+		send(button, 'pointerdown', INSIDE);
+		send(dialog, 'click', OUTSIDE);
+
+		send(dialog, 'pointerdown', OUTSIDE);
+		send(dialog, 'click', INSIDE);
+
+		expect(dialog.close).not.toHaveBeenCalled();
+	});
+
+	it('blocks touch scrolling that starts on the backdrop only', () => {
+		const { dialog, button } = createDialog();
+		action = modalDialog(dialog);
+
+		const onBackdrop = new Event('touchmove', { bubbles: true, cancelable: true });
+		dialog.dispatchEvent(onBackdrop);
+		expect(onBackdrop.defaultPrevented).toBe(true);
+
+		const onContent = new Event('touchmove', { bubbles: true, cancelable: true });
+		button.dispatchEvent(onContent);
+		expect(onContent.defaultPrevented).toBe(false);
+	});
+
+	it('locks page scroll while the dialog is open and unlocks it on close or destroy', async () => {
+		const { dialog } = createDialog();
+		dialog.removeAttribute('open');
+		action = modalDialog(dialog);
+		expect(isLocked()).toBe(false);
+
+		dialog.setAttribute('open', '');
+		await vi.waitFor(() => expect(isLocked()).toBe(true));
+
+		dialog.close();
+		await vi.waitFor(() => expect(isLocked()).toBe(false));
+
+		dialog.setAttribute('open', '');
+		await vi.waitFor(() => expect(isLocked()).toBe(true));
+		action.destroy();
+		expect(isLocked()).toBe(false);
+	});
+});
+
+describe('lockPageScroll', () => {
+	it('stays locked until every lock is released, ignoring repeated releases', () => {
+		const releaseFirst = lockPageScroll();
+		const releaseSecond = lockPageScroll();
+		releaseFirst();
+		releaseFirst();
+		expect(isLocked()).toBe(true);
+		releaseSecond();
+		expect(isLocked()).toBe(false);
+	});
+});

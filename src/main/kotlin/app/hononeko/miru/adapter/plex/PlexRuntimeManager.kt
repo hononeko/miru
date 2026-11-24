@@ -25,6 +25,8 @@ import app.hononeko.miru.persistence.repository.MediaServerRepository
 import app.hononeko.miru.session.ActiveSessionsSink
 import app.hononeko.miru.session.SessionReconciler
 import app.hononeko.miru.session.SessionStateEngine
+import app.hononeko.miru.webhook.ReconcileHealthSignal
+import app.hononeko.miru.webhook.WebhookServerPayload
 import arrow.core.Either
 import arrow.core.flatMap
 import arrow.core.left
@@ -45,6 +47,7 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
@@ -192,6 +195,13 @@ class PlexRuntimeManager(
 
     val adapter: DelegatingMediaServerAdapter = DelegatingMediaServerAdapter()
 
+    private val _reconcileHealth =
+        MutableSharedFlow<ReconcileHealthSignal>(
+            extraBufferCapacity = RECONCILE_HEALTH_BUFFER_CAPACITY,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
+    val reconcileHealth: SharedFlow<ReconcileHealthSignal> = _reconcileHealth.asSharedFlow()
+
     private val reloadMutex = Mutex()
     private val serverIdMutex = Mutex()
     private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("plex-runtime-manager"))
@@ -245,7 +255,9 @@ class PlexRuntimeManager(
 
     fun isConfigured(): Boolean = adapter.currentDelegate() != null
 
-    suspend fun currentServerName(): String? {
+    suspend fun currentServerName(): String? = currentServerSummary()?.name
+
+    suspend fun currentServerSummary(): WebhookServerPayload? {
         if (!isConfigured()) return null
         val machineId = activeMachineId
         val baseUrl = activeBaseUrl?.trimEnd('/')
@@ -255,7 +267,9 @@ class PlexRuntimeManager(
                 ?: baseUrl?.let { url -> servers.firstOrNull { it.baseUrl.trimEnd('/') == url } }
                 ?: servers.firstOrNull { it.serverType.equals("plex", ignoreCase = true) }
                 ?: servers.firstOrNull()
-        return matched?.name?.trim()?.takeIf { it.isNotEmpty() }
+        val id = cachedServerId ?: matched?.id ?: return null
+        val name = matched?.name?.trim()?.takeIf { it.isNotEmpty() }
+        return WebhookServerPayload(id = id, name = name)
     }
 
     override fun start() {
@@ -415,6 +429,27 @@ class PlexRuntimeManager(
                 scope = pipelineScope,
                 interval = runtimePlexConfig.pollIntervalSeconds.seconds,
                 reconnectSignals = listener?.reconnected ?: emptyFlow(),
+                onReconcileOutcome = { outcome ->
+                    val nowMs = clock()
+                    val signal =
+                        outcome.fold(
+                            ifLeft = { err ->
+                                ReconcileHealthSignal(
+                                    reachable = false,
+                                    errorMessage = err.message,
+                                    timestampMs = nowMs,
+                                )
+                            },
+                            ifRight = {
+                                ReconcileHealthSignal(
+                                    reachable = true,
+                                    errorMessage = null,
+                                    timestampMs = nowMs,
+                                )
+                            },
+                        )
+                    _reconcileHealth.tryEmit(signal)
+                },
             )
 
         activePipeline =
@@ -494,5 +529,9 @@ class PlexRuntimeManager(
                 }
             },
         )
+    }
+
+    private companion object {
+        const val RECONCILE_HEALTH_BUFFER_CAPACITY = 64
     }
 }

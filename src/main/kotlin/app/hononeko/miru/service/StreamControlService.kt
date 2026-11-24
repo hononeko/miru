@@ -24,15 +24,21 @@ import app.hononeko.miru.persistence.repository.ActiveSessionRepository
 import app.hononeko.miru.persistence.repository.GuardrailRuleRepository
 import app.hononeko.miru.persistence.repository.StreamTerminationAuditRepository
 import app.hononeko.miru.persistence.repository.UserRepository
+import app.hononeko.miru.webhook.StreamTerminatedEvent
 import arrow.core.Either
 import arrow.core.raise.either
 import arrow.core.raise.ensure
 import app.hononeko.miru.logging.kv
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import org.slf4j.LoggerFactory
 import java.util.UUID
 
 private const val MAX_SESSION_ID_LENGTH = 256
 private const val MAX_AUDIT_LIMIT = 100
+private const val TERMINATED_EVENT_BUFFER_CAPACITY = 64
 private const val ASCII_SPACE = 0x20
 private const val ASCII_DEL = 0x7F
 
@@ -64,6 +70,12 @@ class StreamControlService(
     private val idGenerator: () -> String = { UUID.randomUUID().toString() },
 ) {
     private val logger = LoggerFactory.getLogger(StreamControlService::class.java)
+    private val _terminatedEvents =
+        MutableSharedFlow<StreamTerminatedEvent>(
+            extraBufferCapacity = TERMINATED_EVENT_BUFFER_CAPACITY,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
+    val terminatedEvents: SharedFlow<StreamTerminatedEvent> = _terminatedEvents.asSharedFlow()
 
     suspend fun terminateStream(
         principal: MiruPrincipal,
@@ -143,6 +155,18 @@ class StreamControlService(
                 kv("sessionId", plexSessionId),
                 kv("targetUser", targetUsername ?: session.userId),
                 kv("mediaTitle", mediaTitle),
+            )
+
+            _terminatedEvents.tryEmit(
+                StreamTerminatedEvent(
+                    serverId = session.serverId,
+                    session = session,
+                    reason = effectiveReason,
+                    source = TerminationAuditSource.MANUAL,
+                    ruleType = null,
+                    actorName = principal.username,
+                    timestampMs = nowMs,
+                ),
             )
 
             TerminateStreamResponse(
@@ -339,11 +363,12 @@ class StreamControlService(
             )
         }
 
+        val nowMs = clock()
         auditRepository
             .insert(
                 StreamTerminationAuditRecord(
                     id = idGenerator(),
-                    createdAtMs = clock(),
+                    createdAtMs = nowMs,
                     serverId = session.serverId,
                     sessionId = plexSessionId,
                     sessionKey = session.sessionKey,
@@ -364,6 +389,20 @@ class StreamControlService(
             ).onLeft { error ->
                 logger.warn("Failed to persist guardrail audit event {}: {}", decision.ruleType.name, error.message)
             }
+
+        if (decision.mode == GuardrailMode.ENFORCE && action == TerminationAuditAction.TERMINATED) {
+            _terminatedEvents.tryEmit(
+                StreamTerminatedEvent(
+                    serverId = session.serverId,
+                    session = session,
+                    reason = decision.reason,
+                    source = TerminationAuditSource.GUARDRAIL,
+                    ruleType = decision.ruleType,
+                    actorName = actorName,
+                    timestampMs = nowMs,
+                ),
+            )
+        }
     }
 
     private fun buildRuleDto(

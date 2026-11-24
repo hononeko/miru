@@ -3,6 +3,10 @@ package app.hononeko.miru.session
 import app.hononeko.miru.adapter.ActiveStreamSnapshot
 import app.hononeko.miru.adapter.MediaServerAdapter
 import app.hononeko.miru.adapter.MediaServerEvent
+import app.hononeko.miru.domain.error.MiruError
+import arrow.core.Either
+import arrow.core.left
+import arrow.core.right
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
@@ -71,6 +75,7 @@ class SessionReconciler(
     private val debounceWindow: Duration = DEFAULT_DEBOUNCE_WINDOW,
     private val maxWait: Duration = DEFAULT_MAX_WAIT,
     private val reconnectSignals: Flow<Unit> = emptyFlow(),
+    private val onReconcileOutcome: (suspend (Either<MiruError, Unit>) -> Unit)? = null,
 ) {
     init {
         require(interval.isPositive()) { "interval must be positive" }
@@ -148,13 +153,28 @@ class SessionReconciler(
                         kv("trigger", trigger.name),
                         kv("reason", error.message),
                     )
+                    notifyReconcileOutcome(error.left())
                 },
-                ifRight = { snapshots -> sink.onSnapshots(snapshots, trigger) },
+                ifRight = { snapshots ->
+                    notifyReconcileOutcome(Unit.right())
+                    sink.onSnapshots(snapshots, trigger)
+                },
             )
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             logger.error("Unexpected error during session reconciliation {}", kv("trigger", trigger.name), e)
+        }
+    }
+
+    private suspend fun notifyReconcileOutcome(outcome: Either<MiruError, Unit>) {
+        val listener = onReconcileOutcome ?: return
+        try {
+            listener(outcome)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger.warn("Session reconcile outcome listener failed: {}", e.message)
         }
     }
 

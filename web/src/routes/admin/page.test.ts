@@ -133,6 +133,18 @@ describe('Admin console Stream Guardrails & Audit Log', () => {
 					response: new Response(null, { status: 200 })
 				};
 			}
+			if (url === '/api/v1/admin/webhooks') {
+				return {
+					data: { targets: [], encryptionKeyConfigured: true },
+					response: new Response(null, { status: 200 })
+				};
+			}
+			if (url === '/api/v1/admin/webhooks/deliveries') {
+				return {
+					data: { items: [], totalCount: 0, limit: 20, offset: 0 },
+					response: new Response(null, { status: 200 })
+				};
+			}
 			return { data: {}, response: new Response(null, { status: 200 }) };
 		}) as never);
 	});

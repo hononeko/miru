@@ -925,6 +925,277 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /api/v1/admin/webhooks:
+    get:
+      tags: [Admin]
+      operationId: listWebhooks
+      summary: List configured outbound webhook targets (secrets write-only, URLs redacted)
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Configured outbound webhook targets
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookTargetsResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+    post:
+      tags: [Admin]
+      operationId: createWebhook
+      summary: Create an outbound webhook target
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWebhookTargetRequest'
+      responses:
+        '201':
+          description: Created outbound webhook target
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookTargetDto'
+        '400':
+          description: Invalid webhook configuration or missing MIRU_ENCRYPTION_KEY for secret fields
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/admin/webhooks/{id}:
+    patch:
+      tags: [Admin]
+      operationId: updateWebhook
+      summary: Update an outbound webhook target
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateWebhookTargetRequest'
+      responses:
+        '200':
+          description: Updated outbound webhook target
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookTargetDto'
+        '400':
+          description: Invalid webhook update payload
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Webhook target not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+    delete:
+      tags: [Admin]
+      operationId: deleteWebhook
+      summary: Delete an outbound webhook target and its delivery history
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Webhook target deleted
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Webhook target not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/admin/webhooks/{id}/test:
+    post:
+      tags: [Admin]
+      operationId: testWebhook
+      summary: Synchronously dispatch a synthetic webhook.test event to a target (single attempt)
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Synchronous test delivery outcome
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookDeliveryDto'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Webhook target not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/admin/webhooks/deliveries:
+    get:
+      tags: [Admin]
+      operationId: listWebhookDeliveries
+      summary: List recent outbound webhook deliveries with optional filtering and pagination
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: targetId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: eventType
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - transcode.started
+              - stream.concurrent_limit
+              - stream.buffering_spike
+              - stream.terminated
+              - server.unreachable
+              - server.recovered
+              - webhook.test
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/WebhookDeliveryStatus'
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Paginated outbound webhook delivery log
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookDeliveriesResponse'
+        '400':
+          description: Invalid filter or pagination parameter
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
   /api/v1/admin/plex/status:
     get:
       tags: [Admin]
@@ -4971,6 +5242,260 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/TerminationAuditEntryDto'
+        totalCount:
+          type: integer
+          format: int64
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    WebhookEventType:
+      type: string
+      enum:
+        - transcode.started
+        - stream.concurrent_limit
+        - stream.buffering_spike
+        - stream.terminated
+        - server.unreachable
+        - server.recovered
+
+    WebhookDeliveryStatus:
+      type: string
+      enum: [DELIVERED, RETRYING, FAILED]
+
+    WebhookTargetDto:
+      type: object
+      required:
+        - id
+        - name
+        - url
+        - enabled
+        - subscribedEvents
+        - hasSigningSecret
+        - hasAuthHeader
+        - cooldownSeconds
+        - concurrentStreamThreshold
+        - bufferingSpikeThreshold
+        - bufferingWindowSeconds
+        - transcode4kOnly
+        - createdAtMs
+        - updatedAtMs
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        url:
+          type: string
+        enabled:
+          type: boolean
+        subscribedEvents:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebhookEventType'
+        hasSigningSecret:
+          type: boolean
+        authHeaderName:
+          type: string
+          nullable: true
+        hasAuthHeader:
+          type: boolean
+        cooldownSeconds:
+          type: integer
+        concurrentStreamThreshold:
+          type: integer
+        bufferingSpikeThreshold:
+          type: integer
+        bufferingWindowSeconds:
+          type: integer
+        transcode4kOnly:
+          type: boolean
+        createdAtMs:
+          type: integer
+          format: int64
+        updatedAtMs:
+          type: integer
+          format: int64
+
+    WebhookTargetsResponse:
+      type: object
+      required: [targets, encryptionKeyConfigured]
+      properties:
+        targets:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebhookTargetDto'
+        encryptionKeyConfigured:
+          type: boolean
+
+    CreateWebhookTargetRequest:
+      type: object
+      required: [name, url, subscribedEvents]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        url:
+          type: string
+          maxLength: 2048
+        enabled:
+          type: boolean
+          default: true
+        subscribedEvents:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/WebhookEventType'
+        signingSecret:
+          type: string
+          maxLength: 512
+          nullable: true
+        authHeaderName:
+          type: string
+          maxLength: 128
+          nullable: true
+        authHeaderValue:
+          type: string
+          maxLength: 2048
+          nullable: true
+        cooldownSeconds:
+          type: integer
+          minimum: 0
+          maximum: 86400
+          default: 60
+        concurrentStreamThreshold:
+          type: integer
+          minimum: 2
+          maximum: 50
+          default: 3
+        bufferingSpikeThreshold:
+          type: integer
+          minimum: 2
+          maximum: 20
+          default: 3
+        bufferingWindowSeconds:
+          type: integer
+          minimum: 10
+          maximum: 3600
+          default: 120
+        transcode4kOnly:
+          type: boolean
+          default: false
+
+    UpdateWebhookTargetRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          nullable: true
+        url:
+          type: string
+          maxLength: 2048
+          nullable: true
+        enabled:
+          type: boolean
+          nullable: true
+        subscribedEvents:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/WebhookEventType'
+          nullable: true
+        signingSecret:
+          type: string
+          maxLength: 512
+          nullable: true
+        clearSigningSecret:
+          type: boolean
+        authHeaderName:
+          type: string
+          maxLength: 128
+          nullable: true
+        authHeaderValue:
+          type: string
+          maxLength: 2048
+          nullable: true
+        clearAuthHeader:
+          type: boolean
+        cooldownSeconds:
+          type: integer
+          minimum: 0
+          maximum: 86400
+          nullable: true
+        concurrentStreamThreshold:
+          type: integer
+          minimum: 2
+          maximum: 50
+          nullable: true
+        bufferingSpikeThreshold:
+          type: integer
+          minimum: 2
+          maximum: 20
+          nullable: true
+        bufferingWindowSeconds:
+          type: integer
+          minimum: 10
+          maximum: 3600
+          nullable: true
+        transcode4kOnly:
+          type: boolean
+          nullable: true
+
+    WebhookDeliveryDto:
+      type: object
+      required:
+        - id
+        - targetId
+        - targetName
+        - eventId
+        - eventType
+        - status
+        - attemptCount
+        - createdAtMs
+      properties:
+        id:
+          type: string
+        targetId:
+          type: string
+        targetName:
+          type: string
+        eventId:
+          type: string
+        eventType:
+          type: string
+        status:
+          $ref: '#/components/schemas/WebhookDeliveryStatus'
+        attemptCount:
+          type: integer
+        httpStatus:
+          type: integer
+          nullable: true
+        durationMs:
+          type: integer
+          nullable: true
+        errorMessage:
+          type: string
+          nullable: true
+        createdAtMs:
+          type: integer
+          format: int64
+        completedAtMs:
+          type: integer
+          format: int64
+          nullable: true
+
+    WebhookDeliveriesResponse:
+      type: object
+      required: [items, totalCount, limit, offset]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebhookDeliveryDto'
         totalCount:
           type: integer
           format: int64

@@ -69,6 +69,15 @@
 		{ value: 'duration', label: 'Playback Duration' }
 	];
 
+	function choiceClass(active: boolean): string {
+		return cn(
+			'cursor-pointer rounded-lg border px-2.5 py-1.5 font-heading text-xs font-semibold transition-colors',
+			active
+				? 'border-border-strong bg-surface text-fg-primary shadow-sm'
+				: 'border-transparent text-fg-secondary hover:text-fg-primary'
+		);
+	}
+
 	const previewText = $derived(formatPreferencePreview(draft, previewSampleMs));
 
 	function syncDraftFromStore() {
@@ -271,12 +280,7 @@
 							role="radio"
 							aria-checked={active}
 							onclick={() => selectTheme(opt.value)}
-							class={cn(
-								'flex cursor-pointer items-center justify-center gap-1.5 rounded-lg px-3 py-2 font-heading text-xs font-semibold transition-colors',
-								active
-									? 'bg-surface text-fg-primary shadow-sm border border-border-strong'
-									: 'text-fg-secondary hover:text-fg-primary border border-transparent'
-							)}
+							class={cn(choiceClass(active), 'flex items-center justify-center gap-1.5 px-3 py-2')}
 						>
 							<Icon class={cn('h-3.5 w-3.5', active ? 'text-primary-text' : 'text-fg-muted')} />
 							{opt.label}
@@ -306,12 +310,7 @@
 									role="radio"
 									aria-checked={active}
 									onclick={() => (draft.timeFormat = opt.value)}
-									class={cn(
-										'cursor-pointer rounded-lg px-2.5 py-1.5 font-heading text-xs font-semibold transition-colors',
-										active
-											? 'bg-surface text-fg-primary shadow-sm border border-border-strong'
-											: 'text-fg-secondary hover:text-fg-primary border border-transparent'
-									)}
+									class={choiceClass(active)}
 								>
 									{opt.label}
 								</button>
@@ -361,12 +360,7 @@
 								role="radio"
 								aria-checked={active}
 								onclick={() => (draft.defaultStatsRange = rangeOpt)}
-								class={cn(
-									'cursor-pointer rounded-lg px-2.5 py-1.5 font-mono text-xs font-semibold transition-colors',
-									active
-										? 'border border-cyan/60 bg-cyan-soft text-cyan-hi'
-										: 'border border-transparent text-fg-secondary hover:text-fg-primary'
-								)}
+								class={choiceClass(active)}
 							>
 								{rangeOpt}
 							</button>
@@ -393,12 +387,7 @@
 								role="radio"
 								aria-checked={active}
 								onclick={() => (draft.analyticsMetric = metricOpt.value)}
-								class={cn(
-									'cursor-pointer rounded-lg px-2.5 py-1.5 font-heading text-xs font-semibold transition-colors',
-									active
-										? 'border border-cyan/60 bg-cyan-soft text-cyan-hi'
-										: 'border border-transparent text-fg-secondary hover:text-fg-primary'
-								)}
+								class={choiceClass(active)}
 							>
 								{metricOpt.label}
 							</button>

@@ -35,6 +35,21 @@ describe('UserPreferencesModal password change', () => {
 		authStore.authMode = 'local';
 	});
 
+	it('styles every selected and unselected choice the same way', () => {
+		render(UserPreferencesModal);
+
+		for (const checked of ['true', 'false']) {
+			const styles = ['Time format', 'Default stats range', 'Advanced analytics metric'].flatMap((name) =>
+				Array.from(
+					screen.getByRole('radiogroup', { name }).querySelectorAll(`[role="radio"][aria-checked="${checked}"]`),
+					(radio) => radio.className
+				)
+			);
+			expect(styles.length).toBeGreaterThanOrEqual(3);
+			expect(new Set(styles).size).toBe(1);
+		}
+	});
+
 	it('renders Change Password for LOCAL accounts, validates inputs, and submits to /api/v1/auth/me/password', async () => {
 		const postSpy = vi.spyOn(api, 'POST').mockResolvedValueOnce({
 			response: new Response(null, { status: 204 })

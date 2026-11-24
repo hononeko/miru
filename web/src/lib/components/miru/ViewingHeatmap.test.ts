@@ -135,4 +135,35 @@ describe('ViewingHeatmap', () => {
 		renderHeatmap('7d', { heatmap: { ...buildSampleHeatmap('7d'), totalPlays: 0 } });
 		expect(readout()).toBe('No playback activity recorded in this window');
 	});
+
+	it('previews the hovered cell without moving the selection or the tab stop', async () => {
+		renderHeatmap('7d');
+		const cellAt = (row: number, hour: number) =>
+			document.querySelector<HTMLElement>(`[data-row="${row}"][data-hour="${hour}"]`)!;
+		const tabStops = () => Array.from(document.querySelectorAll('[data-row][tabindex="0"]'));
+		const highlighted = () => Array.from(document.querySelectorAll('[data-row].ring-1'));
+		const readout = () => screen.getByTestId('heatmap-cell-readout').textContent;
+		const grid = screen.getByRole('group', { name: 'Plays by day and hour' });
+
+		await fireEvent.mouseEnter(cellAt(4, 21));
+		expect(readout()).toContain('Fri 2026-11-20 · 21:00–21:59 UTC');
+		expect(highlighted()).toEqual([cellAt(4, 21)]);
+		expect(tabStops()).toEqual([cellAt(0, 0)]);
+
+		await fireEvent.mouseLeave(grid);
+		expect(readout()).toContain('8 plays · 4h 0m total watch time');
+		expect(highlighted()).toEqual([]);
+
+		await fireEvent.click(cellAt(1, 5));
+		await fireEvent.mouseEnter(cellAt(4, 21));
+		expect(tabStops()).toEqual([cellAt(1, 5)]);
+		await fireEvent.mouseLeave(grid);
+		expect(readout()).toContain('Mon 2026-11-23 · 05:00–05:59 UTC');
+		expect(highlighted()).toEqual([cellAt(1, 5)]);
+
+		// Moving by keyboard wins over a mouse left resting on the grid
+		await fireEvent.mouseEnter(cellAt(4, 21));
+		await fireEvent.keyDown(cellAt(1, 5), { key: 'ArrowRight' });
+		expect(readout()).toContain('Mon 2026-11-23 · 06:00–06:59 UTC');
+	});
 });

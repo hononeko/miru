@@ -255,17 +255,30 @@ class ExposedLibraryRepository(
                     TextColumnType() to serverId,
                     TextColumnType() to sectionKey,
                 )
-            val windowPredicates =
+            // A window still reads the snapshot before it, which its first delta is relative to
+            val scanPredicates =
                 buildString {
-                    fromMs?.let {
-                        append(" AND captured_at_ms >= ?")
-                        args += LongColumnType() to it
-                    }
                     toMs?.let {
                         append(" AND captured_at_ms <= ?")
                         args += LongColumnType() to it
                     }
+                    fromMs?.let {
+                        append(
+                            " AND captured_at_ms >= COALESCE((SELECT MAX(captured_at_ms) FROM library_snapshots" +
+                                " WHERE server_id = ? AND section_key = ? AND captured_at_ms < ?), ?)",
+                        )
+                        args += TextColumnType() to serverId
+                        args += TextColumnType() to sectionKey
+                        args += LongColumnType() to it
+                        args += LongColumnType() to it
+                    }
                 }
+            val windowPredicate =
+                fromMs
+                    ?.let {
+                        args += LongColumnType() to it
+                        " AND captured_at_ms >= ?"
+                    }.orEmpty()
             args += IntegerColumnType() to safeLimit
 
             val sql =
@@ -282,9 +295,9 @@ class ExposedLibraryRepository(
                         leaf_count - LAG(leaf_count) OVER (ORDER BY captured_at_ms, id) AS leaf_delta,
                         total_size_bytes - LAG(total_size_bytes) OVER (ORDER BY captured_at_ms, id) AS size_delta
                     FROM library_snapshots
-                    WHERE server_id = ? AND section_key = ?
+                    WHERE server_id = ? AND section_key = ?$scanPredicates
                 ) deltas
-                WHERE leaf_delta IS NOT NULL$windowPredicates
+                WHERE leaf_delta IS NOT NULL$windowPredicate
                 GROUP BY epoch_day
                 HAVING SUM(ABS(leaf_delta)) > 0
                 ORDER BY epoch_day DESC

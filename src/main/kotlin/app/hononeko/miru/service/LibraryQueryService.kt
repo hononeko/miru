@@ -128,7 +128,7 @@ class LibraryQueryService(
                     .findDailyGrowth(
                         serverId = section.serverId,
                         sectionKey = section.sectionKey,
-                        limit = GROWTH_DAYS_LIMIT,
+                        limit = limit,
                         fromMs = fromMs,
                         toMs = toMs,
                     ).bind()
@@ -355,7 +355,6 @@ class LibraryQueryService(
     companion object {
         const val DEFAULT_STATS_LIMIT = 90
         const val MAX_STATS_LIMIT = 365
-        const val GROWTH_DAYS_LIMIT = 90
         const val DEFAULT_RECENT_LIMIT = 25
         const val MAX_RECENT_LIMIT = 100
         const val DEFAULT_STALE_UNWATCHED_DAYS = 180

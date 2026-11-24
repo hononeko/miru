@@ -2595,6 +2595,7 @@ paths:
         - name: limit
           in: query
           required: false
+          description: Maximum number of `snapshots`, and separately of `growth` days, to return; the newest are kept
           schema:
             type: integer
             minimum: 1
@@ -4687,8 +4688,8 @@ components:
         growth:
           type: array
           description: >-
-            The most recent days with additions or removals, oldest first. Derived from changes between consecutive
-            snapshots, so days without a change are left out.
+            The most recent UTC days with additions or removals, up to `limit` of them, oldest first. Derived from
+            changes between consecutive snapshots, so days without a change are left out.
           items:
             $ref: '#/components/schemas/LibraryGrowthDayResponse'
 

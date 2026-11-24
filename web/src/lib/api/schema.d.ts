@@ -1784,7 +1784,7 @@ export interface components {
                 [key: string]: number;
             };
             snapshots: components["schemas"]["LibrarySnapshotResponse"][];
-            /** @description The most recent days with additions or removals, oldest first. Derived from changes between consecutive snapshots, so days without a change are left out. */
+            /** @description The most recent UTC days with additions or removals, up to `limit` of them, oldest first. Derived from changes between consecutive snapshots, so days without a change are left out. */
             growth: components["schemas"]["LibraryGrowthDayResponse"][];
         };
         RecentMediaItemResponse: {
@@ -5032,6 +5032,7 @@ export interface operations {
                 serverId?: string;
                 from?: number;
                 to?: number;
+                /** @description Maximum number of `snapshots`, and separately of `growth` days, to return; the newest are kept */
                 limit?: number;
             };
             header?: never;

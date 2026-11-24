@@ -101,7 +101,7 @@
 				{#if isPaused}
 					<Badge tone="neutral" dot>Paused</Badge>
 				{:else if isBuffering}
-					<Badge tone="hw-transcode" dot pulse>Buffering</Badge>
+					<Badge tone="warning" dot pulse>Buffering</Badge>
 				{:else}
 					<Badge tone="direct-play" dot pulse>Playing</Badge>
 				{/if}

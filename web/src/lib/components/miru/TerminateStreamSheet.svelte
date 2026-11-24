@@ -189,7 +189,7 @@
 					maxlength={500}
 					bind:value={reason}
 					placeholder="Optional message shown in the viewer's Plex client (leave blank for default)"
-					class="rounded-xl border border-border-strong bg-canvas px-3 py-2 text-sm text-fg-primary placeholder:text-fg-muted focus:border-cyan focus:outline-none"
+					class="rounded-xl border border-input-border bg-canvas px-3 py-2 text-sm text-fg-primary placeholder:text-fg-muted focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 				></textarea>
 				<span class="text-[11px] text-fg-muted">
 					Leaving this blank sends &ldquo;Stream terminated by administrator&rdquo;.

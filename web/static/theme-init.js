@@ -12,7 +12,7 @@
 		var csMeta = document.querySelector('meta[name="color-scheme"]');
 		if (csMeta) csMeta.setAttribute('content', mode === 'system' ? 'light dark' : mode);
 		var tcMeta = document.querySelector('meta[name="theme-color"]');
-		if (tcMeta) tcMeta.setAttribute('content', isDark ? '#090A0F' : '#F9FAFC');
+		if (tcMeta) tcMeta.setAttribute('content', isDark ? '#030705' : '#F5F7F5');
 	} catch {
 		document.documentElement.classList.add('dark');
 	}

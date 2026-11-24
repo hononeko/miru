@@ -68,7 +68,7 @@
 		}
 		const ratio = val / maxVal;
 		if (ratio > 0.75) {
-			return 'bg-primary border-primary-hover text-white';
+			return 'bg-primary border-primary-hover text-primary-fg';
 		}
 		if (ratio > 0.5) {
 			return 'bg-cyan border-cyan-hi';

@@ -355,7 +355,7 @@
 									<div class="flex min-w-0 items-center gap-2.5">
 										<span
 											class={idx === 0
-												? 'font-mono text-xs font-bold text-primary'
+												? 'font-mono text-xs font-bold text-primary-hover'
 												: 'font-mono text-xs font-bold text-cyan-hi'}
 										>
 											{String(idx + 1).padStart(2, '0')}
@@ -445,7 +445,7 @@
 								class={cn(
 									'rounded-md px-2.5 py-1 font-mono text-[11px] font-medium transition-colors cursor-pointer',
 									wrappedYear === yr
-										? 'bg-primary text-white font-semibold'
+										? 'bg-primary text-primary-fg font-semibold'
 										: 'text-fg-secondary hover:text-fg-primary'
 								)}
 							>

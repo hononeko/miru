@@ -14,6 +14,7 @@
 				'direct-stream': 'bg-direct-stream-soft text-direct-stream',
 				'hw-transcode': 'bg-hw-transcode-soft text-hw-transcode',
 				'sw-transcode': 'bg-sw-transcode-soft text-sw-transcode',
+				warning: 'bg-warning-soft text-warning',
 				danger: 'bg-danger-soft text-danger'
 			},
 			mono: {

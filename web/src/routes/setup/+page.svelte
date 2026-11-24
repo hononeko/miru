@@ -78,7 +78,7 @@
 					autocomplete="username"
 					bind:value={username}
 					placeholder="admin"
-					class="rounded-lg border border-border-strong bg-canvas px-3 py-2.5 text-sm text-fg-primary placeholder:text-fg-muted focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan/30"
+					class="rounded-lg border border-input-border bg-canvas px-3 py-2.5 text-sm text-fg-primary placeholder:text-fg-muted focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 				/>
 			</label>
 
@@ -89,7 +89,7 @@
 					autocomplete="email"
 					bind:value={email}
 					placeholder="admin@example.com"
-					class="rounded-lg border border-border-strong bg-canvas px-3 py-2.5 text-sm text-fg-primary placeholder:text-fg-muted focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan/30"
+					class="rounded-lg border border-input-border bg-canvas px-3 py-2.5 text-sm text-fg-primary placeholder:text-fg-muted focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 				/>
 			</label>
 
@@ -101,7 +101,7 @@
 					minlength={12}
 					autocomplete="new-password"
 					bind:value={password}
-					class="rounded-lg border border-border-strong bg-canvas px-3 py-2.5 font-mono text-sm text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan/30"
+					class="rounded-lg border border-input-border bg-canvas px-3 py-2.5 font-mono text-sm text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 				/>
 				<span class="text-[10px] text-fg-muted">
 					At least 12 characters with 1 lowercase, 1 uppercase, and 1 digit · hashed with Argon2id
@@ -116,7 +116,7 @@
 					minlength={12}
 					autocomplete="new-password"
 					bind:value={confirmPassword}
-					class="rounded-lg border border-border-strong bg-canvas px-3 py-2.5 font-mono text-sm text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan/30"
+					class="rounded-lg border border-input-border bg-canvas px-3 py-2.5 font-mono text-sm text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 				/>
 			</label>
 

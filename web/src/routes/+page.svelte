@@ -214,7 +214,7 @@
 		];
 	});
 
-	const DAILY_USER_COLORS = ['bg-cyan', 'bg-primary', 'bg-direct-play', 'bg-hw-transcode', 'bg-direct-stream'] as const;
+	const DAILY_USER_COLORS = ['bg-chart-1', 'bg-chart-2', 'bg-chart-3', 'bg-chart-4'] as const;
 	const DAILY_OTHER_COLOR = 'bg-fg-muted';
 
 	function userDisplayLabel(user: { displayName?: string | null; username: string }): string {
@@ -368,7 +368,7 @@
 					? 'direct-play'
 					: streamsStore.status === 'offline'
 						? 'danger'
-						: 'hw-transcode'}
+						: 'warning'}
 				dot
 				pulse={streamsStore.status === 'connected'}
 				class="hidden sm:inline-flex"
@@ -396,7 +396,7 @@
 			</div>
 			<a
 				href="/admin"
-				class="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 font-heading text-xs font-semibold text-white hover:bg-primary-hover"
+				class="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 font-heading text-xs font-semibold text-primary-fg hover:bg-primary/85"
 			>
 				<Link2 class="h-3.5 w-3.5" />
 				Connect in Admin
@@ -435,7 +435,7 @@
 							style:width={statBarWidth(overview.decisionBreakdown.directPlayPercent)}
 						></div>
 						<div
-							class={`h-full rounded-full bg-cyan ${overview.decisionBreakdown.directStream > 0 ? 'min-w-0.5' : ''}`}
+							class={`h-full rounded-full bg-direct-stream ${overview.decisionBreakdown.directStream > 0 ? 'min-w-0.5' : ''}`}
 							style:width={statBarWidth(overview.decisionBreakdown.directStreamPercent)}
 						></div>
 						<div
@@ -450,7 +450,7 @@
 			label={`Watch Time (${range})`}
 			value={overview ? formatDurationSec(overview.totalWatchDurationSec) : '—'}
 			subtitle={overview ? `${overview.totalPlays} plays · ${overview.activeUsers} active users` : 'Loading…'}
-			dotClass="bg-hw-transcode"
+			dotClass="bg-chart-3"
 		/>
 	</section>
 
@@ -690,7 +690,7 @@
 								<div class="flex min-w-0 items-center gap-2.5">
 									<span
 										class={idx === 0
-											? 'font-mono text-xs font-bold text-primary'
+											? 'font-mono text-xs font-bold text-primary-hover'
 											: 'font-mono text-xs font-bold text-cyan-hi'}
 									>
 										{String(idx + 1).padStart(2, '0')}

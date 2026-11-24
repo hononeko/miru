@@ -51,7 +51,7 @@
 		{ value: 'age_desc', label: 'Oldest first' }
 	];
 
-	const paletteColors = ['bg-cyan', 'bg-primary', 'bg-direct-play', 'bg-hw-transcode', 'bg-fg-muted'];
+	const paletteColors = ['bg-chart-1', 'bg-chart-2', 'bg-chart-3', 'bg-chart-4', 'bg-fg-muted'];
 
 	function mapToDist(map: Record<string, number> | undefined) {
 		const entries = Object.entries(map ?? {})
@@ -294,7 +294,7 @@
 				label="Never Played"
 				value={staleReport ? staleReport.neverPlayedCount.toLocaleString() : '—'}
 				subtitle="Zero recorded playback sessions in Miru"
-				dotClass="bg-hw-transcode"
+				dotClass="bg-warning"
 			/>
 		</div>
 
@@ -407,7 +407,7 @@
 										<Badge tone="neutral" mono>{item.videoCodec.toUpperCase()}</Badge>
 									{/if}
 									{#if item.playCount === 0 || !item.lastPlayedAtMs}
-										<Badge tone="hw-transcode">NEVER PLAYED</Badge>
+										<Badge tone="warning">NEVER PLAYED</Badge>
 									{:else}
 										<Badge tone="neutral" mono>
 											{item.playCount} {item.playCount === 1 ? 'play' : 'plays'}

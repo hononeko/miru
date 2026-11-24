@@ -52,7 +52,7 @@
 	const sseTone = $derived.by(() => {
 		if (streamsStore.status === 'connected') return 'direct-play' as const;
 		if (streamsStore.status === 'connecting' || streamsStore.status === 'reconnecting') {
-			return 'hw-transcode' as const;
+			return 'warning' as const;
 		}
 		return 'danger' as const;
 	});
@@ -114,7 +114,7 @@
 							{item.label}
 						</span>
 						{#if item.badge}
-							<span class="rounded-full bg-cyan px-2 py-0.5 font-mono text-[10px] font-semibold text-white">
+							<span class="rounded-full bg-cyan px-2 py-0.5 font-mono text-[10px] font-semibold text-cyan-fg">
 								{item.badge}
 							</span>
 						{/if}
@@ -133,7 +133,7 @@
 								? 'bg-direct-play'
 								: streamsStore.status === 'offline'
 									? 'bg-danger'
-									: 'bg-hw-transcode animate-pulse'
+									: 'bg-warning animate-pulse'
 						)}
 					></span>
 					<span class="truncate" title={streamsStore.serverName ?? 'Telemetry'}>
@@ -324,7 +324,7 @@
 						<Icon class="h-4 w-4" />
 						{#if item.badge}
 							<span
-								class="absolute -top-0.5 right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-cyan px-1 font-mono text-[9px] font-bold text-white"
+								class="absolute -top-0.5 right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-cyan px-1 font-mono text-[9px] font-bold text-cyan-fg"
 							>
 								{item.badge}
 							</span>

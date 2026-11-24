@@ -207,7 +207,7 @@
 				oninput={(e) => onSearchInput(e.currentTarget.value)}
 				placeholder="Search title, show, season…"
 				aria-label="Search playback history"
-				class="w-full rounded-lg border border-border bg-surface py-2 pl-9 pr-3 text-sm text-fg-primary placeholder:text-fg-muted focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan/25"
+				class="w-full rounded-lg border border-input-border bg-surface py-2 pl-9 pr-3 text-sm text-fg-primary placeholder:text-fg-muted focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 			/>
 		</div>
 
@@ -217,7 +217,7 @@
 					bind:value={userId}
 					onchange={() => (pageNum = 1)}
 					aria-label="Filter by user"
-					class="rounded-lg border border-border bg-surface px-2.5 py-2 text-xs font-medium text-fg-primary focus:border-cyan focus:outline-none"
+					class="rounded-lg border border-input-border bg-surface px-2.5 py-2 text-xs font-medium text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 				>
 					<option value="">All Users</option>
 					{#each users as u}
@@ -230,7 +230,7 @@
 				bind:value={mediaType}
 				onchange={() => (pageNum = 1)}
 				aria-label="Filter by media type"
-				class="rounded-lg border border-border bg-surface px-2.5 py-2 text-xs font-medium text-fg-primary focus:border-cyan focus:outline-none"
+				class="rounded-lg border border-input-border bg-surface px-2.5 py-2 text-xs font-medium text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 			>
 				<option value="">All Types</option>
 				<option value="movie">Movies</option>
@@ -243,7 +243,7 @@
 				bind:value={decision}
 				onchange={() => (pageNum = 1)}
 				aria-label="Filter by stream decision"
-				class="rounded-lg border border-border bg-surface px-2.5 py-2 text-xs font-medium text-fg-primary focus:border-cyan focus:outline-none"
+				class="rounded-lg border border-input-border bg-surface px-2.5 py-2 text-xs font-medium text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 			>
 				<option value="">All Decisions</option>
 				<option value="direct_play">Direct Play</option>
@@ -255,7 +255,7 @@
 				bind:value={sortBy}
 				onchange={() => (pageNum = 1)}
 				aria-label="Sort field"
-				class="rounded-lg border border-border bg-surface px-2.5 py-2 text-xs font-medium text-fg-primary focus:border-cyan focus:outline-none"
+				class="rounded-lg border border-input-border bg-surface px-2.5 py-2 text-xs font-medium text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 			>
 				<option value="stopped_at">Sort: Stopped</option>
 				<option value="started_at">Sort: Started</option>

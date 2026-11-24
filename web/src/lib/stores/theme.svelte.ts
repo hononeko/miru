@@ -54,7 +54,7 @@ function applyThemeToDom(mode: ThemeMode, systemTheme: ResolvedTheme) {
 
 	const themeColorMeta = document.querySelector('meta[name="theme-color"]');
 	if (themeColorMeta) {
-		themeColorMeta.setAttribute('content', resolved === 'dark' ? '#090A0F' : '#F9FAFC');
+		themeColorMeta.setAttribute('content', resolved === 'dark' ? '#030705' : '#F5F7F5');
 	}
 }
 

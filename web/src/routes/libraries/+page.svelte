@@ -166,7 +166,7 @@
 			</div>
 			<a
 				href="/admin"
-				class="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 font-heading text-xs font-semibold text-white hover:bg-primary-hover"
+				class="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 font-heading text-xs font-semibold text-primary-fg hover:bg-primary/85"
 			>
 				<Link2 class="h-3.5 w-3.5" />
 				Connect in Admin

@@ -69,6 +69,12 @@ test.describe('Playback History filtering, search, pagination, sorting & detail 
 		await expect(page.getByText('30 PLAYS')).toBeVisible();
 		await expect(page.getByRole('button', { name: 'Reset' })).toHaveCount(0);
 
+		// Reset is there as soon as anything is typed, even a search that matches everything
+		await page.getByLabel('Search playback history').fill('   ');
+		await page.getByRole('button', { name: 'Reset' }).click();
+		await expect(page.getByLabel('Search playback history')).toHaveValue('');
+		await expect(page.getByRole('button', { name: 'Reset' })).toHaveCount(0);
+
 		// Filter by User (Bob Viewer has 13 plays)
 		const userSelect = page.getByLabel('Filter by user');
 		const bobOptionValue = await userSelect.locator('option', { hasText: 'Bob Viewer' }).getAttribute('value');
@@ -118,6 +124,12 @@ test.describe('Playback History filtering, search, pagination, sorting & detail 
 		await header('Media').getByRole('button').click();
 		await expect(header('Media')).toHaveAttribute('aria-sort', 'ascending');
 		await expect(desktopRows.first()).toContainText('Akira');
+
+		// Reset clears the filters and leaves the sorted column alone
+		await page.getByLabel('Filter by media type').selectOption('movie');
+		await page.getByRole('button', { name: 'Reset' }).click();
+		await expect(page.getByText('30 PLAYS')).toBeVisible();
+		await expect(header('Media')).toHaveAttribute('aria-sort', 'ascending');
 
 		// A slow response for an earlier sort does not replace the rows of the current one
 		await page.route(/\/api\/v1\/history\?.*sortBy=title&sortDir=desc/, async (route) => {

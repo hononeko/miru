@@ -96,8 +96,6 @@
 		userId = '';
 		mediaType = '';
 		decision = '';
-		sortBy = 'stopped_at';
-		sortDir = 'desc';
 		pageNum = 1;
 	}
 
@@ -218,7 +216,8 @@
 		void loadHistory();
 	});
 
-	const hasActiveFilters = $derived(Boolean(q || userId || mediaType || decision));
+	// The text as typed, so that Reset is there before the search is applied and for blank searches too
+	const hasActiveFilters = $derived(Boolean(searchInput || q || userId || mediaType || decision));
 </script>
 
 <svelte:head>
@@ -264,6 +263,7 @@
 					variant="ghost"
 					size="sm"
 					onclick={clearFilters}
+					title="Clear the search and all filters"
 					class="absolute right-1 top-1/2 h-7 -translate-y-1/2 gap-1.5 px-2.5"
 				>
 					Reset

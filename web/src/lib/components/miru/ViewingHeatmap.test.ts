@@ -120,7 +120,19 @@ describe('ViewingHeatmap', () => {
 		expect(screen.getByText(/intensity by playback duration/i)).toBeTruthy();
 		cleanup();
 
+		const readout = () => screen.getByTestId('heatmap-cell-readout').textContent?.trim();
 		renderHeatmap('7d', { heatmap: null, loading: true });
 		expect(screen.getByText('Loading heatmap…')).toBeTruthy();
+		expect(readout()).toBe('');
+		cleanup();
+
+		// A failed request says nothing about playback either
+		renderHeatmap('7d', { heatmap: null });
+		expect(screen.getByText('No heatmap data available')).toBeTruthy();
+		expect(readout()).toBe('');
+		cleanup();
+
+		renderHeatmap('7d', { heatmap: { ...buildSampleHeatmap('7d'), totalPlays: 0 } });
+		expect(readout()).toBe('No playback activity recorded in this window');
 	});
 });

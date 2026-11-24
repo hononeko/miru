@@ -206,7 +206,7 @@
 				<span class="text-fg-secondary">
 					{heatmap.totalPlays.toLocaleString()} plays · {formatDurationSec(heatmap.totalWatchDurationSec)} total watch time
 				</span>
-			{:else}
+			{:else if heatmap}
 				<span class="text-fg-muted">No playback activity recorded in this window</span>
 			{/if}
 		</div>

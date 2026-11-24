@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { LoaderCircle, LogIn } from 'lucide-svelte';
+	import { ArrowRight, LoaderCircle, LogIn } from 'lucide-svelte';
 	import { MiruApiError } from '$api/client';
 	import MiruLogo from '$components/layout/MiruLogo.svelte';
 	import Badge from '$components/ui/Badge.svelte';
@@ -15,6 +15,7 @@
 	let submitting = $state(false);
 	let oidcRedirecting = $state(false);
 	let error = $state<string | null>(null);
+	let errorSeq = $state(0);
 
 	let oidcResetTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -101,6 +102,7 @@
 			await goto('/');
 		} catch (err) {
 			error = err instanceof MiruApiError ? err.detail : 'Unable to sign in';
+			errorSeq += 1;
 		} finally {
 			submitting = false;
 		}
@@ -113,13 +115,16 @@
 
 <div class="flex min-h-dvh flex-col items-center justify-center bg-canvas px-4 py-10">
 	<div class="flex w-full max-w-[420px] flex-col items-center gap-6">
-		<div class="flex flex-col items-center gap-2 text-center">
+		<div class="animate-fade-up flex flex-col items-center gap-2 text-center">
 			<MiruLogo size={52} />
 			<h1 class="font-display text-3xl font-bold tracking-wide text-fg-primary">Miru (見る)</h1>
 			<p class="text-xs text-fg-secondary">Lightweight media server telemetry & analytics</p>
 		</div>
 
-		<div class="flex w-full flex-col gap-4 rounded-2xl border border-border bg-surface p-6 shadow-sm dark:shadow-none sm:p-7">
+		<div
+			class="animate-fade-up flex w-full flex-col gap-4 rounded-2xl border border-border bg-surface p-6 shadow-sm dark:shadow-none sm:p-7"
+			style="animation-delay: 60ms;"
+		>
 			<div class="flex items-start justify-between gap-2">
 				<div>
 					<h2 class="font-display text-2xl font-bold text-fg-primary">Sign in</h2>
@@ -129,9 +134,14 @@
 			</div>
 
 			{#if displayedError}
-				<div role="alert" class="rounded-lg border border-danger/50 bg-danger-soft px-3 py-2 text-xs text-danger">
-					{displayedError}
-				</div>
+				{#key errorSeq}
+					<div
+						role="alert"
+						class="animate-shake rounded-lg border border-danger/50 bg-danger-soft px-3 py-2 text-xs text-danger"
+					>
+						{displayedError}
+					</div>
+				{/key}
 			{/if}
 
 			{#if authStore.oidcEnabled}
@@ -142,15 +152,19 @@
 					aria-busy={oidcRedirecting ? 'true' : undefined}
 					tabindex={oidcRedirecting || submitting ? -1 : undefined}
 					class={cn(
-						'inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-cyan px-4 font-heading text-sm font-semibold text-cyan-fg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fg-primary/80 focus-visible:ring-offset-2 focus-visible:ring-offset-surface',
-						oidcRedirecting || submitting ? 'cursor-wait opacity-60' : 'hover:bg-cyan/85'
+						'group btn-sheen inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-cyan px-4 font-heading text-sm font-semibold text-cyan-fg transition-[background-color,box-shadow,transform,opacity] duration-150 ease-[var(--ease-out-quart)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fg-primary/80 focus-visible:ring-offset-2 focus-visible:ring-offset-surface motion-reduce:transition-none',
+						oidcRedirecting || submitting
+							? 'cursor-wait opacity-60'
+							: 'hover:bg-cyan/90 hover:-translate-y-px hover:shadow-[0_4px_14px_-3px_color-mix(in_srgb,var(--accent-cyan)_40%,transparent)] active:translate-y-0 active:scale-[0.985] motion-reduce:hover:translate-y-0 motion-reduce:active:scale-100'
 					)}
 				>
 					{#if oidcRedirecting}
 						<LoaderCircle class="h-4 w-4 animate-spin" />
 						Redirecting to {authStore.oidcDisplayName}…
 					{:else}
-						<LogIn class="h-4 w-4" />
+						<LogIn
+							class="h-4 w-4 transition-transform duration-150 ease-[var(--ease-out-quart)] group-hover:translate-x-0.5 motion-reduce:group-hover:translate-x-0"
+						/>
 						Sign in with {authStore.oidcDisplayName}
 					{/if}
 				</a>
@@ -175,7 +189,7 @@
 							required
 							bind:value={username}
 							placeholder="username"
-							class="rounded-lg border border-input-border bg-canvas px-3 py-2.5 text-sm text-fg-primary placeholder:text-fg-muted focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
+							class="rounded-lg border border-input-border bg-canvas px-3 py-2.5 text-sm text-fg-primary placeholder:text-fg-muted transition-[border-color,box-shadow] duration-150 focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 						/>
 					</label>
 
@@ -187,16 +201,25 @@
 							autocomplete="current-password"
 							required
 							bind:value={password}
-							class="rounded-lg border border-input-border bg-canvas px-3 py-2.5 font-mono text-sm text-fg-primary placeholder:text-fg-muted focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
+							class="rounded-lg border border-input-border bg-canvas px-3 py-2.5 font-mono text-sm text-fg-primary placeholder:text-fg-muted transition-[border-color,box-shadow] duration-150 focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 						/>
 					</label>
 
-					<Button type="submit" variant="primary" size="lg" disabled={submitting || oidcRedirecting} class="mt-1 w-full">
+					<Button
+						type="submit"
+						variant="primary"
+						size="lg"
+						disabled={submitting || oidcRedirecting}
+						class="group mt-1 w-full"
+					>
 						{#if submitting}
 							<LoaderCircle class="h-4 w-4 animate-spin" />
 							Signing in…
 						{:else}
 							Sign In
+							<ArrowRight
+								class="h-4 w-4 transition-transform duration-150 ease-[var(--ease-out-quart)] group-hover:translate-x-0.5 motion-reduce:group-hover:translate-x-0"
+							/>
 						{/if}
 					</Button>
 				</form>

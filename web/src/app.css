@@ -66,6 +66,13 @@
 	--chart-2: #2750a2;
 	--chart-3: #7e3963;
 	--chart-4: #9076be;
+
+	/* Motion tokens */
+	--ease-out-quart: cubic-bezier(0.22, 1, 0.36, 1);
+	--ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+	--duration-fast: 150ms;
+	--duration-normal: 220ms;
+	--duration-slow: 320ms;
 }
 
 .dark {
@@ -163,6 +170,17 @@
 	--color-chart-2: var(--chart-2);
 	--color-chart-3: var(--chart-3);
 	--color-chart-4: var(--chart-4);
+
+	--animate-fade-in: miru-fade-in 180ms var(--ease-out-quart) backwards;
+	--animate-fade-up: miru-fade-up 240ms var(--ease-out-quart) backwards;
+	--animate-dialog-in: miru-dialog-in 210ms var(--ease-out-quart) backwards;
+	--animate-sheet-up: miru-sheet-up 230ms var(--ease-out-quart) backwards;
+	--animate-sheet-left: miru-sheet-left 230ms var(--ease-out-quart) backwards;
+	--animate-popover-in: miru-popover-in 160ms var(--ease-out-quart) backwards;
+	--animate-shake: miru-shake 340ms var(--ease-out-quart);
+	--animate-ping-ring: miru-ping-ring 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+	--animate-logo-breathe: miru-logo-breathe 2.2s ease-in-out infinite;
+	--animate-icon-pop: miru-icon-pop 240ms var(--ease-spring) backwards;
 }
 
 @layer base {
@@ -184,4 +202,305 @@
 
 .safe-pb {
 	padding-bottom: max(0.625rem, env(safe-area-inset-bottom));
+}
+
+/* ==========================================================================
+   Subtle Motion Primitives
+   All decorative motion is disabled under prefers-reduced-motion: reduce.
+   ========================================================================== */
+
+@keyframes miru-fade-in {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+
+@keyframes miru-fade-up {
+	from {
+		opacity: 0;
+		transform: translateY(8px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+@keyframes miru-dialog-in {
+	from {
+		opacity: 0;
+		transform: translateY(10px) scale(0.985);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0) scale(1);
+	}
+}
+
+@keyframes miru-sheet-up {
+	from {
+		opacity: 0.4;
+		transform: translateY(28px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+@keyframes miru-sheet-left {
+	from {
+		opacity: 0.4;
+		transform: translateX(28px);
+	}
+	to {
+		opacity: 1;
+		transform: translateX(0);
+	}
+}
+
+@keyframes miru-popover-in {
+	from {
+		opacity: 0;
+		transform: translateY(4px) scale(0.97);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0) scale(1);
+	}
+}
+
+@keyframes miru-shake {
+	0%,
+	100% {
+		transform: translateX(0);
+	}
+	20%,
+	60% {
+		transform: translateX(-4px);
+	}
+	40%,
+	80% {
+		transform: translateX(4px);
+	}
+}
+
+@keyframes miru-sheen-sweep {
+	0% {
+		opacity: 0;
+		transform: translateX(-140%) skewX(-18deg);
+	}
+	18% {
+		opacity: 1;
+	}
+	82% {
+		opacity: 1;
+	}
+	100% {
+		opacity: 0;
+		transform: translateX(140%) skewX(-18deg);
+	}
+}
+
+@keyframes miru-ping-ring {
+	0% {
+		transform: scale(1);
+		opacity: 0.7;
+	}
+	75%,
+	100% {
+		transform: scale(2.4);
+		opacity: 0;
+	}
+}
+
+@keyframes miru-logo-breathe {
+	0%,
+	100% {
+		transform: scale(1);
+		opacity: 1;
+	}
+	50% {
+		transform: scale(1.045);
+		opacity: 0.88;
+	}
+}
+
+@keyframes miru-icon-pop {
+	from {
+		opacity: 0;
+		transform: rotate(-35deg) scale(0.75);
+	}
+	to {
+		opacity: 1;
+		transform: rotate(0deg) scale(1);
+	}
+}
+
+@keyframes miru-stream-breathe {
+	0%,
+	100% {
+		opacity: 0.12;
+	}
+	50% {
+		opacity: 0.85;
+	}
+}
+
+@keyframes miru-progress-flow {
+	0% {
+		opacity: 0;
+		transform: translateX(-110%);
+	}
+	15% {
+		opacity: 1;
+	}
+	75% {
+		opacity: 1;
+	}
+	100% {
+		opacity: 0;
+		transform: translateX(120%);
+	}
+}
+
+/* Primary / CTA button diagonal warm sheen sweep on hover */
+.btn-sheen {
+	position: relative;
+	overflow: hidden;
+	isolation: isolate;
+}
+
+.btn-sheen::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	opacity: 0;
+	background: linear-gradient(
+		105deg,
+		transparent 25%,
+		rgb(255 248 238 / 0.28) 50%,
+		transparent 75%
+	);
+	transform: translateX(-140%) skewX(-18deg);
+}
+
+.btn-sheen:hover:not(:disabled):not([aria-disabled='true'])::after {
+	animation: miru-sheen-sweep 580ms var(--ease-out-quart) both;
+}
+
+/* Subtle tactile hover lift for interactive cards */
+.miru-card-hover {
+	transition:
+		border-color var(--duration-fast) var(--ease-out-quart),
+		background-color var(--duration-fast) var(--ease-out-quart),
+		box-shadow 180ms var(--ease-out-quart),
+		transform 180ms var(--ease-out-quart);
+}
+
+.miru-card-hover:hover {
+	transform: translateY(-1px);
+}
+
+/* Gentle continuous compositor-only pulse on unpaused (active) stream cards */
+.stream-card-live {
+	position: relative;
+	border-color: color-mix(in srgb, var(--primary) 30%, var(--border));
+}
+
+.stream-card-live::before {
+	content: '';
+	position: absolute;
+	inset: -1px;
+	border-radius: inherit;
+	pointer-events: none;
+	border: 1px solid color-mix(in srgb, var(--primary) 62%, transparent);
+	box-shadow: 0 0 18px -5px color-mix(in srgb, var(--primary) 34%, transparent);
+	animation: miru-stream-breathe 4s ease-in-out infinite;
+}
+
+/* Quiet forward flow shimmer inside active stream playback progress bars */
+.stream-progress-live {
+	overflow: hidden;
+}
+
+.stream-progress-live::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	background: linear-gradient(
+		90deg,
+		transparent 0%,
+		rgb(255 248 238 / 0.48) 50%,
+		transparent 100%
+	);
+	animation: miru-progress-flow 3.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+/* Subtle lens iris & glint reaction on MiruLogo hover */
+.miru-logo-iris,
+.miru-logo-glint {
+	transform-box: view-box;
+	transform-origin: 32px 32px;
+	transition: transform 260ms var(--ease-out-quart);
+}
+
+.miru-logo:hover .miru-logo-iris,
+.group:hover .miru-logo .miru-logo-iris {
+	transform: scale(1.07);
+}
+
+.miru-logo:hover .miru-logo-glint,
+.group:hover .miru-logo .miru-logo-glint {
+	transform: translate(-1px, 1px) scale(1.08);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	[class*='animate-fade-'],
+	[class*='animate-dialog-'],
+	[class*='animate-sheet-'],
+	[class*='animate-popover-'],
+	[class*='animate-shake'],
+	[class*='animate-ping-ring'],
+	[class*='animate-logo-breathe'],
+	[class*='animate-icon-pop'] {
+		animation: none !important;
+	}
+
+	[class*='animate-ping-ring'] {
+		display: none !important;
+	}
+
+	.btn-sheen::after {
+		display: none !important;
+	}
+
+	.miru-card-hover {
+		transition: none !important;
+	}
+
+	.miru-card-hover:hover {
+		transform: none !important;
+	}
+
+	.stream-card-live::before {
+		animation: none !important;
+		opacity: 0.45;
+	}
+
+	.stream-progress-live::after {
+		animation: none !important;
+		display: none !important;
+	}
+
+	.miru-logo-iris,
+	.miru-logo-glint {
+		transition: none !important;
+		transform: none !important;
+	}
 }

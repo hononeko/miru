@@ -24,10 +24,12 @@
 
 <Dialog.Root {open} {onOpenChange}>
 	<Dialog.Portal>
-		<Dialog.Overlay class="fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px]" />
+		<Dialog.Overlay
+			class="fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px] data-[state=open]:animate-fade-in"
+		/>
 		<Dialog.Content
 			bind:ref={contentEl}
-			class="fixed inset-x-0 bottom-0 z-50 max-h-[88dvh] overflow-y-auto rounded-t-2xl border-t border-border-strong bg-surface p-5 shadow-2xl focus:outline-none md:inset-y-0 md:right-0 md:left-auto md:max-h-none md:w-full md:max-w-[420px] md:rounded-t-none md:border-t-0 md:border-l safe-pb"
+			class="fixed inset-x-0 bottom-0 z-50 max-h-[88dvh] overflow-y-auto rounded-t-2xl border-t border-border-strong bg-surface p-5 shadow-2xl focus:outline-none data-[state=open]:animate-sheet-up md:inset-y-0 md:right-0 md:left-auto md:max-h-none md:w-full md:max-w-[420px] md:rounded-t-none md:border-t-0 md:border-l md:data-[state=open]:animate-sheet-left safe-pb"
 		>
 			<div
 				data-sheet-drag-handle
@@ -48,7 +50,7 @@
 				</div>
 				<Dialog.Close
 					aria-label="Close panel"
-					class="inline-flex h-8 w-8 items-center justify-center rounded-lg text-fg-muted hover:bg-elevated hover:text-fg-primary cursor-pointer"
+					class="inline-flex h-8 w-8 items-center justify-center rounded-lg text-fg-muted transition-[background-color,color,transform] duration-150 hover:bg-elevated hover:text-fg-primary active:scale-90 motion-reduce:active:scale-100 cursor-pointer"
 				>
 					<X class="h-4 w-4" />
 				</Dialog.Close>

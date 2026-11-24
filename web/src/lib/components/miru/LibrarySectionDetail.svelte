@@ -126,7 +126,7 @@
 			aria-pressed={activeTab === 'overview'}
 			onclick={() => (activeTab = 'overview')}
 			class={cn(
-				'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-heading text-xs font-semibold transition-colors cursor-pointer',
+				'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-heading text-xs font-semibold transition-[background-color,border-color,color,transform] duration-150 ease-[var(--ease-out-quart)] active:scale-[0.98] motion-reduce:active:scale-100 cursor-pointer',
 				activeTab === 'overview'
 					? 'bg-cyan-soft text-cyan-hi border border-cyan/50'
 					: 'text-fg-secondary hover:text-fg-primary border border-transparent'
@@ -140,7 +140,7 @@
 			aria-pressed={activeTab === 'hygiene'}
 			onclick={() => (activeTab = 'hygiene')}
 			class={cn(
-				'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-heading text-xs font-semibold transition-colors cursor-pointer',
+				'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-heading text-xs font-semibold transition-[background-color,border-color,color,transform] duration-150 ease-[var(--ease-out-quart)] active:scale-[0.98] motion-reduce:active:scale-100 cursor-pointer',
 				activeTab === 'hygiene'
 					? 'bg-primary-soft text-primary-text border border-primary/50'
 					: 'text-fg-secondary hover:text-fg-primary border border-transparent'
@@ -178,7 +178,7 @@
 						<div class="flex h-2 w-full gap-1 overflow-hidden rounded-full bg-subtle">
 							{#each group.rows as seg}
 								<div
-									class={`h-full rounded-full ${seg.colorClass} ${seg.pct > 0 ? 'min-w-0.5' : ''}`}
+									class={`h-full rounded-full transition-[width] duration-500 ease-[var(--ease-out-quart)] ${seg.colorClass} ${seg.pct > 0 ? 'min-w-0.5' : ''}`}
 									style:width={statBarWidth(seg.pct)}
 									title={`${seg.name}: ${seg.count} (${formatStatPercent(seg.pct)})`}
 								></div>

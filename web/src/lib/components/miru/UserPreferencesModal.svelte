@@ -390,7 +390,7 @@
 					>
 						<span
 							class={cn(
-								'inline-block h-4 w-4 rounded-full shadow transition-transform',
+								'inline-block h-4 w-4 rounded-full shadow transition-transform duration-200 ease-[var(--ease-out-quart)]',
 								draft.relativeTimestamps ? 'translate-x-5.5 bg-switch-knob-on' : 'translate-x-1 bg-white'
 							)}
 						></span>
@@ -431,5 +431,26 @@
 		backdrop-filter: blur(2px);
 		overflow: hidden;
 		overscroll-behavior: contain;
+	}
+
+	dialog[open] {
+		animation: miru-sheet-up 230ms var(--ease-out-quart) backwards;
+	}
+
+	dialog[open]::backdrop {
+		animation: miru-fade-in 180ms var(--ease-out-quart) backwards;
+	}
+
+	@media (min-width: 768px) {
+		dialog[open] {
+			animation: miru-dialog-in 210ms var(--ease-out-quart) backwards;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		dialog[open],
+		dialog[open]::backdrop {
+			animation: none;
+		}
 	}
 </style>

@@ -49,7 +49,15 @@
 
 <span class={cn(badgeVariants({ tone, mono }), className)}>
 	{#if dot}
-		<span class={cn('h-1.5 w-1.5 rounded-full bg-current shrink-0', pulse && 'animate-pulse')}></span>
+		<span class="relative inline-flex h-1.5 w-1.5 shrink-0 items-center justify-center">
+			{#if pulse}
+				<span
+					aria-hidden="true"
+					class="animate-ping-ring absolute inset-0 rounded-full bg-current opacity-70"
+				></span>
+			{/if}
+			<span class="relative h-1.5 w-1.5 rounded-full bg-current"></span>
+		</span>
 	{/if}
 	{@render children?.()}
 </span>

@@ -166,7 +166,7 @@
 			</div>
 			<a
 				href="/admin"
-				class="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 font-heading text-xs font-semibold text-primary-fg hover:bg-primary/85"
+				class="btn-sheen inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 font-heading text-xs font-semibold text-primary-fg transition-[background-color,box-shadow,transform] duration-150 ease-[var(--ease-out-quart)] hover:bg-primary/90 hover:-translate-y-px hover:shadow-[0_4px_14px_-3px_color-mix(in_srgb,var(--primary)_45%,transparent)] active:translate-y-0 active:scale-[0.98] motion-reduce:hover:translate-y-0 motion-reduce:active:scale-100"
 			>
 				<Link2 class="h-3.5 w-3.5" />
 				Connect in Admin
@@ -175,7 +175,7 @@
 	{/if}
 
 	{#if syncNotice}
-		<div class="rounded-xl border border-direct-play/50 bg-direct-play-soft px-4 py-2.5 text-xs text-direct-play">
+		<div class="animate-fade-up rounded-xl border border-direct-play/50 bg-direct-play-soft px-4 py-2.5 text-xs text-direct-play">
 			{syncNotice}
 		</div>
 	{/if}
@@ -216,7 +216,7 @@
 					type="button"
 					onclick={() => (selectedId = lib.id)}
 					class={cn(
-						'flex flex-col gap-2 rounded-xl border p-4 text-left transition-colors cursor-pointer',
+						'miru-card-hover flex flex-col gap-2 rounded-xl border p-4 text-left active:scale-[0.99] motion-reduce:active:scale-100 cursor-pointer',
 						selected
 							? 'border-cyan bg-cyan-soft/70 ring-1 ring-cyan'
 							: 'border-border bg-surface hover:border-border-strong'

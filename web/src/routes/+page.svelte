@@ -396,7 +396,7 @@
 			</div>
 			<a
 				href="/admin"
-				class="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 font-heading text-xs font-semibold text-primary-fg hover:bg-primary/85"
+				class="btn-sheen inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 font-heading text-xs font-semibold text-primary-fg transition-[background-color,box-shadow,transform] duration-150 ease-[var(--ease-out-quart)] hover:bg-primary/90 hover:-translate-y-px hover:shadow-[0_4px_14px_-3px_color-mix(in_srgb,var(--primary)_45%,transparent)] active:translate-y-0 active:scale-[0.98] motion-reduce:hover:translate-y-0 motion-reduce:active:scale-100"
 			>
 				<Link2 class="h-3.5 w-3.5" />
 				Connect in Admin
@@ -431,15 +431,15 @@
 				{#if overview && overview.totalPlays > 0}
 					<div class="flex h-1.5 w-full gap-0.5 overflow-hidden rounded-full bg-subtle">
 						<div
-							class={`h-full rounded-full bg-direct-play ${overview.decisionBreakdown.directPlay > 0 ? 'min-w-0.5' : ''}`}
+							class={`h-full rounded-full bg-direct-play transition-[width] duration-500 ease-[var(--ease-out-quart)] ${overview.decisionBreakdown.directPlay > 0 ? 'min-w-0.5' : ''}`}
 							style:width={statBarWidth(overview.decisionBreakdown.directPlayPercent)}
 						></div>
 						<div
-							class={`h-full rounded-full bg-direct-stream ${overview.decisionBreakdown.directStream > 0 ? 'min-w-0.5' : ''}`}
+							class={`h-full rounded-full bg-direct-stream transition-[width] duration-500 ease-[var(--ease-out-quart)] ${overview.decisionBreakdown.directStream > 0 ? 'min-w-0.5' : ''}`}
 							style:width={statBarWidth(overview.decisionBreakdown.directStreamPercent)}
 						></div>
 						<div
-							class={`h-full rounded-full bg-hw-transcode ${overview.decisionBreakdown.transcode > 0 ? 'min-w-0.5' : ''}`}
+							class={`h-full rounded-full bg-hw-transcode transition-[width] duration-500 ease-[var(--ease-out-quart)] ${overview.decisionBreakdown.transcode > 0 ? 'min-w-0.5' : ''}`}
 							style:width={statBarWidth(overview.decisionBreakdown.transcodePercent)}
 						></div>
 					</div>
@@ -470,7 +470,7 @@
 		{#if terminationNotice}
 			<div
 				role="status"
-				class="flex items-start justify-between gap-3 rounded-xl border border-direct-play/40 bg-direct-play-soft px-3.5 py-2.5 text-xs"
+				class="animate-fade-up flex items-start justify-between gap-3 rounded-xl border border-direct-play/40 bg-direct-play-soft px-3.5 py-2.5 text-xs"
 			>
 				<div class="flex items-start gap-2.5">
 					<CheckCircle2 class="mt-0.5 h-4 w-4 shrink-0 text-direct-play" />
@@ -541,7 +541,7 @@
 								</div>
 								<div class="h-1.5 w-full overflow-hidden rounded-full bg-subtle">
 									<div
-										class={`h-full rounded-full ${row.barClass} ${row.count > 0 ? 'min-w-0.5' : ''}`}
+										class={`h-full rounded-full transition-[width] duration-500 ease-[var(--ease-out-quart)] ${row.barClass} ${row.count > 0 ? 'min-w-0.5' : ''}`}
 										style:width={statBarWidth(row.pct)}
 									></div>
 								</div>
@@ -685,7 +685,7 @@
 									void mediaDetailsModal.open(item.ratingKey, {
 										preferSeries: item.kind === 'TV Show'
 									})}
-								class="group flex w-full cursor-pointer items-center justify-between gap-3 rounded-lg border border-transparent bg-elevated px-3 py-2 text-left transition-colors hover:border-cyan/50 hover:bg-subtle/60 focus-visible:border-cyan focus-visible:outline-none"
+								class="group flex w-full cursor-pointer items-center justify-between gap-3 rounded-lg border border-transparent bg-elevated px-3 py-2 text-left transition-[background-color,border-color,transform] duration-150 ease-[var(--ease-out-quart)] hover:border-cyan/50 hover:bg-subtle/60 active:scale-[0.99] motion-reduce:active:scale-100 focus-visible:border-cyan focus-visible:outline-none"
 							>
 								<div class="flex min-w-0 items-center gap-2.5">
 									<span

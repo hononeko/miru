@@ -81,7 +81,7 @@
 	>
 		<div class="flex flex-col gap-4">
 			<div class="flex items-center justify-between px-1">
-				<a href="/" class="flex items-center gap-2.5">
+				<a href="/" class="group flex items-center gap-2.5">
 					<MiruLogo size={30} />
 					<span class="font-display text-xl font-bold tracking-wide text-fg-primary">Miru</span>
 				</a>
@@ -103,14 +103,19 @@
 						href={item.href}
 						aria-current={active ? 'page' : undefined}
 						class={cn(
-							'flex items-center justify-between rounded-lg px-3 py-2 font-heading text-[13px] transition-colors',
+							'group flex items-center justify-between rounded-lg px-3 py-2 font-heading text-[13px] transition-[background-color,color,transform] duration-150 ease-[var(--ease-out-quart)] active:scale-[0.985] motion-reduce:active:scale-100',
 							active
 								? 'bg-primary-soft font-semibold text-fg-primary'
 								: 'font-medium text-fg-secondary hover:bg-elevated hover:text-fg-primary'
 						)}
 					>
 						<span class="flex items-center gap-2.5">
-							<Icon class={cn('h-4 w-4', active ? 'text-primary-text' : 'text-fg-muted')} />
+							<Icon
+								class={cn(
+									'h-4 w-4 transition-colors duration-150',
+									active ? 'text-primary-text' : 'text-fg-muted group-hover:text-fg-primary'
+								)}
+							/>
 							{item.label}
 						</span>
 						{#if item.badge}
@@ -173,20 +178,22 @@
 						type="button"
 						onclick={() => themeStore.toggle()}
 						aria-label="Toggle color theme"
-						class="inline-flex h-7 w-7 items-center justify-center rounded-md text-fg-secondary hover:bg-surface hover:text-fg-primary cursor-pointer"
+						class="inline-flex h-7 w-7 items-center justify-center rounded-md text-fg-secondary transition-[background-color,color,transform] duration-150 hover:bg-surface hover:text-fg-primary active:scale-90 motion-reduce:active:scale-100 cursor-pointer"
 					>
-						{#if themeStore.resolved === 'dark'}
-							<Sun class="h-3.5 w-3.5" />
-						{:else}
-							<Moon class="h-3.5 w-3.5" />
-						{/if}
+						{#key themeStore.resolved}
+							{#if themeStore.resolved === 'dark'}
+								<Sun class="animate-icon-pop h-3.5 w-3.5" />
+							{:else}
+								<Moon class="animate-icon-pop h-3.5 w-3.5" />
+							{/if}
+						{/key}
 					</button>
 					{#if authStore.authMode !== 'none' && authStore.authenticated}
 						<button
 							type="button"
 							onclick={handleLogout}
 							aria-label="Sign out"
-							class="inline-flex h-7 w-7 items-center justify-center rounded-md text-fg-secondary hover:bg-danger-soft hover:text-danger cursor-pointer"
+							class="inline-flex h-7 w-7 items-center justify-center rounded-md text-fg-secondary transition-[background-color,color,transform] duration-150 hover:bg-danger-soft hover:text-danger active:scale-90 motion-reduce:active:scale-100 cursor-pointer"
 						>
 							<LogOut class="h-3.5 w-3.5" />
 						</button>
@@ -201,7 +208,7 @@
 		class="hidden md:flex lg:hidden w-20 shrink-0 flex-col items-center justify-between border-r border-border bg-surface py-4 px-2 sticky top-0 h-dvh"
 	>
 		<div class="flex w-full flex-col items-center gap-4">
-			<a href="/" aria-label="Miru Home">
+			<a href="/" aria-label="Miru Home" class="group">
 				<MiruLogo size={32} />
 			</a>
 			<div class="h-px w-10 bg-border"></div>
@@ -212,11 +219,11 @@
 					<a
 						href={item.href}
 						aria-current={active ? 'page' : undefined}
-						class="flex w-full flex-col items-center gap-1 py-0.5"
+						class="group flex w-full flex-col items-center gap-1 py-0.5"
 					>
 						<span
 							class={cn(
-								'flex h-8 w-14 items-center justify-center rounded-full transition-colors',
+								'flex h-8 w-14 items-center justify-center rounded-full transition-[background-color,color,transform] duration-200 ease-[var(--ease-out-quart)] group-active:scale-95 motion-reduce:group-active:scale-100',
 								active ? 'bg-primary-soft text-primary-text' : 'text-fg-muted hover:bg-elevated hover:text-fg-primary'
 							)}
 						>
@@ -240,13 +247,15 @@
 				type="button"
 				onclick={() => themeStore.toggle()}
 				aria-label="Toggle color theme"
-				class="inline-flex h-10 w-10 items-center justify-center rounded-full text-fg-secondary hover:bg-elevated hover:text-fg-primary cursor-pointer"
+				class="inline-flex h-10 w-10 items-center justify-center rounded-full text-fg-secondary transition-[background-color,color,transform] duration-150 hover:bg-elevated hover:text-fg-primary active:scale-90 motion-reduce:active:scale-100 cursor-pointer"
 			>
-				{#if themeStore.resolved === 'dark'}
-					<Sun class="h-4 w-4" />
-				{:else}
-					<Moon class="h-4 w-4" />
-				{/if}
+				{#key themeStore.resolved}
+					{#if themeStore.resolved === 'dark'}
+						<Sun class="animate-icon-pop h-4 w-4" />
+					{:else}
+						<Moon class="animate-icon-pop h-4 w-4" />
+					{/if}
+				{/key}
 			</button>
 			<button
 				type="button"
@@ -272,7 +281,7 @@
 		<header
 			class="sticky top-0 z-30 flex items-center justify-between border-b border-border bg-surface/95 px-4 py-3 backdrop-blur-md md:hidden"
 		>
-			<a href="/" class="flex items-center gap-2">
+			<a href="/" class="group flex items-center gap-2">
 				<MiruLogo size={26} />
 				<span class="font-display text-lg font-bold tracking-wide text-fg-primary">Miru</span>
 			</a>
@@ -284,7 +293,7 @@
 					type="button"
 					onclick={() => preferencesStore.openModal()}
 					aria-label="Open user preferences"
-					class="inline-flex h-8 max-w-[132px] cursor-pointer items-center gap-1.5 rounded-full border border-border bg-elevated py-0.5 pr-2.5 pl-1 font-heading text-xs font-semibold text-fg-primary transition-colors hover:border-border-strong"
+					class="inline-flex h-8 max-w-[132px] cursor-pointer items-center gap-1.5 rounded-full border border-border bg-elevated py-0.5 pr-2.5 pl-1 font-heading text-xs font-semibold text-fg-primary transition-[border-color,transform] duration-150 hover:border-border-strong active:scale-95 motion-reduce:active:scale-100"
 				>
 					<ProxiedImage
 						src={authStore.principal?.avatarUrl}
@@ -313,11 +322,11 @@
 				<a
 					href={item.href}
 					aria-current={active ? 'page' : undefined}
-					class="flex min-h-[48px] min-w-[56px] flex-col items-center justify-center gap-1"
+					class="group flex min-h-[48px] min-w-[56px] flex-col items-center justify-center gap-1"
 				>
 					<span
 						class={cn(
-							'relative flex h-7 w-13 items-center justify-center rounded-full transition-colors',
+							'relative flex h-7 w-13 items-center justify-center rounded-full transition-[background-color,color,transform] duration-200 ease-[var(--ease-out-quart)] group-active:scale-95 motion-reduce:group-active:scale-100',
 							active ? 'bg-primary-soft text-primary-text' : 'text-fg-muted'
 						)}
 					>

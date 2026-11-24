@@ -23,7 +23,7 @@
 
 <div
 	class={cn(
-		'flex flex-col justify-between gap-2 rounded-xl border border-border bg-surface p-4 shadow-xs dark:shadow-none',
+		'flex flex-col justify-between gap-2 rounded-xl border border-border bg-surface p-4 shadow-xs transition-colors duration-150 hover:border-border-strong dark:shadow-none',
 		className
 	)}
 >

@@ -393,7 +393,7 @@
 								</div>
 								<div class="h-1.5 w-full overflow-hidden rounded-full bg-subtle">
 									<div
-										class={`h-full rounded-full ${idx === 0 ? 'bg-primary' : 'bg-cyan'} ${plat.percent > 0 ? 'min-w-0.5' : ''}`}
+										class={`h-full rounded-full transition-[width] duration-500 ease-[var(--ease-out-quart)] ${idx === 0 ? 'bg-primary' : 'bg-cyan'} ${plat.percent > 0 ? 'min-w-0.5' : ''}`}
 										style:width={statBarWidth(plat.percent)}
 									></div>
 								</div>

@@ -95,7 +95,7 @@
 							{#if activeSegments.length > 0}
 								<div
 									class={cn(
-										'flex w-full flex-col-reverse gap-[2px] overflow-hidden rounded-t-sm transition-all duration-300 group-focus-visible:ring-2 group-focus-visible:ring-fg-primary/80 group-focus-visible:ring-offset-1 group-focus-visible:ring-offset-surface',
+										'flex w-full flex-col-reverse gap-[2px] overflow-hidden rounded-t-sm transition-[height,opacity,box-shadow] duration-300 ease-[var(--ease-out-quart)] group-focus-visible:ring-2 group-focus-visible:ring-fg-primary/80 group-focus-visible:ring-offset-1 group-focus-visible:ring-offset-surface',
 										isOpen && 'ring-2 ring-fg-primary/80 ring-offset-1 ring-offset-surface'
 									)}
 									style:height={`${barHeightPct}%`}
@@ -114,7 +114,7 @@
 							{:else}
 								<div
 									class={cn(
-										'w-full rounded-t-sm transition-all duration-300 group-focus-visible:ring-2 group-focus-visible:ring-fg-primary/80 group-focus-visible:ring-offset-1 group-focus-visible:ring-offset-surface',
+										'w-full rounded-t-sm transition-[height,background-color,opacity,box-shadow] duration-300 ease-[var(--ease-out-quart)] group-focus-visible:ring-2 group-focus-visible:ring-fg-primary/80 group-focus-visible:ring-offset-1 group-focus-visible:ring-offset-surface',
 										point.value <= 0
 											? 'bg-subtle/80 group-hover:bg-border-strong'
 											: isPeak
@@ -149,7 +149,7 @@
 							side="top"
 							sideOffset={8}
 							collisionPadding={12}
-							class="z-50 w-72 max-w-[calc(100vw-1.5rem)] rounded-xl border border-border-strong bg-surface p-3 text-fg-primary shadow-xl outline-none"
+							class="z-50 w-72 max-w-[calc(100vw-1.5rem)] rounded-xl border border-border-strong bg-surface p-3 text-fg-primary shadow-xl outline-none data-[state=open]:animate-popover-in"
 						>
 							<Popover.Arrow class="text-border-strong" width={10} height={5} />
 							{#if detail}

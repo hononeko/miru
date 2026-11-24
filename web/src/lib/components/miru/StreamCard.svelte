@@ -64,7 +64,8 @@
 
 <article
 	class={cn(
-		'flex flex-col gap-3 rounded-xl border border-border bg-surface p-4 shadow-xs transition-colors hover:border-border-strong dark:shadow-none',
+		'miru-card-hover flex flex-col gap-3 rounded-xl border border-border bg-surface p-4 shadow-xs hover:border-border-strong hover:shadow-sm dark:shadow-none dark:hover:shadow-none',
+		!isPaused && 'stream-card-live',
 		className
 	)}
 >
@@ -164,14 +165,14 @@
 		<div class="relative h-1.5 w-full overflow-hidden rounded-full bg-subtle">
 			{#if bufferPct !== null}
 				<div
-					class="absolute inset-y-0 left-0 rounded-full bg-cyan/45 transition-all duration-500"
+					class="absolute inset-y-0 left-0 rounded-full bg-cyan/45 transition-[width] duration-500 ease-[var(--ease-out-quart)]"
 					style:width={`${bufferPct}%`}
 				></div>
 			{/if}
 			<div
 				class={cn(
-					'absolute inset-y-0 left-0 rounded-full transition-all duration-500',
-					isPaused ? 'bg-fg-muted' : 'bg-primary'
+					'absolute inset-y-0 left-0 rounded-full transition-[width,background-color] duration-500 ease-[var(--ease-out-quart)]',
+					isPaused ? 'bg-fg-muted' : 'stream-progress-live bg-primary'
 				)}
 				style:width={`${progressPct}%`}
 			></div>

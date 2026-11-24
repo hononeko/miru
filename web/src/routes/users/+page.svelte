@@ -104,7 +104,7 @@
 				<a
 					href={`/users/${encodeURIComponent(user.id)}`}
 					class={cn(
-						'group flex flex-col gap-4 rounded-xl border bg-surface p-4 transition-colors hover:border-cyan',
+						'group miru-card-hover flex flex-col gap-4 rounded-xl border bg-surface p-4 hover:border-cyan hover:shadow-sm dark:hover:shadow-none',
 						user.isStreaming ? 'border-border-strong' : 'border-border'
 					)}
 				>
@@ -149,7 +149,15 @@
 								? `Streaming ${user.activeStreamCount} active ${user.activeStreamCount === 1 ? 'session' : 'sessions'}`
 								: `Last seen ${formatRelativeTime(user.lastSeenAtMs, Date.now(), preferencesStore.prefs)}`}
 						</span>
-						<span class="font-mono text-[10px]">View →</span>
+						<span class="inline-flex items-center gap-0.5 font-mono text-[10px]">
+							View
+							<span
+								aria-hidden="true"
+								class="inline-block transition-transform duration-150 ease-[var(--ease-out-quart)] group-hover:translate-x-0.5 motion-reduce:group-hover:translate-x-0"
+							>
+								→
+							</span>
+						</span>
 					</div>
 
 					<div class="grid grid-cols-2 gap-3">

@@ -453,7 +453,7 @@
 										</div>
 										<div class="h-1.5 w-full overflow-hidden rounded-full bg-subtle">
 											<div
-												class="h-full rounded-full bg-primary"
+												class="h-full rounded-full bg-primary transition-[width] duration-500 ease-[var(--ease-out-quart)]"
 												style:width={`${seasonProgressPercent}%`}
 											></div>
 										</div>
@@ -650,5 +650,23 @@
 	.media-details-dialog[open] {
 		display: flex;
 		flex-direction: column;
+		animation: miru-sheet-up 230ms var(--ease-out-quart) backwards;
+	}
+
+	.media-details-dialog[open]::backdrop {
+		animation: miru-fade-in 180ms var(--ease-out-quart) backwards;
+	}
+
+	@media (min-width: 768px) {
+		.media-details-dialog[open] {
+			animation: miru-dialog-in 210ms var(--ease-out-quart) backwards;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.media-details-dialog[open],
+		.media-details-dialog[open]::backdrop {
+			animation: none;
+		}
 	}
 </style>

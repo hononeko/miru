@@ -76,4 +76,30 @@ describe('Login page OIDC click handling', () => {
 		expect(ssoLink.getAttribute('aria-disabled')).toBeNull();
 		expect(screen.getByText('Sign in with Mock SSO')).toBeTruthy();
 	});
+
+	it('renders the login error alert with shake feedback and remounts it on consecutive failures', async () => {
+		const loginSpy = vi.spyOn(authStore, 'login').mockRejectedValue(new Error('Invalid credentials'));
+		try {
+			render(LoginPage);
+
+			const usernameInput = screen.getByLabelText('Username');
+			const passwordInput = screen.getByLabelText('Password');
+			const submitBtn = screen.getByRole('button', { name: 'Sign In' });
+			expect(submitBtn.className).toContain('btn-sheen');
+
+			await fireEvent.input(usernameInput, { target: { value: 'admin' } });
+			await fireEvent.input(passwordInput, { target: { value: 'wrong' } });
+			await fireEvent.submit(submitBtn.closest('form')!);
+
+			const firstAlert = await screen.findByRole('alert');
+			expect(firstAlert.className).toContain('animate-shake');
+
+			await fireEvent.submit(submitBtn.closest('form')!);
+			const secondAlert = await screen.findByRole('alert');
+			expect(secondAlert.className).toContain('animate-shake');
+			expect(secondAlert).not.toBe(firstAlert);
+		} finally {
+			loginSpy.mockRestore();
+		}
+	});
 });

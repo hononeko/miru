@@ -80,8 +80,8 @@
 </svelte:head>
 
 {#if authStore.loading}
-	<div class="flex min-h-dvh flex-col items-center justify-center gap-3 bg-canvas text-fg-secondary">
-		<MiruLogo size={44} />
+	<div class="animate-fade-in flex min-h-dvh flex-col items-center justify-center gap-3 bg-canvas text-fg-secondary">
+		<MiruLogo size={44} class="animate-logo-breathe" />
 		<p class="font-mono text-xs text-fg-muted">Connecting to Miru…</p>
 	</div>
 {:else if isAuthPage}

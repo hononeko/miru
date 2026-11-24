@@ -35,10 +35,15 @@ import app.hononeko.miru.persistence.repository.ExposedAuthAccountRepository
 import app.hononeko.miru.persistence.repository.ExposedAuthSessionRepository
 import app.hononeko.miru.persistence.repository.ExposedMediaServerRepository
 import app.hononeko.miru.persistence.repository.ExposedUserRepository
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import io.kotest.assertions.arrow.core.shouldBeRight
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.collections.shouldContainExactly
+import io.kotest.matchers.collections.shouldHaveSize
+import io.kotest.matchers.ints.shouldBeGreaterThanOrEqual
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
@@ -70,6 +75,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import org.slf4j.LoggerFactory
 import java.math.BigInteger
 import java.nio.file.Files
 import java.nio.file.Path
@@ -402,6 +408,9 @@ private fun createOidcHarness(
         appConfig = appConfig,
     )
 }
+
+private fun HttpResponse.cookieValue(name: String): String =
+    extractCookieValue(headers.getAll(HttpHeaders.SetCookie).orEmpty(), name).shouldNotBeNull()
 
 /** Runs the full authorization-code flow against the mock IdP and returns the new session cookie value. */
 private suspend fun HttpClient.signInWithOidc(
@@ -1172,6 +1181,46 @@ class OidcAuthRoutesTest :
                 }
                 val stored = harness.accountRepo.findByProviderAndSubject("OIDC", "sub-noui").shouldBeRight().shouldNotBeNull()
                 stored.emailVerified shouldBe false
+            }
+        }
+
+        test("logs requests and redirect targets without their query strings") {
+            val expectedChallengeHolder = mutableMapOf<String, String>()
+            val scenario = MockIdpScenario(subject = "sub-log", groupsInIdToken = listOf("miru-users"))
+            val appender = ListAppender<ILoggingEvent>().apply { start() }
+            val rootLogger = LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME) as Logger
+            rootLogger.addAppender(appender)
+
+            val secrets = mutableListOf<String>()
+            try {
+                createOidcHarness(scenarioProvider = { scenario }, expectedChallengeHolder = expectedChallengeHolder).use { harness ->
+                    testApplication {
+                        setupApp(harness)
+                        val client = createClient { followRedirects = false }
+                        val start = client.get("/api/v1/auth/oidc/login")
+                        val location = Url(start.headers[HttpHeaders.Location].shouldNotBeNull())
+                        secrets += listOf("state", "nonce", "code_challenge").map { location.parameters[it].shouldNotBeNull() }
+
+                        val callback = client.completeOidcCallback("code-log", expectedChallengeHolder)
+                        val hint = callback.cookieValue("miru_oidc_hint")
+                        secrets += listOf("code-log", callback.cookieValue(SESSION_COOKIE_NAME), hint)
+                        client.get("/api/v1/auth/oidc/logout") { cookie("miru_oidc_hint", hint) }
+                    }
+                }
+            } finally {
+                rootLogger.detachAppender(appender)
+            }
+
+            // Copied because other specs log to the root logger too
+            val messages = appender.list.toList().map { it.formattedMessage }
+            listOf(
+                "302 Found: GET - /api/v1/auth/oidc/login in \\d+ms -> https://idp.miru.test/o/miru/authorize",
+                "302 Found: GET - /api/v1/auth/oidc/callback in \\d+ms -> /",
+                "302 Found: GET - /api/v1/auth/oidc/logout in \\d+ms -> https://idp.miru.test/o/miru/end-session",
+            ).forEach { expected -> messages.count { Regex(expected).matches(it) } shouldBeGreaterThanOrEqual 1 }
+            secrets shouldHaveSize 6
+            for (secret in secrets) {
+                messages.filter { secret in it }.shouldBeEmpty()
             }
         }
 

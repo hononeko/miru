@@ -709,9 +709,12 @@ class LibraryRoutesTest :
                         HttpStatusCode.OK
                     client.get("/api/v1/libraries/1/recent") { cookie(SESSION_COOKIE_NAME, bobLogin.signedToken) }.status shouldBe
                         HttpStatusCode.OK
-                    // The stale report is ADMIN only, even for a section shared with Bob
-                    client.get("/api/v1/libraries/1/stale") { cookie(SESSION_COOKIE_NAME, bobLogin.signedToken) }.status shouldBe
-                        HttpStatusCode.Forbidden
+                    // The stale report is ADMIN only, even for a section shared with Bob, and before any input is validated
+                    for (path in listOf("1/stale", "1/stale?unwatchedDays=abc", "1/stale?limit=abc", "999/stale")) {
+                        client
+                            .get("/api/v1/libraries/$path") { cookie(SESSION_COOKIE_NAME, bobLogin.signedToken) }
+                            .status shouldBe HttpStatusCode.Forbidden
+                    }
                     client.get("/api/v1/libraries/2") { cookie(SESSION_COOKIE_NAME, bobLogin.signedToken) }.status shouldBe
                         HttpStatusCode.Forbidden
                     client.get("/api/v1/libraries/2/stats") { cookie(SESSION_COOKIE_NAME, bobLogin.signedToken) }.status shouldBe

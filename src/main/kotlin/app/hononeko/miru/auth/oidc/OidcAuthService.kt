@@ -38,7 +38,8 @@ class OidcAuthService(
     private val pendingTransactions = LinkedHashMap<String, OidcPendingTransaction>()
     private val urlEncoder = Base64.getUrlEncoder().withoutPadding()
 
-    suspend fun startAuthorization(): Either<MiruError, OidcAuthorizationStart> =
+    /** With [freshLogin] the provider has to ask for a login even if it still has a session for the browser. */
+    suspend fun startAuthorization(freshLogin: Boolean = false): Either<MiruError, OidcAuthorizationStart> =
         either {
             ensure(authConfig.oidcEnabled) {
                 MiruError.Conflict("OIDC authentication is disabled")
@@ -73,6 +74,9 @@ class OidcAuthService(
                         parameters.append("nonce", nonce)
                         parameters.append("code_challenge", codeChallenge)
                         parameters.append("code_challenge_method", "S256")
+                        if (freshLogin) {
+                            parameters.append("prompt", "login")
+                        }
                     }.buildString()
 
             val txCookieValue = TokenCrypto.signSessionToken(state, authConfig.sessionSecret)

@@ -2707,7 +2707,7 @@ paths:
     get:
       tags: [Libraries]
       operationId: getLibraryStaleMedia
-      summary: Get stale or unwatched media items for a library section ranked by disk footprint or age
+      summary: Get stale or unwatched media items for a library section ranked by disk footprint or age (ADMIN only)
       security:
         - CookieAuth: []
         - ApiKeyAuth: []
@@ -2767,7 +2767,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
         '403':
-          description: Access to the requested library section is forbidden
+          description: Administrator role is required
           content:
             application/problem+json:
               schema:

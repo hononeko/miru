@@ -64,17 +64,40 @@ describe('modalDialog', () => {
 		expect(dialog.close).not.toHaveBeenCalled();
 	});
 
-	it('blocks touch scrolling that starts on the backdrop only', () => {
+	it('blocks touches that would scroll the page because nothing under them scrolls inside the dialog', () => {
 		const { dialog, button } = createDialog();
+		const list = document.createElement('div');
+		list.style.overflowY = 'auto';
+		const row = document.createElement('p');
+		const slider = document.createElement('input');
+		list.appendChild(row);
+		dialog.append(list, slider);
+		const setContentHeight = (height: number) => {
+			Object.defineProperty(list, 'clientHeight', { configurable: true, value: 200 });
+			Object.defineProperty(list, 'scrollHeight', { configurable: true, value: height });
+		};
 		action = modalDialog(dialog);
 
-		const onBackdrop = new Event('touchmove', { bubbles: true, cancelable: true });
-		dialog.dispatchEvent(onBackdrop);
-		expect(onBackdrop.defaultPrevented).toBe(true);
+		const blocks = (target: Element, touches = 1) => {
+			const move = new Event('touchmove', { bubbles: true, cancelable: true });
+			for (const event of [new Event('touchstart', { bubbles: true }), move]) {
+				Object.defineProperty(event, 'touches', { value: Array(touches).fill({}) });
+				target.dispatchEvent(event);
+			}
+			return move.defaultPrevented;
+		};
 
-		const onContent = new Event('touchmove', { bubbles: true, cancelable: true });
-		button.dispatchEvent(onContent);
-		expect(onContent.defaultPrevented).toBe(false);
+		expect(blocks(dialog)).toBe(true);
+		expect(blocks(button)).toBe(true);
+		expect(blocks(slider)).toBe(false);
+
+		setContentHeight(900);
+		expect(blocks(row)).toBe(false);
+		setContentHeight(200);
+		expect(blocks(row)).toBe(true);
+
+		// Pinch zoom still works
+		expect(blocks(button, 2)).toBe(false);
 	});
 
 	it('locks page scroll while the dialog is open and unlocks it on close or destroy', async () => {

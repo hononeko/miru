@@ -935,7 +935,7 @@ private fun FunSpecRootScope.staleMediaTests(ctxProvider: () -> ContractContext)
             neverPlayed.report.items.map { it.item.ratingKey } shouldContainExactly
                 listOf("mov-never-medium", "mov-never-oldest")
 
-            // Direct repository sort modes
+            // Direct repository sort modes (SIZE_ASC, AGE_ASC, and limit=0 summary-only)
             ctx.library
                 .findStaleMedia(
                     serverId = "srv-1",
@@ -946,6 +946,30 @@ private fun FunSpecRootScope.staleMediaTests(ctxProvider: () -> ContractContext)
                 .items
                 .map { it.item.ratingKey } shouldContainExactly
                 listOf("mov-never-oldest", "mov-never-medium", "mov-stale-large")
+
+            ctx.library
+                .findStaleMedia(
+                    serverId = "srv-1",
+                    sectionKey = "sec-movies",
+                    unwatchedCutoffMs = nowMs - 180L * dayMs,
+                    sort = StaleMediaSort.AGE_ASC,
+                ).shouldBeRight()
+                .items
+                .map { it.item.ratingKey } shouldContainExactly
+                listOf("mov-stale-large", "mov-never-medium", "mov-never-oldest")
+
+            val summaryOnly =
+                ctx.library
+                    .findStaleMedia(
+                        serverId = "srv-1",
+                        sectionKey = "sec-movies",
+                        unwatchedCutoffMs = nowMs - 180L * dayMs,
+                        limit = 0,
+                    ).shouldBeRight()
+            summaryOnly.items.shouldBeEmpty()
+            summaryOnly.totalStaleCount shouldBe 3
+            summaryOnly.neverPlayedCount shouldBe 2
+            summaryOnly.totalReclaimableBytes shouldBe 58_000_000_000L
         }
     }
 }

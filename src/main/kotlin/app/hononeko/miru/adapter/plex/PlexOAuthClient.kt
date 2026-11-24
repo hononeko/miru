@@ -128,14 +128,24 @@ data class DiscoveredPlexServer(
 
 /**
  * Client for Plex.tv PIN OAuth (`POST /api/v2/pins`, `GET /api/v2/pins/{id}`) and server resource discovery
- * (`GET /api/v2/resources`).
+ * (`GET /api/v2/resources`). Accepts a lazy [httpClientProvider] so no HTTP client pool or selector thread
+ * is allocated until OAuth is actually invoked.
  */
 class PlexOAuthClient(
-    private val httpClient: HttpClient,
+    private val httpClientProvider: () -> HttpClient,
     plexTvBaseUrl: String = DEFAULT_PLEX_TV_BASE_URL,
     private val appVersion: String = "0.1.0",
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
+    constructor(
+        httpClient: HttpClient,
+        plexTvBaseUrl: String = DEFAULT_PLEX_TV_BASE_URL,
+        appVersion: String = "0.1.0",
+        clock: () -> Long = System::currentTimeMillis,
+    ) : this({ httpClient }, plexTvBaseUrl, appVersion, clock)
+
+    private val httpClient: HttpClient
+        get() = httpClientProvider()
     private val baseUrl: String = plexTvBaseUrl.trim().trimEnd('/')
 
     suspend fun createPin(clientIdentifier: String): Either<MiruError, PlexPinStart> =

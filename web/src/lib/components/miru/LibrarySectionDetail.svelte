@@ -11,6 +11,7 @@
 	import BarChart, { type BarPoint } from '$components/miru/BarChart.svelte';
 	import KpiCard from '$components/miru/KpiCard.svelte';
 	import ProxiedImage from '$components/miru/ProxiedImage.svelte';
+	import { latestRequest } from '$lib/latestRequest';
 	import { authStore } from '$stores/auth.svelte';
 	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
@@ -111,12 +112,20 @@
 		return `${bytes > 0 ? '+' : '−'}${formatBytes(Math.abs(bytes))}`;
 	}
 
+	const startStaleRequest = latestRequest();
+	let staleReportSection: string | null = null;
+
 	async function loadStaleMedia(sectionKey: string, days: number, sort: StaleMediaSort) {
 		if (!sectionKey) return;
+		const isLatest = startStaleRequest();
+		if (staleReportSection !== sectionKey) {
+			staleReportSection = sectionKey;
+			staleReport = null;
+		}
 		loadingStale = true;
 		staleError = null;
 		try {
-			staleReport = unwrap(
+			const report = unwrap(
 				await api.GET('/api/v1/libraries/{id}/stale', {
 					params: {
 						path: { id: sectionKey },
@@ -128,10 +137,12 @@
 					}
 				})
 			);
+			if (isLatest()) staleReport = report;
 		} catch (e) {
+			if (!isLatest()) return;
 			staleError = e instanceof MiruApiError ? e.detail : 'Failed to load stale media report';
 		} finally {
-			loadingStale = false;
+			if (isLatest()) loadingStale = false;
 		}
 	}
 

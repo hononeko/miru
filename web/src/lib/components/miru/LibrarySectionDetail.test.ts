@@ -133,4 +133,50 @@ describe('LibrarySectionDetail', () => {
 		expect(screen.getByText('Growth History')).toBeTruthy();
 		expect(getSpy).not.toHaveBeenCalled();
 	});
+
+	it("drops the previous section's stale report when another section is selected, even if it answers last", async () => {
+		const answer = new Map<string, (report: unknown) => void>();
+		vi.spyOn(api, 'GET').mockImplementation(((_path: string, init: { params: { path: { id: string } } }) =>
+			new Promise((resolve) => {
+				answer.set(init.params.path.id, (items) =>
+					resolve({
+						data: {
+							sectionId: init.params.path.id,
+							unwatchedDays: 180,
+							sort: 'size_desc',
+							totalStaleCount: 1,
+							totalReclaimableBytes: 1_000,
+							neverPlayedCount: 1,
+							items
+						},
+						response: new Response(null, { status: 200 })
+					})
+				);
+			})) as never);
+		const staleItem = (title: string) => [
+			{ ratingKey: title, sectionKey: '1', mediaType: 'movie', title, addedAtMs: 1, playCount: 0, fileSizeBytes: 1_000 }
+		];
+		const section = (key: string) => {
+			const stats = makeStats([]);
+			return { ...stats, section: { ...stats.section, id: key, sectionKey: key, title: `Section ${key}` } };
+		};
+
+		const { rerender } = render(LibrarySectionDetail, { props: { stats: section('1'), recentItems: [] } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Hygiene / Stale Media' }));
+		answer.get('1')!(staleItem('Old Movie'));
+		expect(await screen.findByRole('button', { name: /Old Movie/ })).toBeTruthy();
+
+		await rerender({ stats: section('2'), recentItems: [] });
+		expect(screen.queryByRole('button', { name: /Old Movie/ })).toBeNull();
+		expect(screen.getByText('Analyzing library hygiene…')).toBeTruthy();
+
+		// Section 3 is selected before section 2 has answered
+		await rerender({ stats: section('3'), recentItems: [] });
+		answer.get('3')!(staleItem('Third Movie'));
+		expect(await screen.findByRole('button', { name: /Third Movie/ })).toBeTruthy();
+		answer.get('2')!(staleItem('Second Movie'));
+		await new Promise((resolve) => setTimeout(resolve));
+		expect(screen.getByRole('button', { name: /Third Movie/ })).toBeTruthy();
+		expect(screen.queryByRole('button', { name: /Second Movie/ })).toBeNull();
+	});
 });

@@ -96,6 +96,20 @@ describe('Miru telemetry formatters', () => {
 		expect(validatePassword('ValidPassword1')).toBeNull();
 	});
 
+	it('shows midnight and noon as 12 in 12-hour format', () => {
+		const at = (hours: number, minutes: number) =>
+			formatDateTime(new Date(2026, 10, 22, hours, minutes).getTime(), { dateFormat: 'iso', timeFormat: '12h' }).slice(11);
+
+		expect(at(0, 0)).toBe('12:00 AM');
+		expect(at(0, 7)).toBe('12:07 AM');
+		expect(at(1, 0)).toBe('1:00 AM');
+		expect(at(11, 59)).toBe('11:59 AM');
+		expect(at(12, 0)).toBe('12:00 PM');
+		expect(at(12, 30)).toBe('12:30 PM');
+		expect(at(13, 0)).toBe('1:00 PM');
+		expect(at(23, 59)).toBe('11:59 PM');
+	});
+
 	it('formats dates, times, short dates, relative toggle, and preference preview per user prefs', () => {
 		// Construct local date/time deterministically so tests do not depend on machine TZ
 		const sample = new Date(2026, 10, 22, 21, 5, 0).getTime(); // Nov 22, 2026 21:05 local

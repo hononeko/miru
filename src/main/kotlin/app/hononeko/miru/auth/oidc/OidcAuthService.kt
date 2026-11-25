@@ -135,6 +135,9 @@ class OidcAuthService(
             val role = mapGroupsToRole(enriched.claims.groups).bind()
 
             val (account, emailChanged) = upsertOidcAccount(enriched, role, now).bind()
+            if (account.role != MiruRole.ADMIN.name) {
+                warnIfNoAdmin().bind()
+            }
             // Links only need recomputing when the email or its verification changed; the media user sync
             // keeps them current otherwise.
             val linkedMediaUserIds =
@@ -350,6 +353,19 @@ class OidcAuthService(
                         updatedAtMs = nowMs,
                     )
                 accountRepository.insert(record).bind() to true
+            }
+        }
+
+    private suspend fun warnIfNoAdmin(): Either<MiruError, Unit> =
+        either {
+            if (accountRepository.countAdmins().bind() == 0L) {
+                val orLocalAdmin =
+                    if (authConfig.localLoginEnabled) {
+                        ", or set MIRU_ADMIN_USERNAME and MIRU_ADMIN_PASSWORD and restart Miru"
+                    } else {
+                        ""
+                    }
+                logger.warn("Miru has no admin account. To get one, sign in as a member of OIDC_ADMIN_GROUPS{}", orLocalAdmin)
             }
         }
 

@@ -1287,4 +1287,68 @@ class OidcAuthRoutesTest :
                 }
             }
         }
+
+        test("does not reopen first-run setup when the groups take the admin role from the only admin") {
+            val boss =
+                MockIdpScenario(
+                    subject = "sub-boss",
+                    preferredUsername = "boss",
+                    email = "boss@miru.local",
+                    groupsInIdToken = listOf("miru-admins"),
+                )
+            var scenario = boss
+            val expectedChallengeHolder = mutableMapOf<String, String>()
+            val appender = ListAppender<ILoggingEvent>().apply { start() }
+            val serviceLogger = LoggerFactory.getLogger(OidcAuthService::class.java) as Logger
+
+            fun noAdminWarnings() = appender.list.toList().count { it.formattedMessage.startsWith("Miru has no admin account") }
+
+            createOidcHarness(
+                mode = AuthMode.LOCAL,
+                allowLocalLogin = true,
+                scenarioProvider = { scenario },
+                expectedChallengeHolder = expectedChallengeHolder,
+            ).use { harness ->
+                testApplication {
+                    setupApp(harness)
+                    val client = createClient { followRedirects = false }
+                    serviceLogger.addAppender(appender)
+
+                    suspend fun setupRequired(): Boolean =
+                        MiruJson
+                            .decodeFromString<AuthProvidersResponse>(client.get("/api/v1/auth/providers").bodyAsText())
+                            .setupRequired
+
+                    suspend fun trySetup(): HttpStatusCode =
+                        client
+                            .post("/api/v1/auth/setup") {
+                                contentType(ContentType.Application.Json)
+                                setBody(MiruJson.encodeToString(SetupAdminRequest("intruder", "Some-password-123")))
+                            }.status
+
+                    setupRequired() shouldBe true
+                    client.me(client.signInWithOidc("code-1", expectedChallengeHolder)).role shouldBe MiruRole.ADMIN
+                    setupRequired() shouldBe false
+                    noAdminWarnings() shouldBe 0
+
+                    scenario = boss.copy(groupsInIdToken = listOf("miru-users"))
+                    client.me(client.signInWithOidc("code-2", expectedChallengeHolder)).role shouldBe MiruRole.USER
+                    harness.accountRepo.countAdmins().shouldBeRight() shouldBe 0L
+                    noAdminWarnings() shouldBe 1
+                    setupRequired() shouldBe false
+                    trySetup() shouldBe HttpStatusCode.Conflict
+                    harness.accountRepo.findAll().shouldBeRight() shouldHaveSize 1
+
+                    // The admin group is the way back.
+                    scenario = boss
+                    client.me(client.signInWithOidc("code-3", expectedChallengeHolder)).role shouldBe MiruRole.ADMIN
+
+                    // Other users signing in while there is an admin is nothing to warn about.
+                    scenario = MockIdpScenario(subject = "sub-user", preferredUsername = "user", email = "user@miru.local")
+                    client.me(client.signInWithOidc("code-4", expectedChallengeHolder)).role shouldBe MiruRole.USER
+                    noAdminWarnings() shouldBe 1
+                }
+            }
+            serviceLogger.detachAppender(appender)
+        }
     })

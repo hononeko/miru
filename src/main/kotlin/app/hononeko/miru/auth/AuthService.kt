@@ -125,9 +125,13 @@ class AuthService(
             }
         }
 
+    /**
+     * Anyone who can reach Miru can complete first-run setup, so it is only open before the first account exists.
+     * An instance that loses its last admin, for example when SSO groups change, must not open it again.
+     */
     suspend fun isSetupRequired(): Either<MiruError, Boolean> =
         either {
-            authConfig.localLoginEnabled && accountRepository.countAdmins().bind() == 0L
+            authConfig.localLoginEnabled && accountRepository.count().bind() == 0L
         }
 
     suspend fun getAuthProviders(): Either<MiruError, AuthProvidersInfo> =
@@ -157,9 +161,8 @@ class AuthService(
 
             val created =
                 setupMutex.withLock {
-                    val existingAdmins = accountRepository.countAdmins().bind()
-                    ensure(existingAdmins == 0L) {
-                        MiruError.Conflict("Initial admin account has already been configured")
+                    ensure(accountRepository.count().bind() == 0L) {
+                        MiruError.Conflict("First-run setup is only available before the first account exists")
                     }
 
                     val validated = validateCredentials(username, password, email).bind()

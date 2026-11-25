@@ -135,7 +135,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Create the initial administrator account during first-run setup */
+        /**
+         * Create the initial administrator account during first-run setup
+         * @description Only available before the first account exists.
+         */
         post: operations["setupInitialAdmin"];
         delete?: never;
         options?: never;
@@ -1015,6 +1018,7 @@ export interface components {
             oidcDisplayName: string;
             oidcLoginUrl?: string | null;
             oidcLogoutUrl?: string | null;
+            /** @description Whether first-run setup is available, that is, local auth is enabled and no account exists yet. */
             setupRequired: boolean;
         };
         SetupAdminRequest: {
@@ -2385,7 +2389,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
-            /** @description Initial administrator already configured or local auth disabled */
+            /** @description An account already exists or local auth disabled */
             409: {
                 headers: {
                     [name: string]: unknown;

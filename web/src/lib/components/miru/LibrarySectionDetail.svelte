@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { HardDrive, Sparkles } from 'lucide-svelte';
+	import { HardDrive, Sparkles } from '@lucide/svelte';
 	import { api, MiruApiError, unwrap } from '$api/client';
 	import type {
 		LibraryStatsResponse,

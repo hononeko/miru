@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Link2, RefreshCw, Server } from 'lucide-svelte';
+	import { Link2, RefreshCw, Server } from '@lucide/svelte';
 	import { api, MiruApiError, unwrap } from '$api/client';
 	import type {
 		LibrarySectionResponse,

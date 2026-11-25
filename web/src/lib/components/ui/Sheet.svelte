@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { Dialog } from 'bits-ui';
-	import { X } from 'lucide-svelte';
+	import { X } from '@lucide/svelte';
 	import { sheetDrag } from '$lib/actions/sheetDrag';
 
 	type Props = {

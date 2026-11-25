@@ -18,7 +18,7 @@
 		SlidersHorizontal,
 		Trash2,
 		Upload
-	} from 'lucide-svelte';
+	} from '@lucide/svelte';
 	import { api, MiruApiError, unwrap } from '$api/client';
 	import type {
 		AccountResponse,

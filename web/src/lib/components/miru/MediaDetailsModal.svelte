@@ -12,7 +12,7 @@
 		Subtitles,
 		History,
 		AlertCircle
-	} from 'lucide-svelte';
+	} from '@lucide/svelte';
 	import Badge from '$components/ui/Badge.svelte';
 	import Button from '$components/ui/Button.svelte';
 	import ProxiedImage from './ProxiedImage.svelte';

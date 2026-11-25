@@ -13,7 +13,7 @@
 		Send,
 		Trash2,
 		Webhook
-	} from 'lucide-svelte';
+	} from '@lucide/svelte';
 	import { api, MiruApiError, unwrap } from '$api/client';
 	import type {
 		WebhookDeliveryDto,

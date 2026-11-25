@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
 	import { page } from '$app/state';
-	import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Search, X } from 'lucide-svelte';
+	import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Search, X } from '@lucide/svelte';
 	import { api, MiruApiError, unwrap } from '$api/client';
 	import type { HistoryDetailResponse, HistoryItemDto, UserSummaryDto } from '$api/types';
 	import Badge from '$components/ui/Badge.svelte';

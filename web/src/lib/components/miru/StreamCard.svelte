@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { OctagonX } from 'lucide-svelte';
+	import { OctagonX } from '@lucide/svelte';
 	import type { ActiveStreamDto } from '$api/types';
 	import Badge from '$components/ui/Badge.svelte';
 	import Button from '$components/ui/Button.svelte';

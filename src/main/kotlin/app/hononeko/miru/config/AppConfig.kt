@@ -491,7 +491,7 @@ object AppConfigLoader {
         get: (String, String, String?) -> String?,
         errors: MutableMap<String, String>,
     ): CookieSecureMode {
-        val raw = get("AUTH_COOKIE_SECURE", "miru.auth.cookieSecure", "COOKIE_SECURE") ?: return CookieSecureMode.AUTO
+        val raw = get("AUTH_COOKIE_SECURE", "miru.auth.cookieSecure", null) ?: return CookieSecureMode.AUTO
         return when (raw.lowercase()) {
             "auto" -> CookieSecureMode.AUTO
             "true", "always" -> CookieSecureMode.ALWAYS

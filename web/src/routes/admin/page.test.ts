@@ -343,6 +343,53 @@ describe('Admin console Stream Guardrails & Audit Log', () => {
 		});
 	});
 
+	function showAccounts(accounts: AccountResponse[]) {
+		const others = vi.mocked(api.GET).getMockImplementation()!;
+		vi.mocked(api.GET).mockImplementation(((url: string, ...rest: unknown[]) =>
+			url === '/api/v1/admin/accounts'
+				? Promise.resolve({ data: { accounts, emailLinkingEnabled: false }, response: new Response(null, { status: 200 }) })
+				: (others as (...args: unknown[]) => unknown)(url, ...rest)) as never);
+	}
+
+	it('protects the own account although there is another active admin', async () => {
+		const [admin, bob, carol] = makeAccounts();
+		showAccounts([admin, { ...bob, role: 'ADMIN' }, carol]);
+		render(AdminPage);
+		await waitFor(() => expect(screen.getByText('bob')).toBeTruthy());
+
+		const [ownDisable, bobDisable] = screen.getAllByRole('button', { name: 'Disable' }) as HTMLButtonElement[];
+		expect(ownDisable.disabled).toBe(true);
+		expect(ownDisable.title).toBe('Cannot disable your own account');
+		expect(bobDisable.disabled).toBe(false);
+		expect(bobDisable.title).toBe('');
+
+		await fireEvent.click(screen.getAllByRole('button', { name: 'Manage' })[0]);
+		await waitFor(() => expect(screen.getByRole('heading', { name: 'Manage Account · admin' })).toBeTruthy());
+		expect((screen.getByLabelText(/Account Role/) as HTMLSelectElement).disabled).toBe(true);
+		expect(screen.getByText('Cannot demote your own account.')).toBeTruthy();
+		const disableSwitch = screen.getByRole('switch', { name: 'Disable Account' }) as HTMLButtonElement;
+		expect(disableSwitch.disabled).toBe(true);
+		expect(screen.getByText('Cannot disable your own account')).toBeTruthy();
+	});
+
+	it('protects the last active admin from others and lets a disabled admin be enabled', async () => {
+		authStore.principal = { ...authStore.principal!, accountId: 'acc-elsewhere' };
+		const [admin, bob, carol] = makeAccounts();
+		showAccounts([admin, { ...bob, role: 'ADMIN', disabled: true }, carol]);
+		render(AdminPage);
+		await waitFor(() => expect(screen.getByText('bob')).toBeTruthy());
+
+		const [adminDisable] = screen.getAllByRole('button', { name: 'Disable' }) as HTMLButtonElement[];
+		expect(adminDisable.disabled).toBe(true);
+		expect(adminDisable.title).toBe('Cannot disable the last active admin account');
+		expect((screen.getByRole('button', { name: 'Enable' }) as HTMLButtonElement).disabled).toBe(false);
+
+		await fireEvent.click(screen.getAllByRole('button', { name: 'Manage' })[0]);
+		await waitFor(() => expect(screen.getByRole('heading', { name: 'Manage Account · admin' })).toBeTruthy());
+		expect((screen.getByLabelText(/Account Role/) as HTMLSelectElement).disabled).toBe(true);
+		expect(screen.getByText('Cannot demote the last active admin account.')).toBeTruthy();
+	});
+
 	it('sets the role of an SSO account and hands it back to its groups', async () => {
 		let carol = makeAccounts()[2];
 		const patchSpy = vi.spyOn(api, 'PATCH').mockImplementation((async (

@@ -194,6 +194,41 @@ describe('WebhooksPanel', () => {
 			expect(screen.getByText('Test Delivered')).toBeTruthy();
 			expect(screen.getByText('HTTP 204')).toBeTruthy();
 		});
+
+		const feedback = screen.getByText('Test Delivered').closest('[role="status"]')!;
+		expect(feedback.className).toContain('text-direct-play');
+		expect(feedback.className).not.toContain('text-danger');
+	});
+
+	it('marks a failed test delivery as a failure', async () => {
+		vi.spyOn(api, 'POST').mockResolvedValueOnce({
+			data: {
+				id: 'del-test',
+				targetId: 'wh-1',
+				targetName: 'Media Notifier',
+				eventId: 'evt-test',
+				eventType: 'webhook.test',
+				status: 'FAILED',
+				attemptCount: 1,
+				httpStatus: 503,
+				durationMs: 19,
+				errorMessage: 'Receiver is down',
+				createdAtMs: Date.now(),
+				completedAtMs: Date.now()
+			},
+			response: new Response(null, { status: 200 })
+		} as never);
+
+		render(WebhooksPanel);
+		await waitFor(() => expect(screen.getByRole('button', { name: /Send Test/i })).toBeTruthy());
+		await fireEvent.click(screen.getByRole('button', { name: /Send Test/i }));
+		await waitFor(() => expect(screen.getByText('Test Failed')).toBeTruthy());
+
+		const feedback = screen.getByText('Test Failed').closest('[role="status"]')!;
+		expect(feedback.className).toContain('text-danger');
+		expect(feedback.className).not.toContain('text-direct-play');
+		expect(feedback.textContent).toContain('HTTP 503');
+		expect(feedback.textContent).toContain('Receiver is down');
 	});
 
 	it('edits an existing target without clobbering redacted URL and deletes with confirmation', async () => {

@@ -64,7 +64,7 @@ object PlexMapper {
         val location = mapStreamLocation(metadata.session?.location, metadata.player?.local)
 
         return ActiveStreamSnapshot(
-            sessionId = resolveSessionId(metadata),
+            sessionId = metadata.session?.id?.takeIf { it.isNotBlank() },
             sessionKey = metadata.sessionKey?.takeIf { it.isNotBlank() },
             state = mapPlaybackState(metadata.player?.state),
             viewOffsetMs = metadata.viewOffset ?: 0L,
@@ -662,11 +662,6 @@ private fun parseStreamDecision(raw: String?): StreamDecision? =
         "transcode" -> StreamDecision.TRANSCODE
         else -> null
     }
-
-private fun resolveSessionId(metadata: PlexMetadataDto): String =
-    metadata.session?.id?.takeIf { it.isNotBlank() }
-        ?: metadata.sessionKey?.takeIf { it.isNotBlank() }
-        ?: "${metadata.ratingKey.orEmpty()}:${metadata.player?.machineIdentifier.orEmpty()}"
 
 private fun selectPrimaryMedia(media: List<PlexMediaDto>?): PlexMediaDto? =
     media?.firstOrNull { it.selected == true } ?: media?.firstOrNull()

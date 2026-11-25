@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import { api, MiruApiError, unwrap } from '$api/client';
 	import type {
 		ActiveStreamDto,
@@ -25,6 +26,7 @@
 	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
 	import { streamsStore } from '$stores/streams.svelte';
+	import { TerminationTracker } from '$stores/terminations.svelte';
 	import {
 		cn,
 		formatBandwidthKbps,
@@ -36,7 +38,7 @@
 		statBarWidth,
 		streamKey
 	} from '$lib/utils';
-	import { CheckCircle2, Link2, Radio, Server, Tv, X } from '@lucide/svelte';
+	import { CircleAlert, CheckCircle2, Link2, Radio, Server, Tv, X } from '@lucide/svelte';
 
 	let lastDefaultRange = preferencesStore.prefs.defaultStatsRange;
 	let range = $state<StatsRange>(lastDefaultRange);
@@ -50,14 +52,11 @@
 	let plexStatus = $state<PlexConnectionStatus | null>(null);
 	let terminateTarget = $state<ActiveStreamDto | null>(null);
 	let terminateSheetOpen = $state(false);
-	let terminatingKeys = $state<string[]>([]);
-	let terminationNotice = $state<{ message: string; reason: string } | null>(null);
+	const terminations = new TerminationTracker();
+	onDestroy(() => terminations.dispose());
 
 	$effect(() => {
-		const activeKeys = new Set(streamsStore.streams.map((s) => streamKey(s)));
-		if (terminatingKeys.some((key) => !activeKeys.has(key))) {
-			terminatingKeys = terminatingKeys.filter((key) => activeKeys.has(key));
-		}
+		terminations.sync(new Set(streamsStore.streams.map((s) => streamKey(s))));
 	});
 
 	function openTerminateSheet(stream: ActiveStreamDto) {
@@ -66,15 +65,8 @@
 	}
 
 	function handleStreamTerminated(result: TerminateStreamResponse, stream: ActiveStreamDto) {
-		const key = streamKey(stream);
-		if (!terminatingKeys.includes(key)) {
-			terminatingKeys = [...terminatingKeys, key];
-		}
 		const userLabel = stream.user.displayName || stream.user.username || 'viewer';
-		terminationNotice = {
-			message: `Termination requested for ${userLabel} — ${stream.media.title}`,
-			reason: result.reason
-		};
+		terminations.start(streamKey(stream), `${userLabel} — ${stream.media.title}`, result.reason);
 	}
 
 	$effect(() => {
@@ -476,30 +468,45 @@
 			{/if}
 		</div>
 
-		{#if terminationNotice}
+		{#each terminations.notices as notice (notice.key)}
+			{@const NoticeIcon = notice.overdue ? CircleAlert : CheckCircle2}
 			<div
-				role="status"
-				class="animate-fade-up flex items-start justify-between gap-3 rounded-xl border border-direct-play/40 bg-direct-play-soft px-3.5 py-2.5 text-xs"
+				role={notice.overdue ? 'alert' : 'status'}
+				class={cn(
+					'animate-fade-up flex items-start justify-between gap-3 rounded-xl border px-3.5 py-2.5 text-xs',
+					notice.overdue
+						? 'border-warning/40 bg-warning-soft'
+						: 'border-direct-play/40 bg-direct-play-soft'
+				)}
 			>
 				<div class="flex items-start gap-2.5">
-					<CheckCircle2 class="mt-0.5 h-4 w-4 shrink-0 text-direct-play" />
+					<NoticeIcon
+						class={cn('mt-0.5 h-4 w-4 shrink-0', notice.overdue ? 'text-warning' : 'text-direct-play')}
+					/>
 					<div>
-						<p class="font-heading font-semibold text-fg-primary">{terminationNotice.message}</p>
+						<p class="font-heading font-semibold text-fg-primary">
+							{notice.overdue ? `Still active: ${notice.label}` : `Termination requested for ${notice.label}`}
+						</p>
 						<p class="mt-0.5 text-[11px] text-fg-secondary">
-							Viewer message: &ldquo;{terminationNotice.reason}&rdquo; · Waiting for SSE stream removal
+							{#if notice.overdue}
+								Plex accepted the termination, but the stream has not stopped. You can terminate it again.
+							{:else}
+								Viewer message: &ldquo;{notice.reason}&rdquo; · Buffered content can keep playing for a few
+								seconds until the app checks in with Plex.
+							{/if}
 						</p>
 					</div>
 				</div>
 				<button
 					type="button"
-					onclick={() => (terminationNotice = null)}
+					onclick={() => terminations.dismiss(notice.key)}
 					aria-label="Dismiss termination notice"
 					class="cursor-pointer rounded-md p-1 text-fg-muted hover:bg-surface hover:text-fg-primary"
 				>
 					<X class="h-3.5 w-3.5" />
 				</button>
 			</div>
-		{/if}
+		{/each}
 
 		{#if streamsStore.streams.length === 0}
 			<div
@@ -520,7 +527,7 @@
 					<StreamCard
 						{stream}
 						onTerminate={authStore.isAdmin ? openTerminateSheet : undefined}
-						terminating={terminatingKeys.includes(streamKey(stream))}
+						terminating={terminations.isTerminating(streamKey(stream))}
 					/>
 				{/each}
 

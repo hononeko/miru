@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalCoroutinesApi::class)
+
 package app.hononeko.miru.http
 
 import app.hononeko.miru.MiruJson
@@ -33,6 +35,7 @@ import app.hononeko.miru.persistence.model.MediaMetadataRecord
 import app.hononeko.miru.persistence.model.MediaServerRecord
 import app.hononeko.miru.persistence.model.PlayerRecord
 import app.hononeko.miru.persistence.model.StreamTechRecord
+import app.hononeko.miru.persistence.model.StreamTerminationAuditRecord
 import app.hononeko.miru.persistence.model.TerminationAuditAction
 import app.hononeko.miru.persistence.model.TerminationAuditFilter
 import app.hononeko.miru.persistence.model.TerminationAuditSource
@@ -45,6 +48,7 @@ import app.hononeko.miru.persistence.repository.ExposedGuardrailRuleRepository
 import app.hononeko.miru.persistence.repository.ExposedMediaServerRepository
 import app.hononeko.miru.persistence.repository.ExposedStreamTerminationAuditRepository
 import app.hononeko.miru.persistence.repository.ExposedUserRepository
+import app.hononeko.miru.persistence.repository.StreamTerminationAuditRepository
 import app.hononeko.miru.service.StreamControlService
 import app.hononeko.miru.service.StreamGuardrailEvaluator
 import arrow.core.Either
@@ -70,6 +74,11 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.runTest
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicInteger
@@ -317,7 +326,7 @@ class StreamControlRoutesTest :
                         }
                     tooLong.status shouldBe HttpStatusCode.BadRequest
 
-                    // 502 when upstream Plex fails without writing a TERMINATED audit row or leaking token
+                    // 502 when upstream Plex fails, recorded as TERMINATE_FAILED and without leaking token
                     harness.adapter.terminateResponse = { _, _ ->
                         MiruError.UpstreamUnavailable("plex", "Connection refused $TEST_PLEX_TOKEN").left()
                     }
@@ -329,7 +338,28 @@ class StreamControlRoutesTest :
                         }
                     upstreamFail.status shouldBe HttpStatusCode.BadGateway
                     upstreamFail.bodyAsText() shouldNotContain TEST_PLEX_TOKEN
-                    harness.auditRepo.query(TerminationAuditFilter()).shouldBeRight().totalCount shouldBe 0L
+                    val failedAudit =
+                        harness.auditRepo
+                            .query(TerminationAuditFilter())
+                            .shouldBeRight()
+                            .items
+                            .single()
+                    failedAudit.source shouldBe TerminationAuditSource.MANUAL
+                    failedAudit.action shouldBe TerminationAuditAction.TERMINATE_FAILED
+                    failedAudit.actorName shouldBe "admin"
+                    failedAudit.errorDetail.shouldNotBeNull()
+
+                    // 502 explains a refusal that Plex gives a reason for
+                    harness.adapter.terminateResponse = { _, _ ->
+                        MiruError.UpstreamAuthError("plex", "HTTP 401", detail = "Feature not enabled").left()
+                    }
+                    val refused =
+                        client.post("/api/v1/streams/plex-sess-10/terminate") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                        }
+                    refused.status shouldBe HttpStatusCode.BadGateway
+                    MiruJson.decodeFromString<ProblemDetails>(refused.bodyAsText()).detail shouldBe "Feature not enabled"
+                    harness.adapter.terminatedCalls.clear()
 
                     // 200 with custom reason
                     harness.adapter.terminateResponse = { _, _ -> Unit.right() }
@@ -356,13 +386,12 @@ class StreamControlRoutesTest :
 
                     harness.adapter.terminatedCalls shouldContainExactly
                         listOf(
-                            "plex-sess-10" to "Maintenance",
                             "plex-sess-10" to "Please switch to 1080p",
                             "plex-sess-10" to StreamControlService.DEFAULT_MANUAL_TERMINATION_REASON,
                         )
 
                     val auditPage = harness.auditRepo.query(TerminationAuditFilter()).shouldBeRight()
-                    auditPage.totalCount shouldBe 2L
+                    auditPage.totalCount shouldBe 4L
                     val latestAudit = auditPage.items.first()
                     latestAudit.source shouldBe TerminationAuditSource.MANUAL
                     latestAudit.action shouldBe TerminationAuditAction.TERMINATED
@@ -371,6 +400,57 @@ class StreamControlRoutesTest :
                     latestAudit.mediaTitle shouldBe "Severance — S01E01 · Good News About Hell"
                     latestAudit.ruleType.shouldBeNull()
                 }
+            }
+        }
+
+        test("a stream without a Plex session ID is not terminated by any other ID") {
+            createHarness().use { harness ->
+                val session = seedStreamFixture(harness).copy(sessionId = null)
+                harness.activeSessionRepo.upsert(session).shouldBeRight()
+                val admin = harness.authService.setupInitialAdmin("admin", "Admin-password-123").shouldBeRight()
+
+                testApplication {
+                    setupControlApp(harness)
+                    val response =
+                        client.post("/api/v1/streams/10/terminate") {
+                            cookie(SESSION_COOKIE_NAME, admin.signedToken)
+                        }
+                    response.status shouldBe HttpStatusCode.Conflict
+                }
+
+                harness.adapter.terminatedCalls.shouldBeEmpty()
+                harness.auditRepo
+                    .query(TerminationAuditFilter())
+                    .shouldBeRight()
+                    .items
+                    .single()
+                    .action shouldBe TerminationAuditAction.TERMINATE_FAILED
+            }
+        }
+
+        test("a failing audit log does not turn an accepted termination into an error") {
+            createHarness().use { harness ->
+                seedStreamFixture(harness)
+                val admin = harness.authService.setupInitialAdmin("admin", "Admin-password-123").shouldBeRight()
+                val service =
+                    StreamControlService(
+                        adapter = harness.adapter,
+                        activeSessionRepository = harness.activeSessionRepo,
+                        userRepository = harness.userRepo,
+                        guardrailRuleRepository = harness.guardrailRepo,
+                        auditRepository =
+                            object : StreamTerminationAuditRepository by harness.auditRepo {
+                                override suspend fun insert(record: StreamTerminationAuditRecord) =
+                                    MiruError.PersistenceError("stream_termination_audit_insert", "disk full").left()
+                            },
+                    )
+
+                runTest(UnconfinedTestDispatcher()) {
+                    val event = async { service.terminatedEvents.first() }
+                    service.terminateStream(admin.principal, "plex-sess-10", "Maintenance").shouldBeRight()
+                    event.await().reason shouldBe "Maintenance"
+                }
+                harness.adapter.terminatedCalls shouldContainExactly listOf("plex-sess-10" to "Maintenance")
             }
         }
 

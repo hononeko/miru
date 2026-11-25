@@ -3,6 +3,7 @@ package app.hononeko.miru.session
 import app.hononeko.miru.adapter.ActiveStreamSnapshot
 import app.hononeko.miru.adapter.MediaServerAdapter
 import app.hononeko.miru.adapter.MediaServerEvent
+import app.hononeko.miru.adapter.PlaybackState
 import app.hononeko.miru.domain.error.MiruError
 import arrow.core.Either
 import arrow.core.left
@@ -23,6 +24,7 @@ import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withTimeoutOrNull
 import app.hononeko.miru.logging.kv
 import org.slf4j.LoggerFactory
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -39,11 +41,24 @@ enum class ReconcileTrigger {
     RECONNECT,
 }
 
+/** A playback that the media server has reported as stopped. */
+data class StoppedPlayback(
+    val sessionKey: String,
+    val ratingKey: String? = null,
+) {
+    fun matches(
+        sessionKey: String?,
+        ratingKey: String,
+    ): Boolean = this.sessionKey == sessionKey && (this.ratingKey == null || this.ratingKey == ratingKey)
+}
+
 /** Receives the authoritative list of active sessions after each successful reconciliation. */
 fun interface ActiveSessionsSink {
+    /** [stopped] are the playbacks reported as stopped before [snapshots] were fetched. */
     suspend fun onSnapshots(
         snapshots: List<ActiveStreamSnapshot>,
         trigger: ReconcileTrigger,
+        stopped: Set<StoppedPlayback>,
     )
 }
 
@@ -54,6 +69,7 @@ class LoggingActiveSessionsSink : ActiveSessionsSink {
     override suspend fun onSnapshots(
         snapshots: List<ActiveStreamSnapshot>,
         trigger: ReconcileTrigger,
+        stopped: Set<StoppedPlayback>,
     ) {
         logger.debug("Reconciled active sessions {} {}", kv("trigger", trigger.name), kv("sessions", snapshots.size))
     }
@@ -65,7 +81,8 @@ class LoggingActiveSessionsSink : ActiveSessionsSink {
  * All `fetchActiveSessions()` calls are serialized through a single actor so bursts, timer ticks and
  * reconnects never fetch concurrently. `playing` notifications are debounced ([debounceWindow] quiet period,
  * bounded by [maxWait]); a fallback reconcile runs whenever [interval] elapses without one, catching clients
- * that vanish without emitting a `stopped` notification.
+ * that vanish without emitting a `stopped` notification. `stopped` notifications are passed to the [sink] with the
+ * next fetched sessions, so that it can tell a stream that ended from one that is briefly missing.
  */
 class SessionReconciler(
     private val adapter: MediaServerAdapter,
@@ -86,6 +103,7 @@ class SessionReconciler(
     private val logger = LoggerFactory.getLogger(SessionReconciler::class.java)
     private val lock = Any()
     private var job: Job? = null
+    private val reportedStops: MutableSet<StoppedPlayback> = ConcurrentHashMap.newKeySet()
 
     /** Starts the reconciler. Idempotent: repeated calls return the already-running job. */
     fun start(): Job =
@@ -109,7 +127,10 @@ class SessionReconciler(
                     .events()
                     .filterIsInstance<MediaServerEvent.PlayingEvent>()
                     .catch { e -> logger.warn("Media server event stream failed: {}", e.message) }
-                    .collect { burst.send(Unit) }
+                    .collect { event ->
+                        trackStop(event)
+                        burst.send(Unit)
+                    }
             }
             launch(CoroutineName("session-reconciler-debounce")) { debounce(burst, triggers) }
             launch(CoroutineName("session-reconciler-reconnect")) {
@@ -144,8 +165,19 @@ class SessionReconciler(
         }
     }
 
+    private fun trackStop(event: MediaServerEvent.PlayingEvent) {
+        if (event.state == PlaybackState.STOPPED) {
+            reportedStops += StoppedPlayback(event.sessionKey, event.ratingKey)
+        } else {
+            // Resumed, or moved on to another item: the earlier stop no longer says anything about this session.
+            reportedStops.removeIf { it.sessionKey == event.sessionKey }
+        }
+    }
+
     private suspend fun reconcile(trigger: ReconcileTrigger) {
         try {
+            // Taken before the fetch: a stop reported while it runs may be newer than the fetched sessions.
+            val stopped = reportedStops.toSet()
             adapter.fetchActiveSessions().fold(
                 ifLeft = { error ->
                     logger.warn(
@@ -157,7 +189,11 @@ class SessionReconciler(
                 },
                 ifRight = { snapshots ->
                     notifyReconcileOutcome(Unit.right())
-                    sink.onSnapshots(snapshots, trigger)
+                    sink.onSnapshots(snapshots, trigger, stopped)
+                    // A stop is kept for as long as the server still lists the session.
+                    stopped
+                        .filterNot { stop -> snapshots.any { stop.matches(it.sessionKey, it.media.ratingKey) } }
+                        .forEach(reportedStops::remove)
                 },
             )
         } catch (e: CancellationException) {

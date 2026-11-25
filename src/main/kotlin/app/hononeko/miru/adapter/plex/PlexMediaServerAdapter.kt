@@ -28,14 +28,15 @@ import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.ResponseException
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.HttpRequestBuilder
-import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
+import io.ktor.client.request.request
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsBytes
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
@@ -548,6 +549,8 @@ class PlexMediaServerAdapter(
                 operation = "terminate session",
                 notFoundResource = "Stream session",
                 notFoundId = trimmedSessionId,
+                method = HttpMethod.Post,
+                mapStatus = ::mapTerminationRefusal,
             ) {
                 parameter("sessionId", trimmedSessionId)
                 parameter("reason", trimmedReason)
@@ -693,17 +696,21 @@ class PlexMediaServerAdapter(
             }
         }
 
+    @Suppress("LongParameterList")
     private suspend inline fun executeRequest(
         url: String,
         acceptHeader: String,
         operation: String,
         notFoundResource: String,
         notFoundId: String? = null,
+        method: HttpMethod = HttpMethod.Get,
+        noinline mapStatus: (HttpStatusCode) -> MiruError? = { null },
         crossinline block: HttpRequestBuilder.() -> Unit = {},
     ): Either<MiruError, HttpResponse> {
         val response =
             try {
-                httpClient.get(url) {
+                httpClient.request(url) {
+                    this.method = method
                     header(PLEX_TOKEN_HEADER, config.token)
                     header(HttpHeaders.Accept, acceptHeader)
                     block()
@@ -711,12 +718,15 @@ class PlexMediaServerAdapter(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ResponseException) {
-                return mapErrorStatus(
-                    status = e.response.status,
-                    operation = operation,
-                    notFoundResource = notFoundResource,
-                    notFoundId = notFoundId,
-                ).left()
+                val error =
+                    mapStatus(e.response.status)
+                        ?: mapErrorStatus(
+                            status = e.response.status,
+                            operation = operation,
+                            notFoundResource = notFoundResource,
+                            notFoundId = notFoundId,
+                        )
+                return error.left()
             } catch (e: Exception) {
                 return MiruError
                     .UpstreamUnavailable(
@@ -729,14 +739,40 @@ class PlexMediaServerAdapter(
         return if (response.status.isSuccess()) {
             response.right()
         } else {
-            mapErrorStatus(
-                status = response.status,
-                operation = operation,
-                notFoundResource = notFoundResource,
-                notFoundId = notFoundId,
-            ).left()
+            val error =
+                mapStatus(response.status)
+                    ?: mapErrorStatus(
+                        status = response.status,
+                        operation = operation,
+                        notFoundResource = notFoundResource,
+                        notFoundId = notFoundId,
+                    )
+            error.left()
         }
     }
+
+    /**
+     * Statuses that Plex documents for `POST /status/sessions/terminate` with a meaning of their own:
+     * 401 is "Server does not have the feature enabled" and 403 is "sessionId is empty".
+     */
+    private fun mapTerminationRefusal(status: HttpStatusCode): MiruError? =
+        when (status) {
+            HttpStatusCode.Unauthorized ->
+                MiruError.UpstreamAuthError(
+                    provider = PROVIDER_NAME,
+                    message = "Plex refused to terminate the session: the server does not have the feature enabled (HTTP 401)",
+                    detail = TERMINATION_NOT_ENABLED_DETAIL,
+                )
+
+            HttpStatusCode.Forbidden ->
+                MiruError.UpstreamAuthError(
+                    provider = PROVIDER_NAME,
+                    message = "Plex refused to terminate the session: it did not accept the session ID (HTTP 403)",
+                    detail = TERMINATION_SESSION_REJECTED_DETAIL,
+                )
+
+            else -> null
+        }
 
     private fun mapErrorStatus(
         status: HttpStatusCode,
@@ -885,6 +921,11 @@ class PlexMediaServerAdapter(
         private const val ASCII_DEL = 0x7F
         private const val MAX_TERMINATION_SESSION_ID_LENGTH = 256
         private const val MAX_TERMINATION_REASON_LENGTH = 500
+        private const val TERMINATION_NOT_ENABLED_DETAIL =
+            "Plex refused to stop the stream because the server does not have this feature enabled. " +
+                "Check that the server owner has Plex Pass and that Miru is connected with the owner's account."
+        private const val TERMINATION_SESSION_REJECTED_DETAIL =
+            "Plex refused to stop the stream because it did not accept its session ID."
         private val SECTION_KEY_REGEX = Regex("^[A-Za-z0-9_-]+$")
         private val MACHINE_ID_REGEX = Regex("^[A-Za-z0-9._-]+$")
     }

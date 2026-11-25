@@ -104,14 +104,13 @@ test.describe('Live Activity SSE, stream lifecycle, KPI strip & Top Watched rang
 		await expect(kpiSection).toContainText('1 playing · 0 paused');
 
 		// 4. Stream stop -> removes card and returns KPIs to 0
-		const stoppedSession: MockPlexSession = { ...baseSession, state: 'stopped', viewOffsetMs: 2_100_000 };
-		mockPlex.setActiveSessions([stoppedSession]);
-		mockPlex.pushPlayingNotification(stoppedSession.sessionKey, stoppedSession.ratingKey, 'stopped', stoppedSession.viewOffsetMs);
+		mockPlex.setActiveSessions([]);
+		mockPlex.pushPlayingNotification(baseSession.sessionKey, baseSession.ratingKey, 'stopped', 2_100_000);
 
-		await expect(page.getByRole('heading', { name: 'Active Streams (0)' })).toBeVisible();
+		// Well within the poll interval: the reported stop ends the stream without waiting for another missed poll
+		await expect(page.getByRole('heading', { name: 'Active Streams (0)' })).toBeVisible({ timeout: 4_000 });
 		await expect(page.getByText('No active streams right now')).toBeVisible();
 		await expect(kpiSection).toContainText('0 playing · 0 paused');
-		mockPlex.setActiveSessions([]);
 
 		// 5. Top Watched range switching (7d -> 30d -> 90d -> all)
 		const topWatchedCard = page.locator('section').filter({ hasText: 'Top Watched' }).locator('> div').last();
@@ -224,6 +223,15 @@ test.describe('Live Activity SSE, stream lifecycle, KPI strip & Top Watched rang
 			await viewerContext.close();
 		}
 
+		// Plex refuses while the server does not have the feature: the sheet says why and the stream stays
+		mockPlex.setTerminationEnabled(false);
+		await adminStreamCard.getByRole('button', { name: 'Terminate' }).click();
+		await page.getByRole('dialog').getByRole('button', { name: 'Terminate Stream' }).click();
+		await expect(page.getByRole('dialog').getByRole('alert')).toContainText('does not have this feature enabled');
+		await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click();
+		await expect(page.getByRole('dialog')).not.toBeVisible();
+		mockPlex.setTerminationEnabled(true);
+
 		// Admin opens sheet, fills preset, customizes reason, submits, and sees SSE remove the stream + audit entry in /admin
 		await adminStreamCard.getByRole('button', { name: 'Terminate' }).click();
 		const dialog = page.getByRole('dialog');
@@ -239,7 +247,9 @@ test.describe('Live Activity SSE, stream lifecycle, KPI strip & Top Watched rang
 		await expect(dialog).not.toBeVisible();
 
 		await expect(page.getByRole('status')).toContainText('Termination requested for Alice Admin — Spirited Away');
-		await expect(page.getByRole('heading', { name: 'Active Streams (0)' })).toBeVisible();
+		await expect(adminStreamCard.getByRole('button', { name: 'Terminating…' })).toBeDisabled();
+		await expect(page.getByRole('heading', { name: 'Active Streams (0)' })).toBeVisible({ timeout: 5_000 });
+		await expect(page.getByRole('status')).toHaveCount(0);
 		expect(mockPlex.getTerminatedSessions()).toEqual([
 			{ sessionId: 'term-plex-id-1', reason: 'Please switch to 1080p for now' }
 		]);
@@ -248,6 +258,7 @@ test.describe('Live Activity SSE, stream lifecycle, KPI strip & Top Watched rang
 		await expect(page).toHaveURL(`${miru.baseUrl}/admin`);
 		const guardrailsSection = page.locator('section').filter({ hasText: 'Stream Guardrails & Termination Audit' });
 		await expect(guardrailsSection).toContainText('Please switch to 1080p for now');
+		await expect(guardrailsSection).toContainText('FAILED');
 		await expect(guardrailsSection).toContainText('Alice Admin');
 	});
 });

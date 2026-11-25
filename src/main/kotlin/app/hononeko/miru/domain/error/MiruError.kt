@@ -37,9 +37,11 @@ sealed interface MiruError {
         val retryAfterSeconds: Long = 60L,
     ) : MiruError
 
+    /** [detail] replaces the generic explanation in API responses, so it must be safe to show to clients. */
     data class UpstreamAuthError(
         val provider: String,
         override val message: String,
+        val detail: String? = null,
     ) : MiruError
 
     data class UpstreamUnavailable(

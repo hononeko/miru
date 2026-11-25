@@ -8,6 +8,8 @@ const ONE_BY_ONE_PNG = Buffer.from(
 	'base64'
 );
 
+const TERMINATION_DELAY_MS = 1_500;
+
 export interface MockPlexSession {
 	sessionKey: string;
 	sessionId: string;
@@ -21,7 +23,7 @@ export interface MockPlexSession {
 	year: number;
 	durationMs: number;
 	viewOffsetMs: number;
-	state: 'playing' | 'paused' | 'stopped' | 'buffering';
+	state: 'playing' | 'paused' | 'buffering';
 	user: {
 		id: string;
 		title: string;
@@ -72,6 +74,7 @@ export interface MockPlexServer {
 	setSharedServers(shares: MockSharedServer[]): void;
 	getTerminatedSessions(): TerminatedMockSession[];
 	clearTerminatedSessions(): void;
+	setTerminationEnabled(enabled: boolean): void;
 	pushPlayingNotification(
 		sessionKey: string,
 		ratingKey: string,
@@ -547,7 +550,8 @@ export async function startMockPlexServer(options: MockPlexOptions = {}): Promis
 		{ key: '2', title: 'TV Shows', type: 'show', uuid: 'sec-shows-2', count: catalog.shows.length }
 	];
 
-	let activeSessions: Array<MockPlexSession & { _removeAfterFetch?: boolean }> = [];
+	let activeSessions: MockPlexSession[] = [];
+	let terminationEnabled = true;
 	const terminatedSessions: TerminatedMockSession[] = [];
 	let sharedServers: MockSharedServer[] = [
 		{ userId: '1002', allLibraries: false, sharedSectionKeys: ['1'] },
@@ -571,6 +575,35 @@ export async function startMockPlexServer(options: MockPlexOptions = {}): Promis
 			'Content-Length': Buffer.byteLength(payload)
 		});
 		res.end(payload);
+	};
+
+	const sendHtmlError = (res: http.ServerResponse, status: number, title: string) => {
+		const payload = `<html><head><title>${title}</title></head><body><h1>${status} ${title}</h1></body></html>`;
+		res.writeHead(status, {
+			'Content-Type': 'text/html',
+			'Content-Length': Buffer.byteLength(payload)
+		});
+		res.end(payload);
+	};
+
+	const broadcastPlaying = (
+		sessionKey: string,
+		ratingKey: string,
+		state: 'playing' | 'paused' | 'stopped' | 'buffering',
+		viewOffset: number
+	) => {
+		const frame = JSON.stringify({
+			NotificationContainer: {
+				type: 'playing',
+				size: 1,
+				PlaySessionStateNotification: [{ sessionKey, ratingKey, state, viewOffset }]
+			}
+		});
+		for (const client of wsClients) {
+			if (client.readyState === 1) {
+				client.send(frame);
+			}
+		}
 	};
 
 	let port = 0;
@@ -728,7 +761,6 @@ export async function startMockPlexServer(options: MockPlexOptions = {}): Promis
 
 		if (pathname === '/status/sessions') {
 			const metadata = activeSessions.map(sessionToPlexMetadata);
-			activeSessions = activeSessions.filter((s) => !s._removeAfterFetch);
 			sendJson(res, 200, {
 				MediaContainer: {
 					size: metadata.length,
@@ -738,42 +770,32 @@ export async function startMockPlexServer(options: MockPlexOptions = {}): Promis
 			return;
 		}
 
-		if (pathname === '/status/sessions/terminate') {
-			const sessionId = (url.searchParams.get('sessionId') ?? '').trim();
-			const reason = url.searchParams.get('reason') ?? '';
-			const matchIndex = activeSessions.findIndex(
-				(s) => s.sessionId === sessionId || s.sessionKey === sessionId
-			);
-			if (matchIndex < 0) {
-				sendJson(res, 404, { error: `Session '${sessionId}' not found` });
+		// https://developer.plex.tv/pms/#tag/Status/operation/statusPostTerminate
+		if (method === 'POST' && pathname === '/status/sessions/terminate') {
+			if (!terminationEnabled) {
+				sendHtmlError(res, 401, 'Unauthorized');
 				return;
 			}
-			const existing = activeSessions[matchIndex];
-			activeSessions[matchIndex] = { ...existing, state: 'stopped', _removeAfterFetch: true };
-			terminatedSessions.push({ sessionId, reason });
-			sendJson(res, 200, {});
+			const sessionId = url.searchParams.get('sessionId') ?? '';
+			if (sessionId === '') {
+				sendHtmlError(res, 403, 'Forbidden');
+				return;
+			}
+			const session = activeSessions.find((s) => s.sessionId === sessionId);
+			if (!session) {
+				sendHtmlError(res, 404, 'Not Found');
+				return;
+			}
+			terminatedSessions.push({ sessionId, reason: url.searchParams.get('reason') ?? '' });
+			res.writeHead(200, { 'Content-Length': 0 });
+			res.end();
 
+			// The client learns of it with its next timeline report. Until then Plex lists the session unchanged,
+			// and afterwards it lists it no longer, rather than as stopped.
 			setTimeout(() => {
-				const frame = JSON.stringify({
-					NotificationContainer: {
-						type: 'playing',
-						size: 1,
-						PlaySessionStateNotification: [
-							{
-								sessionKey: existing.sessionKey,
-								ratingKey: existing.ratingKey,
-								state: 'stopped',
-								viewOffset: existing.viewOffsetMs
-							}
-						]
-					}
-				});
-				for (const client of wsClients) {
-					if (client.readyState === 1) {
-						client.send(frame);
-					}
-				}
-			}, 20);
+				activeSessions = activeSessions.filter((s) => s.sessionId !== sessionId);
+				broadcastPlaying(session.sessionKey, session.ratingKey, 'stopped', session.viewOffsetMs);
+			}, TERMINATION_DELAY_MS);
 			return;
 		}
 
@@ -948,31 +970,16 @@ export async function startMockPlexServer(options: MockPlexOptions = {}): Promis
 		clearTerminatedSessions() {
 			terminatedSessions.length = 0;
 		},
+		setTerminationEnabled(enabled: boolean) {
+			terminationEnabled = enabled;
+		},
 		pushPlayingNotification(
 			sessionKey: string,
 			ratingKey: string,
 			state: 'playing' | 'paused' | 'stopped' | 'buffering',
 			viewOffsetMs = 60_000
 		) {
-			const frame = JSON.stringify({
-				NotificationContainer: {
-					type: 'playing',
-					size: 1,
-					PlaySessionStateNotification: [
-						{
-							sessionKey,
-							ratingKey,
-							state,
-							viewOffset: viewOffsetMs
-						}
-					]
-				}
-			});
-			for (const client of wsClients) {
-				if (client.readyState === 1) {
-					client.send(frame);
-				}
-			}
+			broadcastPlaying(sessionKey, ratingKey, state, viewOffsetMs);
 		},
 		waitForWsClient(timeoutMs = 15_000): Promise<void> {
 			if (wsClients.size > 0) return Promise.resolve();

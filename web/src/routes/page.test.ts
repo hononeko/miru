@@ -186,6 +186,65 @@ describe('Live Activity page fixes', () => {
 		});
 	});
 
+	async function terminateFirstStream() {
+		vi.spyOn(api, 'POST').mockResolvedValue({
+			data: {
+				sessionId: 's-1',
+				sessionKey: 's-1',
+				reason: 'Maintenance',
+				auditEventId: 'aud-1',
+				terminatedAtMs: 1_700_000_010_000
+			},
+			response: new Response(null, { status: 200 })
+		} as never);
+		await fireEvent.click(screen.getByRole('button', { name: /^Terminate$/ }));
+		await fireEvent.click(await screen.findByRole('button', { name: 'Terminate Stream' }));
+		await waitFor(() => {
+			expect(screen.getByRole('status').textContent).toContain('Termination requested for');
+		});
+	}
+
+	it('reports a termination as requested only until the stream stops', async () => {
+		const stream = makeStream('s-1', 'rk-1', 'Ep 1');
+		streamsStore.streams = [stream];
+		render(LiveActivityPage);
+
+		await terminateFirstStream();
+		expect(screen.getByRole('status').textContent).toContain('Vehkiya — Ep 1');
+		expect(screen.getByRole('button', { name: 'Terminating…' })).toHaveProperty('disabled', true);
+
+		streamsStore.applyStopped({
+			timestampMs: 1_700_000_020_000,
+			serverId: 'srv-1',
+			sessionKey: 's-1',
+			ratingKey: 'rk-1',
+			userId: 'u-1',
+			reason: 'explicit_stop',
+			mergedIntoHistory: false,
+			stream
+		});
+		await waitFor(() => {
+			expect(screen.queryByRole('status')).toBeNull();
+		});
+	});
+
+	it('offers to terminate again when the stream is still active a minute later', async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		try {
+			streamsStore.streams = [makeStream('s-1', 'rk-1', 'Ep 1')];
+			render(LiveActivityPage);
+
+			await terminateFirstStream();
+			await vi.advanceTimersByTimeAsync(60_000);
+
+			expect(screen.getByRole('alert').textContent).toContain('Still active:');
+			expect(screen.queryByRole('status')).toBeNull();
+			expect(screen.getByRole('button', { name: /^Terminate$/ })).toHaveProperty('disabled', false);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it('renders full Plays Per Day history with click popover breakdown and places Viewing Heatmap at bottom', async () => {
 		const openSpy = vi.spyOn(mediaDetailsModal, 'open').mockResolvedValue(undefined);
 		render(LiveActivityPage);

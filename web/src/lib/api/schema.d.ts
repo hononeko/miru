@@ -692,7 +692,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Terminate an active media stream with an optional custom viewer message (admin only) */
+        /**
+         * Terminate an active media stream with an optional custom viewer message (admin only)
+         * @description Asks Plex to terminate the stream. Plex tells the viewer's app when the app next reports its progress, so playback can continue from the buffer for a few seconds. The `session_stopped` event on `/api/v1/streams/events` tells when it has stopped. Attempts that Plex refuses are recorded in the audit log as `TERMINATE_FAILED`.
+         */
         post: operations["terminateStream"];
         delete?: never;
         options?: never;
@@ -4358,7 +4361,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Stream terminated and audit event recorded */
+            /** @description Plex accepted the termination */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -4403,7 +4406,16 @@ export interface operations {
                     "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
-            /** @description Upstream media server unavailable or rejected termination */
+            /** @description Plex has not reported a session ID for the stream, so it cannot be terminated */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Upstream media server unavailable or rejected termination, for example because the server does not have the feature enabled */
             502: {
                 headers: {
                     [name: string]: unknown;

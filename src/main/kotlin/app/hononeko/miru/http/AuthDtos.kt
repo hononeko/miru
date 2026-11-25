@@ -115,7 +115,7 @@ data class CreateAccountRequest(
 
 @Serializable
 data class SetLinkedMediaUsersRequest(
-    val mediaUserIds: Set<String>,
+    val linkedMediaUserIds: Set<String>,
 )
 
 @Serializable

@@ -360,7 +360,7 @@ private fun Route.adminAccountRoutes(authService: AuthService) {
                 authService
                     .setLinkedMediaUsers(
                         accountId = targetId,
-                        mediaUserIds = request.mediaUserIds,
+                        mediaUserIds = request.linkedMediaUserIds,
                     ).map { it.toResponse() }
             call.respondEither(result)
         }

@@ -708,7 +708,7 @@
 			unwrap(
 				await api.PUT('/api/v1/admin/accounts/{id}/media-users', {
 					params: { path: { id: linkTarget.id } },
-					body: { mediaUserIds: selectedMediaUserIds }
+					body: { linkedMediaUserIds: selectedMediaUserIds }
 				})
 			);
 			linkOpen = false;

@@ -691,7 +691,8 @@ class AuthService(
         request: UpdateUserPreferencesRequest,
     ): Either<MiruError, UserPreferencesResponse> =
         either {
-            val validated = validatePreferences(request).bind()
+            val current = getPreferences(principal).bind()
+            val validated = validatePreferences(request, current).bind()
             val now = clock()
             val canPersist =
                 authConfig.mode != AuthMode.NONE &&
@@ -716,15 +717,7 @@ class AuthService(
                 }
             }
 
-            UserPreferencesResponse(
-                theme = validated.theme,
-                timeFormat = validated.timeFormat,
-                dateFormat = validated.dateFormat,
-                defaultStatsRange = validated.defaultStatsRange,
-                relativeTimestamps = validated.relativeTimestamps,
-                analyticsMetric = validated.analyticsMetric,
-                updatedAtMs = now,
-            )
+            validated.copy(updatedAtMs = now)
         }
 
     private suspend fun issueSession(
@@ -824,15 +817,17 @@ class AuthService(
             else -> null
         }
 
+    /** Returns [current] with the preferences given in [request]. */
     private fun validatePreferences(
         request: UpdateUserPreferencesRequest,
-    ): Either<MiruError.ValidationError, UpdateUserPreferencesRequest> =
+        current: UserPreferencesResponse,
+    ): Either<MiruError.ValidationError, UserPreferencesResponse> =
         either {
-            val theme = request.theme.trim()
-            val timeFormat = request.timeFormat.trim()
-            val dateFormat = request.dateFormat.trim()
-            val defaultStatsRange = request.defaultStatsRange.trim()
-            val analyticsMetric = request.analyticsMetric.trim()
+            val theme = request.theme?.trim() ?: current.theme
+            val timeFormat = request.timeFormat?.trim() ?: current.timeFormat
+            val dateFormat = request.dateFormat?.trim() ?: current.dateFormat
+            val defaultStatsRange = request.defaultStatsRange?.trim() ?: current.defaultStatsRange
+            val analyticsMetric = request.analyticsMetric?.trim() ?: current.analyticsMetric
             val errors = linkedMapOf<String, String>()
 
             if (theme !in ALLOWED_THEMES) {
@@ -858,12 +853,12 @@ class AuthService(
                 )
             }
 
-            UpdateUserPreferencesRequest(
+            UserPreferencesResponse(
                 theme = theme,
                 timeFormat = timeFormat,
                 dateFormat = dateFormat,
                 defaultStatsRange = defaultStatsRange,
-                relativeTimestamps = request.relativeTimestamps,
+                relativeTimestamps = request.relativeTimestamps ?: current.relativeTimestamps,
                 analyticsMetric = analyticsMetric,
             )
         }

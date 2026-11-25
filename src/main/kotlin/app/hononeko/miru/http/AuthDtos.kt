@@ -161,14 +161,15 @@ data class UserPreferencesResponse(
     val updatedAtMs: Long? = null,
 )
 
+/** Omitted preferences keep their value, so that a client that does not know one yet cannot reset it. */
 @Serializable
 data class UpdateUserPreferencesRequest(
-    val theme: String = "system",
-    val timeFormat: String = "24h",
-    val dateFormat: String = "iso",
-    val defaultStatsRange: String = "30d",
-    val relativeTimestamps: Boolean = true,
-    val analyticsMetric: String = "plays",
+    val theme: String? = null,
+    val timeFormat: String? = null,
+    val dateFormat: String? = null,
+    val defaultStatsRange: String? = null,
+    val relativeTimestamps: Boolean? = null,
+    val analyticsMetric: String? = null,
 )
 
 internal fun MiruPrincipal.toResponse(avatarUrl: String? = null): PrincipalResponse =

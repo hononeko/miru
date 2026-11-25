@@ -1130,6 +1130,62 @@ class AuthRoutesTest :
             }
         }
 
+        test("PUT /api/v1/auth/me/preferences keeps the preferences that are left out") {
+            createHarness().use { harness ->
+                val login = harness.authService.setupInitialAdmin("admin", "Admin-password-123").shouldBeRight()
+                testApplication {
+                    setupAuthApp(harness)
+
+                    suspend fun put(body: String): UserPreferencesResponse {
+                        val response =
+                            client.put("/api/v1/auth/me/preferences") {
+                                cookie(SESSION_COOKIE_NAME, login.signedToken)
+                                contentType(ContentType.Application.Json)
+                                setBody(body)
+                            }
+                        response.status shouldBe HttpStatusCode.OK
+                        return MiruJson.decodeFromString<UserPreferencesResponse>(response.bodyAsText())
+                    }
+
+                    // Before anything is stored, the rest are the defaults
+                    put("""{"relativeTimestamps":false}""").copy(updatedAtMs = null) shouldBe
+                        UserPreferencesResponse(
+                            theme = "system",
+                            timeFormat = "24h",
+                            dateFormat = "iso",
+                            defaultStatsRange = "30d",
+                            relativeTimestamps = false,
+                            analyticsMetric = "plays",
+                        )
+
+                    val stored =
+                        put(
+                            """{"theme":"dark","timeFormat":"12h","dateFormat":"dmy",
+                                "defaultStatsRange":"all","analyticsMetric":"duration"}""",
+                        )
+                    stored.relativeTimestamps shouldBe false
+
+                    // One field at a time, and none at all
+                    val changes =
+                        listOf<Pair<String, UserPreferencesResponse.() -> UserPreferencesResponse>>(
+                            """{"theme":"light"}""" to { copy(theme = "light") },
+                            """{"timeFormat":"24h"}""" to { copy(timeFormat = "24h") },
+                            """{"dateFormat":"mdy"}""" to { copy(dateFormat = "mdy") },
+                            """{"defaultStatsRange":"7d"}""" to { copy(defaultStatsRange = "7d") },
+                            """{"relativeTimestamps":true}""" to { copy(relativeTimestamps = true) },
+                            """{"analyticsMetric":"plays"}""" to { copy(analyticsMetric = "plays") },
+                            "{}" to { this },
+                            """{"theme":null}""" to { this },
+                        )
+                    changes.fold(stored) { before, (body, change) ->
+                        val after = put(body)
+                        after.copy(updatedAtMs = null) shouldBe before.change().copy(updatedAtMs = null)
+                        after
+                    }
+                }
+            }
+        }
+
         test("preferences endpoints and AuthService handle AUTH_MODE=none, synthetic accounts, and null repository gracefully") {
             createHarness(mode = AuthMode.NONE, sessionSecret = "").use { harness ->
                 testApplication {

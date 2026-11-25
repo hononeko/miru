@@ -1689,6 +1689,7 @@ export interface components {
             libraryBreakdown: components["schemas"]["LibraryBreakdownDto"][];
         };
         LibrarySectionResponse: {
+            /** @description Opaque identifier of the section, for use as `{id}` in paths */
             id: string;
             serverId: string;
             sectionKey: string;

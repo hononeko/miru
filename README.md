@@ -69,6 +69,7 @@ Open <http://localhost:8080>, complete first-run admin setup, and connect Plex f
 - **Kubernetes:** [`docs/k8s/`](docs/k8s/README.md) provides `restricted` PSS Kustomize manifests with optional Gateway API route, Ingress, and `NetworkPolicy`.
 - **Configuration:** Every setting is documented with defaults and validation rules in [`docs/environment-variables.md`](docs/environment-variables.md).
 - **Real-time Plex sync:** Subscribes to Plex's WebSocket notification stream (`PLEX_WEBSOCKET_ENABLED=true`) with debounced updates, jittered reconnect backoff, and a fallback reconciler (`PLEX_POLL_INTERVAL_SECONDS=20`), pushing live updates to browsers over SSE.
+- **API & webhooks:** [`docs/compatibility.md`](docs/compatibility.md) lists what stays compatible between releases, and [`docs/webhooks.md`](docs/webhooks.md) describes the webhook payloads and signature.
 - **System endpoints:** `GET /healthz` (liveness), `GET /readyz` (readiness), `GET /api/v1/openapi.yaml` (OpenAPI 3.1 contract).
 
 ## Development

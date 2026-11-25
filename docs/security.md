@@ -100,4 +100,4 @@ Miru isolates untrusted browser/API clients from the Plex Media Server, database
   - **Static & supply-chain hygiene**: Third-party GitHub Actions pinned to full commit SHAs (enforced by `lint-actions` / `zizmor`); `lint-docker` (Hadolint), `lint-k8s`, and type-resolved `detekt` run on PRs and `main`.
   - **SAST**: [`codeql.yml`](../.github/workflows/codeql.yml) runs GitHub CodeQL `security-extended` across `actions`, `java-kotlin`, and `javascript-typescript`.
   - **Testing & coverage**: Unit tests, Kover (≥ 80% changed-line coverage on backend source changes), PostgreSQL Testcontainers integration tests, and Playwright Chromium E2E tests gate image publishing.
-  - **Image provenance**: Multi-arch (`amd64` / `arm64`) images are built and pushed by digest to GHCR with GitHub Artifact Attestations (`attest: "true"`).
+  - **Image provenance**: Multi-arch (`amd64` / `arm64`) images are built and pushed by digest to GHCR with GitHub Artifact Attestations (`attest: "true"`). A release ([`cd.yml`](../.github/workflows/cd.yml)) has the layers of its tested release candidate and an attestation of its own.

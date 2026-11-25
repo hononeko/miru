@@ -6,6 +6,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
+import io.ktor.server.request.path
 import io.ktor.server.request.uri
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
@@ -146,23 +147,24 @@ fun MiruError.toProblemDetails(instance: String? = null): ProblemDetails {
     }
 }
 
+/** Logs the path only: the query can hold credentials, such as an API key or the code of a sign-in. */
 suspend fun ApplicationCall.respondError(error: MiruError) {
     val status = error.toHttpStatus()
     when (error) {
         is MiruError.PersistenceError ->
-            errorLogger.error("Persistence error during '{}' at {}: {}", error.operation, request.uri, error.message, error.cause)
+            errorLogger.error("Persistence error during '{}' at {}: {}", error.operation, request.path(), error.message, error.cause)
 
         is MiruError.InternalError ->
-            errorLogger.error("Internal error at {}: {}", request.uri, error.message, error.cause)
+            errorLogger.error("Internal error at {}: {}", request.path(), error.message, error.cause)
 
         is MiruError.UpstreamUnavailable ->
-            errorLogger.warn("Upstream '{}' unavailable at {}: {}", error.provider, request.uri, error.message, error.cause)
+            errorLogger.warn("Upstream '{}' unavailable at {}: {}", error.provider, request.path(), error.message, error.cause)
 
         is MiruError.UpstreamAuthError ->
-            errorLogger.warn("Upstream '{}' auth failure at {}: {}", error.provider, request.uri, error.message)
+            errorLogger.warn("Upstream '{}' auth failure at {}: {}", error.provider, request.path(), error.message)
 
         else ->
-            errorLogger.debug("Request error ({}) at {}: {}", status.value, request.uri, error.message)
+            errorLogger.debug("Request error ({}) at {}: {}", status.value, request.path(), error.message)
     }
 
     if (error is MiruError.TooManyRequests) {

@@ -13,8 +13,13 @@ import app.hononeko.miru.miruModule
 import arrow.core.Either
 import arrow.core.left
 import arrow.core.right
+import ch.qos.logback.classic.Level
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.string.shouldNotContain
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
@@ -27,6 +32,7 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.ktor.server.testing.testApplication
 import kotlinx.serialization.Serializable
+import org.slf4j.LoggerFactory
 
 @Serializable
 private data class SamplePayload(
@@ -72,6 +78,39 @@ class ErrorMappingTest :
                 .UpstreamAuthError("plex", "raw upstream message", detail = "Needs Plex Pass")
                 .toProblemDetails()
                 .detail shouldBe "Needs Plex Pass"
+        }
+
+        test("logs the path of a failed request, but not its query, which can hold credentials") {
+            val errors =
+                listOf(
+                    MiruError.ValidationError("bad input"),
+                    MiruError.UpstreamAuthError("plex", "invalid token"),
+                    MiruError.UpstreamUnavailable("plex", "connection refused"),
+                    MiruError.PersistenceError("insert", "constraint violation"),
+                    MiruError.InternalError("boom"),
+                )
+            val appender = ListAppender<ILoggingEvent>().apply { start() }
+            val errorLogger = LoggerFactory.getLogger("app.hononeko.miru") as Logger
+            val previousLevel = errorLogger.level
+            errorLogger.level = Level.DEBUG
+            errorLogger.addAppender(appender)
+            try {
+                testApplication {
+                    application {
+                        miruModule(config = testConfig)
+                        routing {
+                            errors.forEachIndexed { index, error -> get("/test/error/$index") { call.respondError(error) } }
+                        }
+                    }
+                    errors.indices.forEach { client.get("/test/error/$it?apikey=query-secret") }
+                }
+            } finally {
+                errorLogger.detachAppender(appender)
+                errorLogger.level = previousLevel
+            }
+            val log = appender.list.joinToString("\n") { it.formattedMessage }
+            errors.indices.forEach { log shouldContain "/test/error/$it" }
+            log shouldNotContain "query-secret"
         }
 
         test("respondEither serializes Right payload and RFC 7807 ProblemDetails for Left") {

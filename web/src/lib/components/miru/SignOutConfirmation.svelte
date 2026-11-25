@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import Button from '$components/ui/Button.svelte';
+	import Confirmation from '$components/ui/Confirmation.svelte';
 	import { authStore } from '$stores/auth.svelte';
 
 	type Props = {
@@ -28,17 +28,13 @@
 	}
 </script>
 
-<div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2.5">
-	<div class="min-w-0">
-		<p id={titleId} class="font-heading text-xs font-semibold text-fg-primary">Sign out of Miru?</p>
-		{#if description}
-			<p id={`${titleId}-description`} class="mt-0.5 text-[11px] text-fg-secondary">{description}</p>
-		{/if}
-	</div>
-	<div class="ml-auto flex items-center gap-2">
-		<Button variant="ghost" size="sm" disabled={authStore.loggingOut} onclick={oncancel}>Cancel</Button>
-		<Button variant="destructive" size="sm" disabled={authStore.loggingOut} onclick={signOut}>
-			{authStore.loggingOut ? 'Signing out…' : 'Sign Out'}
-		</Button>
-	</div>
-</div>
+<Confirmation
+	{titleId}
+	title="Sign out of Miru?"
+	{description}
+	confirmLabel="Sign Out"
+	busyLabel="Signing out…"
+	busy={authStore.loggingOut}
+	{oncancel}
+	onconfirm={signOut}
+/>

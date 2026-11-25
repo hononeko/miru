@@ -487,7 +487,8 @@ paths:
         Updates role (`ADMIN` / `USER`), `disabled` status, and/or resets a `LOCAL` account's
         password. Prevents self-demotion, self-disabling, and demoting or disabling the last active
         admin. Revokes active sessions whenever the account is disabled, downgraded, or has its
-        password reset.
+        password reset. Setting the role also sets `roleMode` to `MANUAL`, so SSO sign-in no longer
+        changes it; `roleMode` `AUTO` hands the role of an SSO account back to its groups.
       security:
         - CookieAuth: []
         - ApiKeyAuth: []
@@ -536,7 +537,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
         '409':
-          description: Self-demotion/disable, last active admin protection, or password reset on OIDC account
+          description: >-
+            Self-demotion/disable, last active admin protection, password reset on OIDC account, or
+            `roleMode` `AUTO` on a local account or the caller's own account
           content:
             application/problem+json:
               schema:
@@ -2925,6 +2928,14 @@ components:
         after every media user sync; an account whose email is not verified has no links. `MANUAL`: the
         links are exactly what an admin set. Local accounts are always `MANUAL`.
 
+    RoleMode:
+      type: string
+      enum: [AUTO, MANUAL]
+      description: >-
+        `AUTO`: every SSO sign-in sets the account's role from its groups. `MANUAL`: the role is what an
+        admin set. Signing in with SSO takes one of the configured groups either way. Local accounts are
+        always `MANUAL`.
+
     AuthSource:
       type: string
       enum: [SESSION_COOKIE, API_KEY, DEV_BYPASS]
@@ -3021,8 +3032,16 @@ components:
       type: object
       properties:
         role:
+          description: Sets `roleMode` to `MANUAL` as well.
           oneOf:
             - $ref: '#/components/schemas/MiruRole'
+            - type: 'null'
+        roleMode:
+          description: >-
+            `AUTO` (SSO accounts only, and not together with `role`) keeps the role until the next
+            sign-in, which sets it from the account's groups. `MANUAL` keeps the role as it is.
+          oneOf:
+            - $ref: '#/components/schemas/RoleMode'
             - type: 'null'
         disabled:
           type: boolean
@@ -3084,7 +3103,7 @@ components:
 
     AccountResponse:
       type: object
-      required: [id, username, role, disabled, authProvider, linkedMediaUserIds, mediaUserLinkMode, createdAtMs, updatedAtMs]
+      required: [id, username, role, roleMode, disabled, authProvider, linkedMediaUserIds, mediaUserLinkMode, createdAtMs, updatedAtMs]
       properties:
         id:
           type: string
@@ -3095,6 +3114,8 @@ components:
           nullable: true
         role:
           $ref: '#/components/schemas/MiruRole'
+        roleMode:
+          $ref: '#/components/schemas/RoleMode'
         disabled:
           type: boolean
         authProvider:

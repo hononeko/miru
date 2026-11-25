@@ -107,7 +107,8 @@
 	let accountActionBusyId = $state<string | null>(null);
 	let manageTarget = $state<AccountResponse | null>(null);
 	let manageOpen = $state(false);
-	let manageRole = $state<MiruRole>('USER');
+	// 'AUTO': the role comes from the account's SSO groups
+	let manageRole = $state<MiruRole | 'AUTO'>('USER');
 	let manageDisabled = $state(false);
 	let managePassword = $state('');
 	let manageSubmitting = $state(false);
@@ -629,9 +630,13 @@
 		}
 	}
 
+	function roleChoice(acc: AccountResponse): MiruRole | 'AUTO' {
+		return acc.authProvider === 'OIDC' && acc.roleMode === 'AUTO' ? 'AUTO' : acc.role;
+	}
+
 	function openManageAccount(acc: AccountResponse) {
 		manageTarget = acc;
-		manageRole = acc.role;
+		manageRole = roleChoice(acc);
 		manageDisabled = acc.disabled;
 		managePassword = '';
 		manageError = null;
@@ -646,8 +651,9 @@
 		error = null;
 
 		const body: UpdateAccountRequest = {};
-		if (manageRole !== manageTarget.role) {
-			body.role = manageRole;
+		if (manageRole !== roleChoice(manageTarget)) {
+			if (manageRole === 'AUTO') body.roleMode = 'AUTO';
+			else body.role = manageRole;
 		}
 		if (manageDisabled !== manageTarget.disabled) {
 			body.disabled = manageDisabled;
@@ -661,7 +667,7 @@
 			body.password = managePassword;
 		}
 
-		if (body.role === undefined && body.disabled === undefined && body.password === undefined) {
+		if (Object.keys(body).length === 0) {
 			manageError = 'Make at least one change or enter a new password before saving.';
 			return;
 		}
@@ -987,6 +993,9 @@
 								</Badge>
 							{/if}
 							<Badge tone={acc.role === 'ADMIN' ? 'primary' : 'neutral'}>{acc.role}</Badge>
+							{#if acc.authProvider === 'OIDC' && acc.roleMode === 'MANUAL'}
+								<Badge tone="neutral" mono>Role set manually</Badge>
+							{/if}
 							{#if acc.role === 'ADMIN'}
 								<Badge tone="cyan" mono>All Media Users</Badge>
 							{:else if acc.linkedMediaUserIds.length === 0}
@@ -1958,16 +1967,27 @@
 				<select
 					value={manageRole}
 					onchange={(e) => {
-						manageRole = e.currentTarget.value as MiruRole;
+						manageRole = e.currentTarget.value as MiruRole | 'AUTO';
 					}}
 					disabled={roleGuard !== null}
 					class="rounded-lg border border-input-border bg-canvas px-3 py-2 text-sm text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan disabled:cursor-not-allowed disabled:opacity-60"
 				>
+					{#if manageTarget.authProvider === 'OIDC'}
+						<option value="AUTO">
+							{manageTarget.roleMode === 'AUTO' ? `From SSO groups (now ${manageTarget.role})` : 'From SSO groups'}
+						</option>
+					{/if}
 					<option value="USER">USER (scoped to linked media users)</option>
 					<option value="ADMIN">ADMIN (full access)</option>
 				</select>
 				{#if roleGuard}
 					<span class="text-[10px] text-fg-muted">{roleGuard}.</span>
+				{:else if manageTarget.authProvider === 'OIDC'}
+					<span class="text-[10px] text-fg-muted">
+						{manageRole === 'AUTO'
+							? 'Every SSO sign-in sets the role from the groups of the account.'
+							: 'SSO sign-in leaves this role as it is. It still takes one of the groups Miru accepts.'}
+					</span>
 				{/if}
 			</label>
 

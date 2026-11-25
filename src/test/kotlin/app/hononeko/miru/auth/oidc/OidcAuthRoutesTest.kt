@@ -6,6 +6,7 @@ import app.hononeko.miru.auth.Argon2idPasswordHasher
 import app.hononeko.miru.auth.AuthService
 import app.hononeko.miru.auth.EmailMediaUserLinker
 import app.hononeko.miru.auth.MiruRole
+import app.hononeko.miru.auth.RoleMode
 import app.hononeko.miru.auth.SESSION_COOKIE_NAME
 import app.hononeko.miru.config.AppConfig
 import app.hononeko.miru.config.AuthConfig
@@ -16,6 +17,7 @@ import app.hononeko.miru.config.PlexConfig
 import app.hononeko.miru.config.ServerConfig
 import app.hononeko.miru.config.SessionConfig
 import app.hononeko.miru.auth.MediaUserLinkMode
+import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.http.AccountListResponse
 import app.hononeko.miru.http.AccountResponse
 import app.hononeko.miru.http.AuthProvidersResponse
@@ -38,6 +40,7 @@ import app.hononeko.miru.persistence.repository.ExposedUserRepository
 import ch.qos.logback.classic.Logger
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
+import io.kotest.assertions.arrow.core.shouldBeLeft
 import io.kotest.assertions.arrow.core.shouldBeRight
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.collections.shouldBeEmpty
@@ -49,6 +52,7 @@ import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.string.shouldNotContain
+import io.kotest.matchers.types.shouldBeInstanceOf
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -56,6 +60,7 @@ import io.ktor.client.request.cookie
 import io.ktor.client.request.forms.FormDataContent
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.patch
 import io.ktor.client.request.post
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
@@ -438,6 +443,17 @@ private suspend fun HttpClient.completeOidcCallback(
         header(HttpHeaders.Accept, "application/json")
     }
 }
+
+private suspend fun HttpClient.patchAccount(
+    session: String,
+    accountId: String,
+    body: String,
+): HttpResponse =
+    patch("/api/v1/admin/accounts/$accountId") {
+        cookie(SESSION_COOKIE_NAME, session)
+        contentType(ContentType.Application.Json)
+        setBody(body)
+    }
 
 private suspend fun HttpClient.me(session: String): PrincipalResponse {
     val me = get("/api/v1/auth/me") { cookie(SESSION_COOKIE_NAME, session) }
@@ -862,6 +878,77 @@ class OidcAuthRoutesTest :
                         }
                     disabledHtml.status shouldBe HttpStatusCode.Found
                     disabledHtml.headers[HttpHeaders.Location] shouldBe "/login?error=disabled"
+                }
+            }
+        }
+        test("keeps the role an admin gave an SSO account until an admin hands it back to the groups") {
+            var scenario = MockIdpScenario()
+            val expectedChallengeHolder = mutableMapOf<String, String>()
+
+            createOidcHarness(scenarioProvider = { scenario }, expectedChallengeHolder = expectedChallengeHolder).use { harness ->
+                testApplication {
+                    setupApp(harness)
+                    val client = createClient { followRedirects = false }
+                    val alice = MockIdpScenario(subject = "sub-alice", preferredUsername = "alice", email = "alice@miru.local")
+                    val boss =
+                        MockIdpScenario(
+                            subject = "sub-boss",
+                            preferredUsername = "boss",
+                            email = "boss@miru.local",
+                            groupsInIdToken = listOf("miru-admins"),
+                        )
+
+                    scenario = boss
+                    val admin = client.signInWithOidc("code-boss", expectedChallengeHolder)
+                    scenario = alice
+                    client.me(client.signInWithOidc("code-1", expectedChallengeHolder)).role shouldBe MiruRole.USER
+                    // Until an admin sets her role, it follows her groups.
+                    scenario = alice.copy(groupsInIdToken = listOf("miru-admins"))
+                    client.me(client.signInWithOidc("code-1b", expectedChallengeHolder)).role shouldBe MiruRole.ADMIN
+                    scenario = alice
+                    client.me(client.signInWithOidc("code-1c", expectedChallengeHolder)).role shouldBe MiruRole.USER
+                    val aliceId = harness.accountRepo.findByProviderAndSubject("OIDC", "sub-alice").shouldBeRight().shouldNotBeNull().id
+
+                    // Promoted by an admin: the next sign-in keeps ADMIN, although her groups say USER.
+                    val promoted = client.patchAccount(admin, aliceId, """{"role":"ADMIN"}""")
+                    promoted.status shouldBe HttpStatusCode.OK
+                    MiruJson.decodeFromString<AccountResponse>(promoted.bodyAsText()).roleMode shouldBe RoleMode.MANUAL
+                    client.me(client.signInWithOidc("code-2", expectedChallengeHolder)).role shouldBe MiruRole.ADMIN
+
+                    // With another active admin around, an admin still cannot hand over their own role.
+                    val bossId = client.me(admin).accountId
+                    client.patchAccount(admin, bossId, """{"roleMode":"MANUAL"}""").status shouldBe HttpStatusCode.OK
+                    client.patchAccount(admin, bossId, """{"roleMode":"AUTO"}""").status shouldBe HttpStatusCode.Conflict
+
+                    // Demoted by an admin: the next sign-in keeps USER, although her groups say ADMIN.
+                    client.patchAccount(admin, aliceId, """{"role":"USER"}""").status shouldBe HttpStatusCode.OK
+                    scenario = alice.copy(groupsInIdToken = listOf("miru-admins"))
+                    client.me(client.signInWithOidc("code-3", expectedChallengeHolder)).role shouldBe MiruRole.USER
+
+                    // The last active admin keeps the role an admin set, whoever asks.
+                    harness.authService
+                        .updateAccount(id = bossId, actingAccountId = "someone-else", roleMode = RoleMode.AUTO)
+                        .shouldBeLeft()
+                        .shouldBeInstanceOf<MiruError.Conflict>()
+
+                    // Disabling and enabling the account does not touch where its role comes from.
+                    client.patchAccount(admin, aliceId, """{"disabled":true}""").status shouldBe HttpStatusCode.OK
+                    client.patchAccount(admin, aliceId, """{"disabled":false}""").status shouldBe HttpStatusCode.OK
+                    client.me(client.signInWithOidc("code-4", expectedChallengeHolder)).role shouldBe MiruRole.USER
+
+                    // A role set by an admin does not replace the groups that signing in takes.
+                    client.patchAccount(admin, aliceId, """{"role":"ADMIN"}""").status shouldBe HttpStatusCode.OK
+                    scenario = alice.copy(groupsInIdToken = listOf("unrelated-group"))
+                    client.completeOidcCallback("code-5", expectedChallengeHolder).status shouldBe HttpStatusCode.Forbidden
+
+                    // Handed back: the role stays until the next sign-in, which takes it from the groups again.
+                    val handedBack = client.patchAccount(admin, aliceId, """{"roleMode":"AUTO"}""")
+                    handedBack.status shouldBe HttpStatusCode.OK
+                    val handedBackAccount = MiruJson.decodeFromString<AccountResponse>(handedBack.bodyAsText())
+                    handedBackAccount.role shouldBe MiruRole.ADMIN
+                    handedBackAccount.roleMode shouldBe RoleMode.AUTO
+                    scenario = alice
+                    client.me(client.signInWithOidc("code-6", expectedChallengeHolder)).role shouldBe MiruRole.USER
                 }
             }
         }

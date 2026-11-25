@@ -4,6 +4,7 @@ import app.hononeko.miru.auth.AuthService
 import app.hononeko.miru.auth.EmailMediaUserLinker
 import app.hononeko.miru.auth.MediaUserLinkMode
 import app.hononeko.miru.auth.MiruRole
+import app.hononeko.miru.auth.RoleMode
 import app.hononeko.miru.auth.TokenCrypto
 import app.hononeko.miru.auth.oidc.OidcJwtVerifier.Companion.stringClaim
 import app.hononeko.miru.config.AuthConfig
@@ -285,7 +286,8 @@ class OidcAuthService(
         }
 
     /**
-     * Creates or updates the account for these claims. The second value is true when the account is new or its
+     * Creates or updates the account for these claims. [role], the one its groups give it, only replaces the
+     * role of an existing account in [RoleMode.AUTO]. The second value is true when the account is new or its
      * email or recorded verification changed, which is when its email links need recomputing.
      */
     private suspend fun upsertOidcAccount(
@@ -345,6 +347,7 @@ class OidcAuthService(
                         authProvider = PROVIDER_OIDC,
                         externalSubject = claims.subject,
                         mediaUserLinkMode = MediaUserLinkMode.AUTO.name,
+                        roleMode = RoleMode.AUTO.name,
                         emailVerified = emailVerified,
                         createdAtMs = nowMs,
                         updatedAtMs = nowMs,

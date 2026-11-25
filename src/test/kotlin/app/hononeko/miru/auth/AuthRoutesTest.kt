@@ -210,6 +210,45 @@ private fun ApplicationTestBuilder.setupAuthApp(harness: TestAuthHarness) {
     }
 }
 
+/** The role mode of `PATCH /api/v1/admin/accounts/{id}`. The OIDC account starts and ends as a USER in MANUAL mode. */
+private suspend fun ApplicationTestBuilder.assertRoleModeUpdates(
+    adminLogin: LoginResult,
+    bobId: String,
+    oidcAccountId: String,
+) {
+    suspend fun patchAccount(
+        id: String,
+        body: String,
+    ) = client.patch("/api/v1/admin/accounts/$id") {
+        cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+        contentType(ContentType.Application.Json)
+        setBody(body)
+    }
+
+    // A role and "take it from the groups" contradict each other, and unknown modes are refused
+    val contradiction = patchAccount(oidcAccountId, """{"role":"USER","roleMode":"AUTO"}""")
+    contradiction.status shouldBe HttpStatusCode.BadRequest
+    MiruJson
+        .decodeFromString<ProblemDetails>(contradiction.bodyAsText())
+        .errors
+        .shouldNotBeNull()
+        .keys shouldContainExactly setOf("roleMode")
+    patchAccount(oidcAccountId, """{"roleMode":"SOMETIMES"}""").status shouldBe HttpStatusCode.BadRequest
+
+    // Local accounts have no groups, and an admin cannot put their own role at risk
+    patchAccount(bobId, """{"roleMode":"AUTO"}""").status shouldBe HttpStatusCode.Conflict
+    patchAccount(adminLogin.principal.accountId, """{"roleMode":"AUTO"}""").status shouldBe HttpStatusCode.Conflict
+
+    val handedBack = patchAccount(oidcAccountId, """{"roleMode":"AUTO"}""")
+    handedBack.status shouldBe HttpStatusCode.OK
+    MiruJson.decodeFromString<AccountResponse>(handedBack.bodyAsText()).roleMode shouldBe RoleMode.AUTO
+
+    // MANUAL on its own keeps the role the account has
+    val kept = MiruJson.decodeFromString<AccountResponse>(patchAccount(oidcAccountId, """{"roleMode":"MANUAL"}""").bodyAsText())
+    kept.role shouldBe MiruRole.USER
+    kept.roleMode shouldBe RoleMode.MANUAL
+}
+
 class AuthRoutesTest :
     FunSpec({
         test("bootstrapAdminIfConfigured creates admin idempotently when env credentials are provided") {
@@ -1785,6 +1824,8 @@ class AuthRoutesTest :
                             contentType(ContentType.Application.Json)
                             setBody(MiruJson.encodeToString(UpdateAccountRequest(password = "Valid-password-123")))
                         }.status shouldBe HttpStatusCode.Conflict
+
+                    assertRoleModeUpdates(adminLogin, bobId = bob.account.id, oidcAccountId = oidcAccount.id)
 
                     // Disable Bob -> revokes active sessions and blocks login
                     val disableBobResp =

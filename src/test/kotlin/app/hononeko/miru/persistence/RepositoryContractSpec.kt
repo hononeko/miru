@@ -141,6 +141,7 @@ fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
         staleMediaTests { ctx }
         cascadeTests { ctx }
         authAccountTests { ctx }
+        authAccountRoleModeTests { ctx }
         authAccountLifecycleTests { ctx }
         authAccountLinkModeTests { ctx }
         authSessionTests { ctx }
@@ -1449,6 +1450,7 @@ private fun FunSpecRootScope.authAccountTests(ctxProvider: () -> ContractContext
                     disabled = false,
                     authProvider = "OIDC",
                     externalSubject = "sub-abc-123",
+                    roleMode = "AUTO",
                     createdAtMs = 1_000L,
                     updatedAtMs = 1_000L,
                 )
@@ -1507,6 +1509,70 @@ private fun FunSpecRootScope.authAccountTests(ctxProvider: () -> ContractContext
             ctx.authAccounts.findById("acc-local-3").shouldBeRight().shouldNotBeNull().emailVerified shouldBe false
             ctx.authAccounts.findById("acc-local-1").shouldBeRight().shouldNotBeNull().emailVerified shouldBe null
             ctx.authAccounts.countAdmins().shouldBeRight() shouldBe 2L
+        }
+    }
+}
+
+private fun FunSpecRootScope.authAccountRoleModeTests(ctxProvider: () -> ContractContext) {
+    context("AuthAccountRepository role mode") {
+        test("stores the role of an SSO sign-in only while the account is in AUTO role mode") {
+            val ctx = ctxProvider()
+            val account =
+                AuthAccountRecord(
+                    id = "acc-role-mode",
+                    username = "sso.role",
+                    usernameNormalized = "sso.role",
+                    passwordHash = "",
+                    role = "USER",
+                    authProvider = "OIDC",
+                    externalSubject = "sub-role-mode",
+                    roleMode = "AUTO",
+                    createdAtMs = 1_000L,
+                    updatedAtMs = 1_000L,
+                )
+            ctx.authAccounts.insert(account).shouldBeRight()
+
+            suspend fun signInAs(role: String) =
+                ctx.authAccounts
+                    .updateOidcProfile(
+                        id = account.id,
+                        username = "sso.renamed",
+                        usernameNormalized = "sso.renamed",
+                        email = "renamed@miru.local",
+                        emailVerified = true,
+                        role = role,
+                        updatedAtMs = 2_000L,
+                    ).shouldBeRight()
+                    .shouldNotBeNull()
+
+            suspend fun adminSets(
+                role: String,
+                roleMode: String?,
+            ) = ctx.authAccounts
+                .updateAccount(id = account.id, role = role, disabled = false, roleMode = roleMode, updatedAtMs = 3_000L)
+                .shouldBeRight()
+                .shouldNotBeNull()
+
+            signInAs("ADMIN").role shouldBe "ADMIN"
+            signInAs("USER").role shouldBe "USER"
+
+            // The role an admin set stays, and the rest of the profile is still updated
+            adminSets("ADMIN", "MANUAL").roleMode shouldBe "MANUAL"
+            signInAs("USER") shouldBe
+                account.copy(
+                    username = "sso.renamed",
+                    usernameNormalized = "sso.renamed",
+                    email = "renamed@miru.local",
+                    emailVerified = true,
+                    role = "ADMIN",
+                    roleMode = "MANUAL",
+                    updatedAtMs = 2_000L,
+                )
+
+            // An update that does not mention the mode keeps it, and AUTO follows the sign-in again
+            adminSets("ADMIN", null).roleMode shouldBe "MANUAL"
+            adminSets("ADMIN", "AUTO").roleMode shouldBe "AUTO"
+            signInAs("USER").role shouldBe "USER"
         }
     }
 }

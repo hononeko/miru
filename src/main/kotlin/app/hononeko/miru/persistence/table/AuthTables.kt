@@ -10,6 +10,7 @@ object AuthAccountsTable : Table("auth_accounts") {
     val email = text("email").nullable()
     val passwordHash = text("password_hash")
     val role = text("role")
+    val roleMode = text("role_mode").default("MANUAL")
     val disabled = bool("disabled").default(false)
     val authProvider = text("auth_provider").default("LOCAL")
     val externalSubject = text("external_subject").nullable()

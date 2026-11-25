@@ -1022,7 +1022,7 @@ class OidcAuthRoutesTest :
                     val handPicked =
                         putAsAdmin(
                             "/api/v1/admin/accounts/$aliceAccountId/media-users",
-                            MiruJson.encodeToString(SetLinkedMediaUsersRequest(mediaUserIds = setOf("mu-other"))),
+                            MiruJson.encodeToString(SetLinkedMediaUsersRequest(linkedMediaUserIds = setOf("mu-other"))),
                         )
                     handPicked.status shouldBe HttpStatusCode.OK
                     MiruJson.decodeFromString<AccountResponse>(handPicked.bodyAsText()).mediaUserLinkMode shouldBe
@@ -1036,7 +1036,7 @@ class OidcAuthRoutesTest :
 
                     putAsAdmin(
                         "/api/v1/admin/accounts/$aliceAccountId/media-users",
-                        MiruJson.encodeToString(SetLinkedMediaUsersRequest(mediaUserIds = emptySet())),
+                        MiruJson.encodeToString(SetLinkedMediaUsersRequest(linkedMediaUserIds = emptySet())),
                     ).status shouldBe HttpStatusCode.OK
                     client.linkedMediaUserIds(client.signInWithOidc("code-5", expectedChallengeHolder)).shouldBeEmpty()
 

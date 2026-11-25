@@ -3189,9 +3189,9 @@ components:
 
     SetLinkedMediaUsersRequest:
       type: object
-      required: [mediaUserIds]
+      required: [linkedMediaUserIds]
       properties:
-        mediaUserIds:
+        linkedMediaUserIds:
           type: array
           items:
             type: string

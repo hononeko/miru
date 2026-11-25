@@ -1149,7 +1149,7 @@ export interface components {
             linkedMediaUserIds?: string[];
         };
         SetLinkedMediaUsersRequest: {
-            mediaUserIds: string[];
+            linkedMediaUserIds: string[];
         };
         SetMediaUserLinkModeRequest: {
             mode: components["schemas"]["MediaUserLinkMode"];

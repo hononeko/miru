@@ -60,6 +60,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.TextContent
 import io.ktor.http.headersOf
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -361,6 +362,85 @@ class WebhookDispatcherAndRunnerTest :
             } finally {
                 httpClient.close()
                 scope.cancel()
+                db.close()
+                dir.toFile().deleteRecursively()
+            }
+        }
+
+        test("drops events while the queue is full and delivers what is in it once a slot is free") {
+            val dir = Files.createTempDirectory("miru-wh-queue-")
+            val db = DatabaseFactory.createAndMigrate(DatabaseConfig.Sqlite(dir.resolve("miru.db").toString())).shouldBeRight()
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+            val gate = CompletableDeferred<Unit>()
+            val received = CopyOnWriteArrayList<String>()
+            val mostAtOnce = AtomicInteger(0)
+            val inFlight = AtomicInteger(0)
+            val httpClient =
+                createWebhookHttpClient(
+                    engine =
+                        MockEngine { request ->
+                            val now = inFlight.incrementAndGet()
+                            mostAtOnce.updateAndGet { maxOf(it, now) }
+                            received += (request.body as TextContent).text
+                            gate.await()
+                            inFlight.decrementAndGet()
+                            respond(content = "", status = HttpStatusCode.OK)
+                        },
+                )
+
+            try {
+                val target =
+                    WebhookTargetRecord(
+                        id = "wh-1",
+                        name = "Slow",
+                        url = "http://notifier.local:8080/hook",
+                        subscribedEvents = listOf(WebhookEventType.SERVER_RECOVERED),
+                        createdAtMs = 1_000L,
+                        updatedAtMs = 1_000L,
+                    )
+                ExposedWebhookTargetRepository(db).insert(target).shouldBeRight()
+                val deliveryRepo = ExposedWebhookDeliveryRepository(db)
+                val dispatcher =
+                    WebhookDispatcher(
+                        httpClientProvider = { httpClient },
+                        deliveryRepository = deliveryRepo,
+                        encryptionKey = TEST_ENC_KEY,
+                        appVersion = "test",
+                        scope = scope,
+                        dnsResolver = LAN_DNS,
+                        maxConcurrentDeliveries = 2,
+                        queueCapacity = 3,
+                    )
+
+                fun payload(id: String) = WebhookPayload(event = "server.recovered", eventId = id, timestamp = "2026-11-25T00:00:00Z")
+
+                dispatcher.start()
+                dispatcher.enqueue(target, payload("sent-1")) shouldBe true
+                dispatcher.enqueue(target, payload("sent-2")) shouldBe true
+                withTimeout(5_000L) { while (received.size < 2) delay(10L) }
+
+                // Both slots are taken, so three more wait and the rest are dropped
+                (1..3).forEach { dispatcher.enqueue(target, payload("waiting-$it")) shouldBe true }
+                delay(100L)
+                dispatcher.enqueue(target, payload("dropped")) shouldBe false
+                received shouldHaveSize 2
+
+                gate.complete(Unit)
+                withTimeout(5_000L) {
+                    while (deliveryRepo.query(WebhookDeliveryFilter()).shouldBeRight().totalCount < 5L) delay(10L)
+                }
+                received shouldHaveSize 5
+                received.none { "dropped" in it } shouldBe true
+                mostAtOnce.get() shouldBe 2
+
+                // The slots are free again, also after a stop and a start
+                dispatcher.stop()
+                dispatcher.start()
+                (1..3).forEach { dispatcher.enqueue(target, payload("later-$it")) shouldBe true }
+                withTimeout(5_000L) { while (received.size < 8) delay(10L) }
+            } finally {
+                scope.cancel()
+                httpClient.close()
                 db.close()
                 dir.toFile().deleteRecursively()
             }

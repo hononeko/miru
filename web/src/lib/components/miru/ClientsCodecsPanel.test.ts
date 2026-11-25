@@ -35,44 +35,66 @@ describe('ClientsCodecsPanel', () => {
 		expect(screen.getByText('Top Players & Apps')).toBeTruthy();
 		expect(screen.getByText('Plex for Apple TV')).toBeTruthy();
 		expect(screen.getByText('tvOS')).toBeTruthy();
-		expect(within(screen.getByRole('group', { name: 'Video' })).getByText('HEVC')).toBeTruthy();
-		expect(within(screen.getByRole('group', { name: 'Audio' })).getByText('EAC3')).toBeTruthy();
+		expect(within(screen.getByRole('group', { name: 'Video' })).getByText('HEVC 75%')).toBeTruthy();
+		expect(within(screen.getByRole('group', { name: 'Audio' })).getByText('EAC3 70%')).toBeTruthy();
 		expect(screen.getByText('Video Transcode')).toBeTruthy();
 		expect(screen.getByText('Container Remux')).toBeTruthy();
 		expect(screen.getAllByText('12 · 60.0%').length).toBeGreaterThan(0);
 	});
 
-	it('shows the top three video and audio codecs in separate labeled lists', () => {
-		const codec = (name: string, percent: number) => ({
+	it('draws each codec list as one stacked bar of its top four codecs and the remaining ones', () => {
+		const codec = (name: string, percent: number, playCount = 1) => ({
 			name,
-			playCount: 1,
-			watchDurationSec: 60,
+			playCount,
+			watchDurationSec: playCount * 60,
 			percent
 		});
 		const clientStats: ClientStatsResponse = {
 			range: '30d',
 			fromMs: 1_700_000_000_000,
-			totalPlays: 10,
-			totalWatchDurationSec: 600,
+			totalPlays: 100,
+			totalWatchDurationSec: 6_000,
 			transcodeOrRemuxPlays: 0,
 			players: [],
 			platforms: [],
-			videoCodecs: [codec('HEVC', 50), codec('H264', 30), codec('AV1', 15), codec('VP9', 5)],
-			audioCodecs: [codec('EAC3', 40), codec('AAC', 30), codec('TRUEHD', 20), codec('DTS', 10)],
+			videoCodecs: [codec('HEVC', 50), codec('H264', 30), codec('AV1', 15), codec('VP9', 4.6), codec('VC1', 0.4)],
+			audioCodecs: [
+				codec('EAC3', 40),
+				codec('AAC', 30),
+				codec('TRUEHD', 12),
+				codec('DTS', 10),
+				codec('FLAC', 5, 5),
+				codec('OPUS', 3, 3)
+			],
 			transcodeReasons: []
 		};
 
 		render(ClientsCodecsPanel, { props: { clientStats, loading: false } });
 
-		const video = within(screen.getByRole('group', { name: 'Video' }));
-		const audio = within(screen.getByRole('group', { name: 'Audio' }));
-		expect(['HEVC', 'H264', 'AV1'].every((name) => video.queryByText(name))).toBe(true);
-		expect(video.queryByText('VP9')).toBeNull();
-		expect(['EAC3', 'AAC', 'TRUEHD'].every((name) => audio.queryByText(name))).toBe(true);
-		expect(audio.queryByText('DTS')).toBeNull();
-		expect(video.queryByText('EAC3')).toBeNull();
-		// The count badge reports every codec seen, not just the ones shown.
-		expect(screen.getByText('8')).toBeTruthy();
+		const drawn = (name: string) => {
+			const group = screen.getByRole('group', { name });
+			const bar = Array.from(group.querySelectorAll<HTMLElement>('div[title]'));
+			return {
+				widths: bar.map((segment) => segment.style.width),
+				titles: bar.map((segment) => segment.title),
+				colors: bar.map((segment) => /bg-\S+/.exec(segment.className)?.[0]),
+				legend: Array.from(group.querySelectorAll('span[title]'), (item) => item.textContent?.trim())
+			};
+		};
+
+		// A single remaining codec keeps its name
+		const video = drawn('Video');
+		expect(video.legend).toEqual(['HEVC 50%', 'H264 30%', 'AV1 15%', 'VP9 5%', 'VC1 <1%']);
+		expect(video.widths).toEqual(['50%', '30%', '15%', '4.6%', '0.4%']);
+		expect(video.colors).toEqual(['bg-chart-1', 'bg-chart-2', 'bg-chart-3', 'bg-chart-4', 'bg-fg-muted']);
+
+		const audio = drawn('Audio');
+		expect(audio.legend).toEqual(['EAC3 40%', 'AAC 30%', 'TRUEHD 12%', 'DTS 10%', 'Other 8%']);
+		expect(audio.widths).toEqual(['40%', '30%', '12%', '10%', '8%']);
+		expect(audio.titles.at(-1)).toBe('FLAC, OPUS: 8 plays (8m)');
+
+		// The count badge reports every codec seen, not just the ones named.
+		expect(screen.getByText('11')).toBeTruthy();
 	});
 
 	it('hides an empty codec list and keeps the other', () => {
@@ -92,7 +114,7 @@ describe('ClientsCodecsPanel', () => {
 		render(ClientsCodecsPanel, { props: { clientStats, loading: false } });
 
 		expect(screen.queryByRole('group', { name: 'Video' })).toBeNull();
-		expect(within(screen.getByRole('group', { name: 'Audio' })).getByText('AAC')).toBeTruthy();
+		expect(within(screen.getByRole('group', { name: 'Audio' })).getByText('AAC 100%')).toBeTruthy();
 		expect(screen.queryByText('No codec telemetry in this range')).toBeNull();
 	});
 

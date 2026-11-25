@@ -17,7 +17,9 @@ import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonObject
@@ -472,6 +474,21 @@ class WebhookEventEvaluatorTest :
                     }
             documentedDetails shouldBe sent.mapValues { (_, payload) -> payload.details.keys }
 
+            // Every field has a row with its type, and no row is about a field that is not sent
+            val documentedTypes =
+                Regex("""(?m)^\| `(\w+)` \| (string|integer|boolean|object) \| .* \|$""")
+                    .findAll(docs)
+                    .map { it.groupValues[1] to it.groupValues[2] }
+                    .toSet()
+            documentedTypes shouldBe sent.values.flatMap { typesOf(MiruJson.encodeToJsonElement(it).jsonObject) }.toSet()
+
+            val (signature, body, secret) =
+                Regex("""X-Miru-Signature-256: (sha256=\w+)\n```\n\nThis is the signature of the body `(.*)` with the secret `(\w+)`""")
+                    .find(docs)
+                    .shouldNotBeNull()
+                    .destructured
+            WebhookUrlSafety.signPayload(secret, body.toByteArray()) shouldBe signature
+
             // The examples are complete: nothing unknown, and all that Miru sends for that event
             val examples =
                 Regex("(?s)```json\n(.*?)```")
@@ -502,6 +519,17 @@ class WebhookEventEvaluatorTest :
                 setOf("sessionKey", "state", "mediaType", "title", "streamDecision", "hwTranscode")
         }
     })
+
+/** The names and types of the fields in [json] and in the objects it contains. */
+private fun typesOf(json: JsonObject): List<Pair<String, String>> =
+    json.flatMap { (name, value) ->
+        when {
+            value is JsonObject -> listOf(name to "object") + typesOf(value)
+            value.jsonPrimitive.isString -> listOf(name to "string")
+            value.jsonPrimitive.booleanOrNull != null -> listOf(name to "boolean")
+            else -> listOf(name to "integer")
+        }
+    }
 
 private suspend fun samplePayloadOfEveryEvent(): Map<String, WebhookPayload> {
     val evaluator = WebhookEventEvaluator()

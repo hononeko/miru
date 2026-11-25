@@ -203,7 +203,10 @@ export interface paths {
         };
         /** Get current authenticated user's preferences */
         get: operations["getUserPreferences"];
-        /** Update current authenticated user's preferences */
+        /**
+         * Update current authenticated user's preferences
+         * @description Preferences left out of the request keep their current value.
+         */
         put: operations["updateUserPreferences"];
         post?: never;
         delete?: never;
@@ -1077,19 +1080,16 @@ export interface components {
         };
         UpdateUserPreferencesRequest: {
             /** @enum {string} */
-            theme: "system" | "dark" | "light";
+            theme?: "system" | "dark" | "light";
             /** @enum {string} */
-            timeFormat: "24h" | "12h";
+            timeFormat?: "24h" | "12h";
             /** @enum {string} */
-            dateFormat: "iso" | "mdy" | "dmy";
+            dateFormat?: "iso" | "mdy" | "dmy";
             /** @enum {string} */
-            defaultStatsRange: "7d" | "30d" | "90d" | "all";
-            relativeTimestamps: boolean;
-            /**
-             * @default plays
-             * @enum {string}
-             */
-            analyticsMetric: "plays" | "duration";
+            defaultStatsRange?: "7d" | "30d" | "90d" | "all";
+            relativeTimestamps?: boolean;
+            /** @enum {string} */
+            analyticsMetric?: "plays" | "duration";
         };
         AccountResponse: {
             id: string;

@@ -315,17 +315,22 @@ class WebhookEventEvaluator(
         user: UserRecord?,
         nowMs: Long,
     ): List<OutboundWebhookMatch> {
-        val activeUserStreams =
-            activeSessions.count { active ->
+        val userStreams =
+            activeSessions.filter { active ->
                 active.userId == session.userId && !active.state.equals("stopped", ignoreCase = true)
             }
+        // A stream that Plex did not list in the last poll has most likely ended, so it does not count. It may still
+        // reappear, so it keeps an earlier alert from being sent again.
+        val activeUserStreams = userStreams.count { it.missedPolls == 0 }
         val matches = mutableListOf<OutboundWebhookMatch>()
 
         for (target in enabledTargets) {
             if (WebhookEventType.STREAM_CONCURRENT_LIMIT !in target.subscribedEvents) continue
             val pairKey = target.id to session.userId
             if (activeUserStreams <= target.concurrentStreamThreshold) {
-                lastAlertedConcurrentCount.remove(pairKey)
+                if (userStreams.size <= target.concurrentStreamThreshold) {
+                    lastAlertedConcurrentCount.remove(pairKey)
+                }
                 continue
             }
 

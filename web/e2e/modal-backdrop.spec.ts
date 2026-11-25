@@ -283,6 +283,48 @@ test.describe('Modals block the page behind them', () => {
 				await expect(page.getByLabel('Search playback history')).not.toHaveValue('');
 			});
 
+			test('user preferences dialog: signing out asks first, and dismissing that keeps the unsaved changes', async ({ page }) => {
+				await openHistory(page);
+				const dialog = await MODALS[1].open(page);
+				const press = (locator: Locator) => (device.hasTouch ? locator.tap() : locator.click());
+				const signOut = dialog.getByRole('button', { name: 'Sign Out' });
+				const confirmation = dialog.getByRole('group', { name: 'Sign out of Miru?' });
+				const draftChoice = dialog.getByRole('radio', { name: '12-hour' });
+				await press(draftChoice);
+
+				const dismissals: Array<() => Promise<void>> = [
+					() => press(confirmation.getByRole('button', { name: 'Cancel' })),
+					() => page.keyboard.press('Escape'),
+					() => press(dialog.getByText('Time Format', { exact: true })),
+					async () => {
+						const point = await backdropPoint(page, dialog);
+						await (device.hasTouch ? page.touchscreen.tap(point.x, point.y) : page.mouse.click(point.x, point.y));
+					}
+				];
+				for (const dismiss of dismissals) {
+					await press(signOut);
+					await expect(confirmation).toContainText('Your unsaved changes will be lost.');
+					await expect(confirmation.getByRole('button', { name: 'Cancel' })).toBeFocused();
+					const inner = (await confirmation.boundingBox())!;
+					const outer = (await dialog.boundingBox())!;
+					expect(inner.x).toBeGreaterThanOrEqual(outer.x);
+					expect(inner.x + inner.width).toBeLessThanOrEqual(outer.x + outer.width);
+					expect(inner.y + inner.height).toBeLessThanOrEqual(outer.y + outer.height + 1);
+
+					await dismiss();
+					await expect(confirmation).toBeHidden();
+					await expect(signOut).toBeFocused();
+					await page.waitForTimeout(300);
+					await expect(dialog).toBeVisible();
+					await expect(draftChoice).toHaveAttribute('aria-checked', 'true');
+				}
+
+				// With nothing to confirm, Escape closes the dialog as usual
+				await page.keyboard.press('Escape');
+				await expect(dialog).not.toBeVisible();
+				await expect(page).toHaveURL(`${miru.baseUrl}/history`);
+			});
+
 			test('a dialog stays usable while the body ignores pointer events, as it does under a bits-ui dialog', async ({ page }) => {
 				await openHistory(page);
 				const dialog = await MODALS[0].open(page);

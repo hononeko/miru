@@ -2,7 +2,7 @@
 	import type { Snippet } from 'svelte';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
-	import { goto } from '$app/navigation';
+	import { Popover } from 'bits-ui';
 	import { api } from '$api/client';
 	import {
 		Radio,
@@ -17,6 +17,7 @@
 	import MiruLogo from './MiruLogo.svelte';
 	import Badge from '$components/ui/Badge.svelte';
 	import ProxiedImage from '$components/miru/ProxiedImage.svelte';
+	import SignOutConfirmation from '$components/miru/SignOutConfirmation.svelte';
 	import UserPreferencesModal from '$components/miru/UserPreferencesModal.svelte';
 	import MediaDetailsModal from '$components/miru/MediaDetailsModal.svelte';
 	import { authStore } from '$stores/auth.svelte';
@@ -31,7 +32,10 @@
 
 	let { children }: Props = $props();
 
+	const signOutTitleId = 'sidebar-sign-out-title';
+
 	let serverVersion = $state<string | null>(null);
+	let signOutOpen = $state(false);
 
 	onMount(() => {
 		if (typeof window === 'undefined') return;
@@ -81,12 +85,8 @@
 		return 'OFFLINE';
 	});
 
-	async function handleLogout() {
-		const redirectsToOidc = authStore.oidcEnabled && Boolean(authStore.oidcLogoutUrl);
-		await authStore.logout();
-		if (!redirectsToOidc) {
-			await goto('/login');
-		}
+	function handleSignOutOpenChange(open: boolean) {
+		if (!authStore.loggingOut) signOutOpen = open;
 	}
 </script>
 
@@ -205,14 +205,32 @@
 						{/key}
 					</button>
 					{#if authStore.authMode !== 'none' && authStore.authenticated}
-						<button
-							type="button"
-							onclick={handleLogout}
-							aria-label="Sign out"
-							class="inline-flex h-7 w-7 items-center justify-center rounded-md text-fg-secondary transition-[background-color,color,transform] duration-150 hover:bg-danger-soft hover:text-danger active:scale-90 motion-reduce:active:scale-100 cursor-pointer"
-						>
-							<LogOut class="h-3.5 w-3.5" />
-						</button>
+						<Popover.Root bind:open={() => signOutOpen, handleSignOutOpenChange}>
+							<Popover.Trigger
+								type="button"
+								aria-label="Sign out"
+								class="inline-flex h-7 w-7 items-center justify-center rounded-md text-fg-secondary transition-[background-color,color,transform] duration-150 hover:bg-danger-soft hover:text-danger active:scale-90 motion-reduce:active:scale-100 cursor-pointer data-[state=open]:bg-danger-soft data-[state=open]:text-danger"
+							>
+								<LogOut class="h-3.5 w-3.5" />
+							</Popover.Trigger>
+							<Popover.Portal>
+								<Popover.Content
+									side="top"
+									align="end"
+									sideOffset={8}
+									collisionPadding={12}
+									aria-labelledby={signOutTitleId}
+									class="z-50 w-60 max-w-[calc(100vw-1.5rem)] rounded-xl border border-border-strong bg-surface p-3 text-fg-primary shadow-xl outline-none data-[state=open]:animate-popover-in"
+								>
+									<Popover.Arrow class="text-border-strong" width={10} height={5} />
+									<SignOutConfirmation
+										titleId={signOutTitleId}
+										oncancel={() => handleSignOutOpenChange(false)}
+										onsignedout={() => (signOutOpen = false)}
+									/>
+								</Popover.Content>
+							</Popover.Portal>
+						</Popover.Root>
 					{/if}
 				</div>
 			</div>

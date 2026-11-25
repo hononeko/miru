@@ -119,6 +119,24 @@ describe('AuthStore provider initialization and logout', () => {
 		expect(store.principal).toBeNull();
 	});
 
+	it('sends a single logout request while one is in progress, and can log out again afterwards', async () => {
+		const store = new AuthStore();
+		let answer!: (value: unknown) => void;
+		const post = vi.spyOn(api, 'POST').mockReturnValueOnce(new Promise((resolve) => (answer = resolve)) as never);
+
+		const first = store.logout();
+		expect(store.loggingOut).toBe(true);
+		await store.logout();
+		answer({ response: jsonResponse(204) });
+		await first;
+		expect(post).toHaveBeenCalledTimes(1);
+		expect(store.loggingOut).toBe(false);
+
+		post.mockRejectedValueOnce(new Error('offline'));
+		await expect(store.logout()).rejects.toThrow('offline');
+		expect(store.loggingOut).toBe(false);
+	});
+
 	it('computes isUnlinkedUser accurately for USER and ADMIN roles', () => {
 		const store = new AuthStore();
 		expect(store.isUnlinkedUser).toBe(false);

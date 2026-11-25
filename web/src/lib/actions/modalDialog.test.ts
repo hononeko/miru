@@ -64,6 +64,22 @@ describe('modalDialog', () => {
 		expect(dialog.close).not.toHaveBeenCalled();
 	});
 
+	it('stays open for a backdrop press that starts while it must not be dismissed', () => {
+		const { dialog } = createDialog();
+		let dismissable = false;
+		action = modalDialog(dialog, { canDismiss: () => dismissable });
+
+		send(dialog, 'pointerdown', OUTSIDE);
+		// The press itself may lift the reason, but only the next one closes the dialog
+		dismissable = true;
+		send(dialog, 'click', OUTSIDE);
+		expect(dialog.close).not.toHaveBeenCalled();
+
+		send(dialog, 'pointerdown', OUTSIDE);
+		send(dialog, 'click', OUTSIDE);
+		expect(dialog.close).toHaveBeenCalledTimes(1);
+	});
+
 	it('blocks touches that would scroll the page because nothing under them scrolls inside the dialog', () => {
 		const { dialog, button } = createDialog();
 		const list = document.createElement('div');

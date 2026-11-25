@@ -390,6 +390,94 @@ describe('Admin console Stream Guardrails & Audit Log', () => {
 		expect(screen.getByText('Cannot demote the last active admin account.')).toBeTruthy();
 	});
 
+	describe('deleting an account', () => {
+		const trigger = (row: number) => screen.getAllByRole('button', { name: 'Delete' })[row];
+		const confirmation = () => screen.queryByRole('dialog', { name: /^Delete account/ });
+		const inConfirmation = (name: string) =>
+			Array.from(confirmation()!.querySelectorAll('button')).find((b) => b.textContent?.trim() === name)!;
+
+		async function openConfirmation(row: number) {
+			await waitFor(() => expect(screen.getByText('bob')).toBeTruthy());
+			await fireEvent.click(trigger(row));
+			await waitFor(() => expect(confirmation()).toBeTruthy());
+		}
+
+		it('asks first and keeps the account when cancelled', async () => {
+			const del = vi.spyOn(api, 'DELETE');
+			render(AdminPage);
+
+			await openConfirmation(0);
+			expect(trigger(0).getAttribute('aria-expanded')).toBe('true');
+			expect(confirmation()!.textContent).toContain("Delete account 'bob'?");
+			expect(confirmation()!.textContent).not.toContain('SSO');
+			await waitFor(() => expect(document.activeElement).toBe(inConfirmation('Cancel')));
+			await fireEvent.click(inConfirmation('Cancel'));
+			await waitFor(() => expect(confirmation()).toBeNull());
+
+			await openConfirmation(1);
+			expect(confirmation()!.textContent).toContain("Delete account 'sso-carol'?");
+			expect(confirmation()!.textContent).toContain('They can sign in with SSO again, as a new account.');
+			await fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+			await waitFor(() => expect(confirmation()).toBeNull());
+
+			expect(del).not.toHaveBeenCalled();
+			expect(screen.getByText('bob')).toBeTruthy();
+			expect(screen.getByText('sso-carol')).toBeTruthy();
+		});
+
+		it('deletes only that account, once, when confirmed', async () => {
+			let answer!: (value: unknown) => void;
+			const del = vi.spyOn(api, 'DELETE').mockReturnValue(new Promise((resolve) => (answer = resolve)) as never);
+			render(AdminPage);
+
+			await openConfirmation(0);
+			await fireEvent.click(inConfirmation('Delete'));
+			const pending = await waitFor(() => {
+				const button = inConfirmation('Deleting…');
+				expect(button.disabled).toBe(true);
+				return button;
+			});
+
+			// Neither another press nor dismissing it does anything while the request is in flight
+			pending.disabled = false;
+			await fireEvent.click(pending);
+			await fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			expect(confirmation()).toBeTruthy();
+
+			const [admin, , carol] = makeAccounts();
+			showAccounts([admin, carol]);
+			answer({ response: new Response(null, { status: 204 }) });
+			await waitFor(() => expect(screen.getByText("Deleted account 'bob'.")).toBeTruthy());
+			await waitFor(() => expect(screen.getByText('sso-carol')).toBeTruthy());
+			expect(confirmation()).toBeNull();
+			expect(screen.queryByText('bob')).toBeNull();
+			expect(del).toHaveBeenCalledTimes(1);
+			expect(del).toHaveBeenCalledWith('/api/v1/admin/accounts/{id}', { params: { path: { id: 'acc-2' } } });
+		});
+
+		it('says why an account cannot be deleted and can be tried again', async () => {
+			const refused = { status: 409, title: 'Conflict', type: 'about:blank', detail: 'Cannot delete the last remaining active admin account' };
+			const del = vi.spyOn(api, 'DELETE').mockResolvedValue({ error: refused, response: new Response(null, { status: 409 }) } as never);
+			render(AdminPage);
+
+			await openConfirmation(0);
+			await fireEvent.click(inConfirmation('Delete'));
+			await waitFor(() => expect(confirmation()!.querySelector('[role="alert"]')?.textContent).toBe(refused.detail));
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			expect(trigger(0).getAttribute('aria-expanded')).toBe('true');
+			expect(inConfirmation('Delete').disabled).toBe(false);
+			expect(screen.queryByText(/Deleted account/)).toBeNull();
+			expect(screen.getByText('bob')).toBeTruthy();
+
+			await fireEvent.click(inConfirmation('Cancel'));
+			await waitFor(() => expect(confirmation()).toBeNull());
+			await openConfirmation(0);
+			expect(confirmation()!.querySelector('[role="alert"]')).toBeNull();
+			expect(del).toHaveBeenCalledTimes(1);
+		});
+	});
+
 	it('sets the role of an SSO account and hands it back to its groups', async () => {
 		let carol = makeAccounts()[2];
 		const patchSpy = vi.spyOn(api, 'PATCH').mockImplementation((async (

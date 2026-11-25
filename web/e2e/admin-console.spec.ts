@@ -144,8 +144,17 @@ test.describe('Admin console: Plex PIN OAuth, Tautulli import, local accounts & 
 		await expect(linkSheet).not.toBeVisible();
 		await expect(memberRow).toContainText('Alice Admin');
 
-		// Delete e2e_member account
+		// Delete e2e_member account, which asks first
+		const deleteConfirmation = page.getByRole('dialog', { name: "Delete account 'e2e_member'?" });
 		await memberRow.getByRole('button', { name: 'Delete' }).click();
+		await expect(deleteConfirmation.getByRole('button', { name: 'Cancel' })).toBeFocused();
+		await deleteConfirmation.getByRole('button', { name: 'Cancel' }).click();
+		await expect(deleteConfirmation).not.toBeVisible();
+		await expect(memberRow.getByRole('button', { name: 'Delete' })).toBeFocused();
+		await memberRow.getByRole('button', { name: 'Delete' }).click();
+		await deleteConfirmation.getByRole('button', { name: 'Delete' }).click();
+		await expect(page.getByText("Deleted account 'e2e_member'.")).toBeVisible();
+		await expect(deleteConfirmation).not.toBeVisible();
 		await expect(accountsSection.locator('> div > div').filter({ hasText: 'e2e_member' })).toHaveCount(0);
 
 		// --- 4. API Key Creation (with Expiration Interval), Live Verification & Revocation ---

@@ -16,7 +16,6 @@
 		Server,
 		ShieldAlert,
 		SlidersHorizontal,
-		Trash2,
 		Upload
 	} from '@lucide/svelte';
 	import { api, MiruApiError, unwrap } from '$api/client';
@@ -44,6 +43,7 @@
 	import Badge from '$components/ui/Badge.svelte';
 	import Button from '$components/ui/Button.svelte';
 	import Sheet from '$components/ui/Sheet.svelte';
+	import DeleteAccountButton from '$components/miru/DeleteAccountButton.svelte';
 	import WebhooksPanel from '$components/miru/WebhooksPanel.svelte';
 	import { authStore } from '$stores/auth.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
@@ -570,18 +570,20 @@
 		}
 	}
 
-	async function handleDeleteAccount(id: string) {
+	async function handleDeleteAccount(account: AccountResponse): Promise<string | null> {
 		error = null;
 		accountNotice = null;
 		try {
 			const res = await api.DELETE('/api/v1/admin/accounts/{id}', {
-				params: { path: { id } }
+				params: { path: { id: account.id } }
 			});
 			if (res.error) throw new MiruApiError(res.response.status, res.error);
-			await loadAll();
 		} catch (err) {
-			error = err instanceof MiruApiError ? err.detail : 'Failed to delete account';
+			return err instanceof MiruApiError ? err.detail : 'Failed to delete account';
 		}
+		accountNotice = `Deleted account '${account.username}'.`;
+		await loadAll();
+		return null;
 	}
 
 	const activeAdminCount = $derived(accounts.filter((a) => a.role === 'ADMIN' && !a.disabled).length);
@@ -1026,10 +1028,7 @@
 								{acc.disabled ? 'Enable' : 'Disable'}
 							</Button>
 							{#if acc.id !== authStore.principal?.accountId}
-								<Button variant="destructive" size="sm" onclick={() => handleDeleteAccount(acc.id)}>
-									<Trash2 class="h-3.5 w-3.5" />
-									Delete
-								</Button>
+								<DeleteAccountButton account={acc} ondelete={handleDeleteAccount} />
 							{/if}
 						</div>
 					</div>

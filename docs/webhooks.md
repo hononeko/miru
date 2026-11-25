@@ -50,7 +50,7 @@ Up to four deliveries are sent at a time, and the rest wait in memory. Waiting o
 | `server.recovered` | The media server answers again after `server.unreachable`. | `outageDurationSec` |
 | `webhook.test` | An admin sends a test. It cannot be subscribed to. | `message` |
 
-In `details` of `stream.terminated`, `source` is `manual` or `guardrail`, and `ruleType` is only there for guardrails: `TRANSCODE_4K`, `PAUSED_TIMEOUT` or `CONCURRENT_STREAMS`.
+In `details` of `stream.terminated`, `source` is `MANUAL` or `GUARDRAIL`, and `ruleType` is only there for guardrails: `TRANSCODE_4K`, `PAUSED_TIMEOUT` or `CONCURRENT_STREAMS`.
 
 A target does not get the same event again within its cooldown: for the same stream, for the same user with `stream.concurrent_limit`, and for the same server with the `server.*` events.
 
@@ -84,7 +84,7 @@ A target does not get the same event again within its cooldown: for the same str
   },
   "details": {
     "reason": "4K video transcoding is disabled on this server.",
-    "source": "guardrail",
+    "source": "GUARDRAIL",
     "actorName": "Guardrail: 4K Transcode",
     "ruleType": "TRANSCODE_4K"
   }

@@ -138,7 +138,7 @@ class WebhookEventEvaluator(
                                 details =
                                     buildJsonObject {
                                         put("reason", event.reason)
-                                        put("source", event.source.name.lowercase())
+                                        put("source", event.source.name)
                                         put("actorName", event.actorName)
                                         event.ruleType?.let { put("ruleType", it.name) }
                                     },

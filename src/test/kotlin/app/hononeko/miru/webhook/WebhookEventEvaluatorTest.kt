@@ -291,6 +291,44 @@ class WebhookEventEvaluatorTest :
             firedAgain shouldHaveSize 1
         }
 
+        test("stream.concurrent_limit does not count a stream that Plex no longer lists, and does not repeat after a hiccup") {
+            val evaluator = WebhookEventEvaluator()
+            val target =
+                makeTarget(
+                    events = listOf(WebhookEventType.STREAM_CONCURRENT_LIMIT),
+                    concurrentStreamThreshold = 2,
+                    cooldownSeconds = 0,
+                )
+            val s1 = makeSession(sessionKey = "1", ratingKey = "m1")
+            val s2 = makeSession(sessionKey = "2", ratingKey = "m2")
+            val s3 = makeSession(sessionKey = "3", ratingKey = "m3")
+
+            suspend fun onUpdate(
+                session: ActiveSessionRecord,
+                vararg activeSessions: ActiveSessionRecord,
+            ) = evaluator.onSessionEvent(
+                SessionEvent.SessionUpdated("srv-1", session.key, 10_000L, session, "playing", "direct_play", false),
+                activeSessions.toList(),
+                listOf(target),
+                testServer,
+                testUser,
+            )
+
+            // The viewer switched from the first to the third title: two streams, not three
+            onUpdate(s3, s1.copy(missedPolls = 1), s2, s3).shouldBeEmpty()
+
+            // It was only a hiccup: three streams after all
+            onUpdate(s3, s1, s2, s3) shouldHaveSize 1
+
+            // Another hiccup is not the end of the alerted streams, so it does not alert again
+            onUpdate(s3, s1.copy(missedPolls = 1), s2, s3).shouldBeEmpty()
+            onUpdate(s3, s1, s2, s3).shouldBeEmpty()
+
+            // Once the first stream has ended, exceeding the limit alerts again
+            onUpdate(s3, s2, s3).shouldBeEmpty()
+            onUpdate(s3, s1, s2, s3) shouldHaveSize 1
+        }
+
         test("stream.buffering_spike triggers when buffering transitions reach threshold inside window") {
             val evaluator = WebhookEventEvaluator()
             val target =

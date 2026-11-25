@@ -4,7 +4,8 @@ info:
   version: 1.0.0
   description: >-
     Lightweight media server telemetry, live stream monitor, playback history tracker,
-    and library analytics API.
+    and library analytics API. See https://github.com/hononeko/miru/blob/main/docs/compatibility.md
+    for what stays compatible between releases.
   license:
     name: Apache-2.0
     url: https://www.apache.org/licenses/LICENSE-2.0.html
@@ -4512,6 +4513,7 @@ components:
       properties:
         id:
           type: string
+          description: Opaque identifier of the section, for use as `{id}` in paths
         serverId:
           type: string
         sectionKey:

@@ -109,8 +109,8 @@ Single sign-on is on with `AUTH_MODE=oidc`, or with `AUTH_MODE=local` and `OIDC_
 | `OIDC_DISPLAY_NAME` | `SSO` | Label of the single sign-on button on the login page. |
 | `OIDC_SCOPES` | `openid,profile,email,groups` | Scopes to request, separated by commas or spaces. |
 | `OIDC_GROUPS_CLAIM` | `groups` | Claim that lists the user's groups. |
-| `OIDC_ADMIN_GROUPS` | *(none)* | Comma-separated groups whose members sign in as `ADMIN`. |
-| `OIDC_USER_GROUPS` | *(none)* | Comma-separated groups whose members sign in as `USER`. Users in neither these nor the admin groups are refused. At least one group must be set across `OIDC_ADMIN_GROUPS` and `OIDC_USER_GROUPS`. |
+| `OIDC_ADMIN_GROUPS` | *(none)* | Comma-separated groups whose members sign in as `ADMIN`. Once an admin sets the role of an account, Miru stops changing it until the admin hands it back to the groups. |
+| `OIDC_USER_GROUPS` | *(none)* | Comma-separated groups whose members sign in as `USER`, with the same exception as for the admin groups. Users in neither these nor the admin groups are refused, whatever role an admin set. At least one group must be set across `OIDC_ADMIN_GROUPS` and `OIDC_USER_GROUPS`. |
 | `OIDC_AUTO_LINK_BY_EMAIL` | `true` | Automatically links SSO accounts to the Plex users with the same verified email address, which scopes what a `USER` account sees. Only an email the identity provider marks as verified (`email_verified`, from the ID token or userinfo) is used, and an account without one is unlinked. Sign-in records the email and whether it is verified; links are recomputed when that changes and after every hourly Plex user sync. Once an admin edits an account's links, Miru stops changing them until the admin switches the account back to email linking. Set to `false` to disable automatic email linking. |
 | `OIDC_POST_LOGOUT_REDIRECT_URI` | *(none)* | Where your provider sends the browser after logout, for example `https://<your-host>/login`. Must be an `http://` or `https://` URL. |
 

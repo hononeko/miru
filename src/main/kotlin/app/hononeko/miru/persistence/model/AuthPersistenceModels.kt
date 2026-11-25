@@ -11,6 +11,8 @@ data class AuthAccountRecord(
     val authProvider: String = "LOCAL",
     val externalSubject: String? = null,
     val mediaUserLinkMode: String = "MANUAL",
+    /** Whether an SSO sign-in sets [role] from the account's groups (AUTO) or keeps it (MANUAL). */
+    val roleMode: String = "MANUAL",
     /** Whether the IdP marked [email] verified at the last SSO sign-in; null until recorded. */
     val emailVerified: Boolean? = null,
     val createdAtMs: Long,
@@ -20,7 +22,7 @@ data class AuthAccountRecord(
         "AuthAccountRecord(id=$id, username=$username, usernameNormalized=$usernameNormalized, " +
             "email=$email, passwordHash=***, role=$role, disabled=$disabled, " +
             "authProvider=$authProvider, externalSubject=$externalSubject, " +
-            "mediaUserLinkMode=$mediaUserLinkMode, emailVerified=$emailVerified, " +
+            "mediaUserLinkMode=$mediaUserLinkMode, roleMode=$roleMode, emailVerified=$emailVerified, " +
             "createdAtMs=$createdAtMs, updatedAtMs=$updatedAtMs)"
 }
 

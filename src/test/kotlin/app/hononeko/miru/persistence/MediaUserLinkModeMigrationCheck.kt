@@ -25,6 +25,7 @@ private data class SeedAccount(
  * Migrates an empty database to V7, seeds accounts as they looked before link modes existed, runs the
  * remaining migrations, and checks which accounts V8 marks AUTO: SSO accounts whose links are all email
  * matches (or that have none). Everything else must stay MANUAL so hand-set links are never overwritten.
+ * Also checks that V12 gives SSO accounts the AUTO role mode, and local accounts MANUAL.
  */
 internal fun assertMediaUserLinkModeBackfill(config: DatabaseConfig) {
     val target =
@@ -68,6 +69,18 @@ internal fun assertMediaUserLinkModeBackfill(config: DatabaseConfig) {
             }
         // No account's email has been checked yet: that is recorded at each account's next sign-in.
         verificationRecorded shouldBe 0
+        // V12: the role of every SSO account still comes from its groups, as before.
+        val roleModes =
+            handle.dataSource.connection.use { conn ->
+                conn.createStatement().use { stmt ->
+                    stmt.executeQuery("SELECT id, role_mode FROM auth_accounts").use { rs ->
+                        buildMap {
+                            while (rs.next()) put(rs.getString(1), rs.getString(2))
+                        }
+                    }
+                }
+            }
+        roleModes shouldBe modes.keys.associateWith { id -> if (id == "local") "MANUAL" else "AUTO" }
         modes shouldBe
             mapOf(
                 "oidc-auto" to "AUTO",

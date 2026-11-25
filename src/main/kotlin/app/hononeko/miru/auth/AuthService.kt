@@ -440,12 +440,13 @@ class AuthService(
         id: String,
         actingAccountId: String,
         role: String? = null,
+        roleMode: RoleMode? = null,
         disabled: Boolean? = null,
         password: String? = null,
     ): Either<MiruError, AccountWithLinks> =
         either {
-            ensure(role != null || disabled != null || password != null) {
-                MiruError.ValidationError("At least one field (role, disabled, password) must be provided")
+            ensure(role != null || roleMode != null || disabled != null || password != null) {
+                MiruError.ValidationError("At least one field (role, roleMode, disabled, password) must be provided")
             }
 
             val errors = linkedMapOf<String, String>()
@@ -457,6 +458,9 @@ class AuthService(
                         }
                     }
                 }
+            if (role != null && roleMode == RoleMode.AUTO) {
+                errors["roleMode"] = "cannot be 'AUTO' when a role is given"
+            }
             if (password != null) {
                 PasswordPolicy.validationError(password)?.let { message ->
                     errors["password"] = message
@@ -476,13 +480,23 @@ class AuthService(
                 }
             }
 
+            ensure(roleMode != RoleMode.AUTO || target.authProvider.equals(PROVIDER_OIDC, ignoreCase = true)) {
+                MiruError.Conflict("Only SSO accounts can take their role from groups")
+            }
+
             val currentRole = parseRole(target.role)
             val nextRole = parsedRole ?: currentRole
+            val nextRoleMode = roleMode ?: RoleMode.MANUAL.takeIf { parsedRole != null }
+            // The groups may take the admin role away at the next sign-in.
+            val handsRoleToGroups = nextRoleMode == RoleMode.AUTO && RoleMode.fromStored(target.roleMode) != RoleMode.AUTO
             val nextDisabled = disabled ?: target.disabled
 
             if (id == actingAccountId) {
                 ensure(nextRole == MiruRole.ADMIN) {
                     MiruError.Conflict("Cannot demote your own account")
+                }
+                ensure(!handsRoleToGroups) {
+                    MiruError.Conflict("Cannot hand the role of your own account to its groups")
                 }
                 ensure(!nextDisabled) {
                     MiruError.Conflict("Cannot disable your own account")
@@ -490,7 +504,7 @@ class AuthService(
             }
 
             val isTargetActiveAdmin = currentRole == MiruRole.ADMIN && !target.disabled
-            val losingActiveAdmin = isTargetActiveAdmin && (nextRole != MiruRole.ADMIN || nextDisabled)
+            val losingActiveAdmin = isTargetActiveAdmin && (nextRole != MiruRole.ADMIN || nextDisabled || handsRoleToGroups)
             if (losingActiveAdmin) {
                 val activeAdmins = accountRepository.countActiveAdmins().bind()
                 ensure(activeAdmins > 1L) {
@@ -506,6 +520,7 @@ class AuthService(
                         role = nextRole.name,
                         disabled = nextDisabled,
                         passwordHash = newPasswordHash,
+                        roleMode = nextRoleMode?.name,
                         updatedAtMs = clock(),
                     ).bind()
                     ?: raise(MiruError.NotFound(resource = "Account", id = id))

@@ -29,6 +29,9 @@ import org.jetbrains.exposed.v1.jdbc.upsert
 /** Stored value of `auth_accounts.media_user_link_mode` for accounts linked by email (MediaUserLinkMode.AUTO). */
 private const val AUTO_LINK_MODE = "AUTO"
 
+/** Stored value of `auth_accounts.role_mode` for accounts whose role an SSO sign-in sets from their groups. */
+private const val AUTO_ROLE_MODE = "AUTO"
+
 interface AuthAccountRepository {
     suspend fun insert(account: AuthAccountRecord): Either<MiruError.PersistenceError, AuthAccountRecord>
 
@@ -41,6 +44,10 @@ interface AuthAccountRepository {
         externalSubject: String,
     ): Either<MiruError.PersistenceError, AuthAccountRecord?>
 
+    /**
+     * Stores what an SSO sign-in says about the account. [role] is stored only while the account is in AUTO
+     * role mode, checked in the same transaction, so the role an admin set is kept.
+     */
     suspend fun updateOidcProfile(
         id: String,
         username: String,
@@ -68,6 +75,7 @@ interface AuthAccountRepository {
         role: String,
         disabled: Boolean,
         passwordHash: String? = null,
+        roleMode: String? = null,
         updatedAtMs: Long,
     ): Either<MiruError.PersistenceError, AuthAccountRecord?>
 
@@ -166,6 +174,7 @@ class ExposedAuthAccountRepository(
                 it[authProvider] = account.authProvider
                 it[externalSubject] = account.externalSubject
                 it[mediaUserLinkMode] = account.mediaUserLinkMode
+                it[roleMode] = account.roleMode
                 it[emailVerified] = account.emailVerified
                 it[createdAtMs] = account.createdAtMs
                 it[updatedAtMs] = account.updatedAtMs
@@ -223,12 +232,17 @@ class ExposedAuthAccountRepository(
                     it[AuthAccountsTable.usernameNormalized] = usernameNormalized
                     it[AuthAccountsTable.email] = email
                     it[AuthAccountsTable.emailVerified] = emailVerified
-                    it[AuthAccountsTable.role] = role
                     it[AuthAccountsTable.updatedAtMs] = updatedAtMs
                 }
             if (updated <= 0) {
                 null
             } else {
+                // The update above holds the account row, so this sees a role an admin set meanwhile.
+                AuthAccountsTable.update({
+                    (AuthAccountsTable.id eq id) and (AuthAccountsTable.roleMode eq AUTO_ROLE_MODE)
+                }) {
+                    it[AuthAccountsTable.role] = role
+                }
                 findAccountByIdInTx(id)
             }
         }
@@ -276,6 +290,7 @@ class ExposedAuthAccountRepository(
         role: String,
         disabled: Boolean,
         passwordHash: String?,
+        roleMode: String?,
         updatedAtMs: Long,
     ): Either<MiruError.PersistenceError, AuthAccountRecord?> =
         database.exposedQuery("auth_account_update") {
@@ -285,6 +300,9 @@ class ExposedAuthAccountRepository(
                     it[AuthAccountsTable.disabled] = disabled
                     if (passwordHash != null) {
                         it[AuthAccountsTable.passwordHash] = passwordHash
+                    }
+                    if (roleMode != null) {
+                        it[AuthAccountsTable.roleMode] = roleMode
                     }
                     it[AuthAccountsTable.updatedAtMs] = updatedAtMs
                 }
@@ -563,6 +581,7 @@ private fun ResultRow.toAuthAccountRecord(): AuthAccountRecord =
         authProvider = this[AuthAccountsTable.authProvider],
         externalSubject = this[AuthAccountsTable.externalSubject],
         mediaUserLinkMode = this[AuthAccountsTable.mediaUserLinkMode],
+        roleMode = this[AuthAccountsTable.roleMode],
         emailVerified = this[AuthAccountsTable.emailVerified],
         createdAtMs = this[AuthAccountsTable.createdAtMs],
         updatedAtMs = this[AuthAccountsTable.updatedAtMs],

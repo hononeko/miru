@@ -269,7 +269,7 @@ export interface paths {
         head?: never;
         /**
          * Update an account's role, disabled status, or local password
-         * @description Updates role (`ADMIN` / `USER`), `disabled` status, and/or resets a `LOCAL` account's password. Prevents self-demotion, self-disabling, and demoting or disabling the last active admin. Revokes active sessions whenever the account is disabled, downgraded, or has its password reset.
+         * @description Updates role (`ADMIN` / `USER`), `disabled` status, and/or resets a `LOCAL` account's password. Prevents self-demotion, self-disabling, and demoting or disabling the last active admin. Revokes active sessions whenever the account is disabled, downgraded, or has its password reset. Setting the role also sets `roleMode` to `MANUAL`, so SSO sign-in no longer changes it; `roleMode` `AUTO` hands the role of an SSO account back to its groups.
          */
         patch: operations["updateAccount"];
         trace?: never;
@@ -1005,6 +1005,11 @@ export interface components {
          * @enum {string}
          */
         MediaUserLinkMode: "AUTO" | "MANUAL";
+        /**
+         * @description `AUTO`: every SSO sign-in sets the account's role from its groups. `MANUAL`: the role is what an admin set. Signing in with SSO takes one of the configured groups either way. Local accounts are always `MANUAL`.
+         * @enum {string}
+         */
+        RoleMode: "AUTO" | "MANUAL";
         /** @enum {string} */
         AuthSource: "SESSION_COOKIE" | "API_KEY" | "DEV_BYPASS";
         AuthProvidersResponse: {
@@ -1052,7 +1057,10 @@ export interface components {
             newPassword: string;
         };
         UpdateAccountRequest: {
+            /** @description Sets `roleMode` to `MANUAL` as well. */
             role?: components["schemas"]["MiruRole"] | null;
+            /** @description `AUTO` (SSO accounts only, and not together with `role`) keeps the role until the next sign-in, which sets it from the account's groups. `MANUAL` keeps the role as it is. */
+            roleMode?: components["schemas"]["RoleMode"] | null;
             disabled?: boolean | null;
             /**
              * Format: password
@@ -1096,6 +1104,7 @@ export interface components {
             username: string;
             email?: string | null;
             role: components["schemas"]["MiruRole"];
+            roleMode: components["schemas"]["RoleMode"];
             disabled: boolean;
             authProvider: string;
             linkedMediaUserIds: string[];
@@ -2848,7 +2857,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
-            /** @description Self-demotion/disable, last active admin protection, or password reset on OIDC account */
+            /** @description Self-demotion/disable, last active admin protection, password reset on OIDC account, or `roleMode` `AUTO` on a local account or the caller's own account */
             409: {
                 headers: {
                     [name: string]: unknown;

@@ -318,6 +318,7 @@ private fun Route.adminAccountRoutes(authService: AuthService) {
                             id = targetId,
                             actingAccountId = acting.accountId,
                             role = request.role,
+                            roleMode = request.roleMode,
                             disabled = request.disabled,
                             password = request.password,
                         ).bind()

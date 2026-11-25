@@ -6,6 +6,7 @@ import app.hononeko.miru.auth.AuthSource
 import app.hononeko.miru.auth.MediaUserLinkMode
 import app.hononeko.miru.auth.MiruPrincipal
 import app.hononeko.miru.auth.MiruRole
+import app.hononeko.miru.auth.RoleMode
 import app.hononeko.miru.persistence.model.ApiKeyRecord
 import app.hononeko.miru.persistence.model.UserPreferencesRecord
 import kotlinx.serialization.Serializable
@@ -64,11 +65,12 @@ data class ChangePasswordRequest(
 @Serializable
 data class UpdateAccountRequest(
     val role: String? = null,
+    val roleMode: RoleMode? = null,
     val disabled: Boolean? = null,
     val password: String? = null,
 ) {
     override fun toString(): String =
-        "UpdateAccountRequest(role=$role, disabled=$disabled, password=${if (password != null) "***" else "null"})"
+        "UpdateAccountRequest(role=$role, roleMode=$roleMode, disabled=$disabled, password=${if (password != null) "***" else "null"})"
 }
 
 @Serializable
@@ -77,6 +79,7 @@ data class AccountResponse(
     val username: String,
     val email: String? = null,
     val role: MiruRole,
+    val roleMode: RoleMode,
     val disabled: Boolean,
     val authProvider: String,
     val linkedMediaUserIds: List<String>,
@@ -201,6 +204,7 @@ internal fun AccountWithLinks.toResponse(): AccountResponse =
         username = account.username,
         email = account.email,
         role = if (account.role.equals("ADMIN", ignoreCase = true)) MiruRole.ADMIN else MiruRole.USER,
+        roleMode = RoleMode.fromStored(account.roleMode),
         disabled = account.disabled,
         authProvider = account.authProvider,
         linkedMediaUserIds = linkedMediaUserIds.sorted(),

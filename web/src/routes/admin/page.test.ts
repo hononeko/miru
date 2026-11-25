@@ -95,6 +95,7 @@ function makeAccounts(): AccountResponse[] {
 			username: 'admin',
 			email: 'admin@miru.local',
 			role: 'ADMIN',
+			roleMode: 'MANUAL',
 			disabled: false,
 			authProvider: 'LOCAL',
 			linkedMediaUserIds: [],
@@ -108,6 +109,7 @@ function makeAccounts(): AccountResponse[] {
 			username: 'bob',
 			email: 'bob@miru.local',
 			role: 'USER',
+			roleMode: 'MANUAL',
 			disabled: false,
 			authProvider: 'LOCAL',
 			linkedMediaUserIds: [],
@@ -121,6 +123,7 @@ function makeAccounts(): AccountResponse[] {
 			username: 'sso-carol',
 			email: 'carol@miru.local',
 			role: 'USER',
+			roleMode: 'AUTO',
 			disabled: false,
 			authProvider: 'OIDC',
 			linkedMediaUserIds: [],
@@ -338,5 +341,65 @@ describe('Admin console Stream Guardrails & Audit Log', () => {
 			expect(screen.getByRole('heading', { name: 'Manage Account · sso-carol' })).toBeTruthy();
 			expect(screen.getByText(/Password resets are unavailable for OIDC accounts/i)).toBeTruthy();
 		});
+	});
+
+	it('sets the role of an SSO account and hands it back to its groups', async () => {
+		let carol = makeAccounts()[2];
+		const patchSpy = vi.spyOn(api, 'PATCH').mockImplementation((async (
+			_url: string,
+			opts: { body: { role?: 'ADMIN' | 'USER'; roleMode?: 'AUTO' | 'MANUAL' } }
+		) => {
+			carol = {
+				...carol,
+				role: opts.body.role ?? carol.role,
+				roleMode: opts.body.roleMode ?? (opts.body.role ? 'MANUAL' : carol.roleMode)
+			};
+			return { data: carol, response: new Response(null, { status: 200 }) };
+		}) as never);
+
+		render(AdminPage);
+		await waitFor(() => expect(screen.getByText('sso-carol')).toBeTruthy());
+		expect(screen.queryByText('Role set manually')).toBeNull();
+
+		async function openCarol(): Promise<HTMLSelectElement> {
+			await fireEvent.click(screen.getAllByRole('button', { name: 'Manage' })[2]);
+			await waitFor(() => expect(screen.getByRole('heading', { name: 'Manage Account · sso-carol' })).toBeTruthy());
+			return screen.getByLabelText(/Account Role/) as HTMLSelectElement;
+		}
+		async function save(body: object) {
+			await fireEvent.click(screen.getByRole('button', { name: 'Save Account Changes' }));
+			await waitFor(() =>
+				expect(patchSpy).toHaveBeenLastCalledWith('/api/v1/admin/accounts/{id}', {
+					params: { path: { id: 'acc-3' } },
+					body
+				})
+			);
+		}
+
+		// Her role comes from her groups. Choosing that same role by hand keeps it whatever the groups say.
+		let select = await openCarol();
+		expect(select.value).toBe('AUTO');
+		expect(select.selectedOptions[0].textContent?.trim()).toBe('From SSO groups (now USER)');
+		expect(screen.getByText(/Every SSO sign-in sets the role/)).toBeTruthy();
+		await fireEvent.change(select, { target: { value: 'USER' } });
+		expect(screen.getByText(/SSO sign-in leaves this role as it is/)).toBeTruthy();
+		await save({ role: 'USER' });
+		await waitFor(() => expect(screen.getByText('Role set manually')).toBeTruthy());
+
+		select = await openCarol();
+		expect(select.value).toBe('USER');
+		await fireEvent.change(select, { target: { value: 'AUTO' } });
+		await save({ roleMode: 'AUTO' });
+		await waitFor(() => expect(screen.queryByText('Role set manually')).toBeNull());
+	});
+
+	it('offers SSO groups only for the role of SSO accounts', async () => {
+		render(AdminPage);
+		await waitFor(() => expect(screen.getByText('bob')).toBeTruthy());
+		await fireEvent.click(screen.getAllByRole('button', { name: 'Manage' })[1]);
+		await waitFor(() => expect(screen.getByRole('heading', { name: 'Manage Account · bob' })).toBeTruthy());
+
+		const select = screen.getByLabelText('Account Role') as HTMLSelectElement;
+		expect([...select.options].map((option) => option.value)).toEqual(['USER', 'ADMIN']);
 	});
 });

@@ -179,11 +179,12 @@ data class TopMediaStatDto(
 )
 
 @Serializable
-data class DecisionBreakdownStatDto(
+data class DecisionBreakdownDto(
     val directPlay: Long,
     val directStream: Long,
     val transcode: Long,
     val hwTranscode: Long,
+    val total: Long,
     val directPlayPercent: Double,
     val directStreamPercent: Double,
     val transcodePercent: Double,
@@ -199,8 +200,8 @@ data class PlatformStatDto(
 )
 
 @Serializable
-data class LibraryBreakdownStatDto(
-    val librarySectionKey: String,
+data class LibraryBreakdownDto(
+    val librarySectionKey: String? = null,
     val playCount: Long,
     val watchDurationSec: Long,
     val percent: Double,
@@ -294,7 +295,7 @@ data class WrappedStatsResponse(
     val mostRewatched: List<RewatchedMediaStatDto>,
     val topPlatforms: List<PlatformStatDto>,
     val topClients: List<ClientBreakdownItemDto>,
-    val decisionBreakdown: DecisionBreakdownStatDto,
+    val decisionBreakdown: DecisionBreakdownDto,
     val playsByMonth: List<WrappedMonthStatDto>,
 )
 
@@ -308,7 +309,7 @@ data class OverviewStatsResponse(
     val playsPerDay: List<DailyPlayStatDto>,
     val topMovies: List<TopMediaStatDto>,
     val topShows: List<TopMediaStatDto>,
-    val decisionBreakdown: DecisionBreakdownStatDto,
+    val decisionBreakdown: DecisionBreakdownDto,
 )
 
 @Serializable
@@ -328,9 +329,9 @@ data class UserStatsResponse(
     val topMovies: List<TopMediaStatDto>,
     val topShows: List<TopMediaStatDto>,
     val mostRewatched: List<RewatchedMediaStatDto> = emptyList(),
-    val decisionBreakdown: DecisionBreakdownStatDto,
+    val decisionBreakdown: DecisionBreakdownDto,
     val topPlatforms: List<PlatformStatDto>,
-    val libraryBreakdown: List<LibraryBreakdownStatDto>,
+    val libraryBreakdown: List<LibraryBreakdownDto>,
 )
 
 internal fun PlaybackHistoryRecord.toHistoryItemDto(user: UserRecord?): HistoryItemDto =

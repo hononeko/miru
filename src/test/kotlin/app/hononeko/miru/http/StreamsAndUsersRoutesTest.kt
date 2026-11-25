@@ -930,6 +930,8 @@ class StreamsAndUsersRoutesTest :
                     detail.decisionBreakdown.directPlay shouldBe 6L
                     detail.decisionBreakdown.directStream shouldBe 3L
                     detail.decisionBreakdown.transcode shouldBe 3L
+                    detail.decisionBreakdown.hwTranscode shouldBe 3L
+                    detail.decisionBreakdown.hwTranscodePercent shouldBe 25.0
                     detail.decisionBreakdown.total shouldBe 12L
                     detail.decisionBreakdown.directPlayPercent.shouldBeWithinPercentageOf(50.0, 0.01)
                     detail.decisionBreakdown.directStreamPercent.shouldBeWithinPercentageOf(25.0, 0.01)
@@ -939,16 +941,16 @@ class StreamsAndUsersRoutesTest :
                     detail.libraryBreakdown[0] shouldBe
                         LibraryBreakdownDto(
                             librarySectionKey = "sec-movies",
-                            mediaType = "movie",
                             playCount = 7L,
                             watchDurationSec = 2_800L,
+                            percent = 58.33,
                         )
                     detail.libraryBreakdown[1] shouldBe
                         LibraryBreakdownDto(
                             librarySectionKey = "sec-tv",
-                            mediaType = "episode",
                             playCount = 5L,
                             watchDurationSec = 5_000L,
+                            percent = 41.67,
                         )
                 }
             }

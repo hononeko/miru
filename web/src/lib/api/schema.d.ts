@@ -1366,9 +1366,20 @@ export interface components {
             directPlay: number;
             /** Format: int64 */
             directStream: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description All transcoded plays, hardware-accelerated or not
+             */
             transcode: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Plays that used hardware-accelerated transcoding
+             */
+            hwTranscode: number;
+            /**
+             * Format: int64
+             * @description All plays, including any with another decision
+             */
             total: number;
             /** Format: double */
             directPlayPercent: number;
@@ -1376,14 +1387,18 @@ export interface components {
             directStreamPercent: number;
             /** Format: double */
             transcodePercent: number;
+            /** Format: double */
+            hwTranscodePercent: number;
         };
         LibraryBreakdownDto: {
+            /** @description Absent for plays whose library section is not known */
             librarySectionKey?: string | null;
-            mediaType: string;
             /** Format: int64 */
             playCount: number;
             /** Format: int64 */
             watchDurationSec: number;
+            /** Format: double */
+            percent: number;
         };
         UserDetailResponse: {
             user: components["schemas"]["UserSummaryDto"];
@@ -1541,35 +1556,8 @@ export interface components {
             watchDurationSec: number;
             thumbUrl?: string | null;
         };
-        DecisionBreakdownStatDto: {
-            /** Format: int64 */
-            directPlay: number;
-            /** Format: int64 */
-            directStream: number;
-            /** Format: int64 */
-            transcode: number;
-            /** Format: int64 */
-            hwTranscode: number;
-            /** Format: double */
-            directPlayPercent: number;
-            /** Format: double */
-            directStreamPercent: number;
-            /** Format: double */
-            transcodePercent: number;
-            /** Format: double */
-            hwTranscodePercent: number;
-        };
         PlatformStatDto: {
             platform: string;
-            /** Format: int64 */
-            playCount: number;
-            /** Format: int64 */
-            watchDurationSec: number;
-            /** Format: double */
-            percent: number;
-        };
-        LibraryBreakdownStatDto: {
-            librarySectionKey: string;
             /** Format: int64 */
             playCount: number;
             /** Format: int64 */
@@ -1590,7 +1578,7 @@ export interface components {
             playsPerDay: components["schemas"]["DailyPlayStatDto"][];
             topMovies: components["schemas"]["TopMediaStatDto"][];
             topShows: components["schemas"]["TopMediaStatDto"][];
-            decisionBreakdown: components["schemas"]["DecisionBreakdownStatDto"];
+            decisionBreakdown: components["schemas"]["DecisionBreakdownDto"];
         };
         RewatchedMediaStatDto: {
             ratingKey: string;
@@ -1696,7 +1684,7 @@ export interface components {
             mostRewatched: components["schemas"]["RewatchedMediaStatDto"][];
             topPlatforms: components["schemas"]["PlatformStatDto"][];
             topClients: components["schemas"]["ClientBreakdownItemDto"][];
-            decisionBreakdown: components["schemas"]["DecisionBreakdownStatDto"];
+            decisionBreakdown: components["schemas"]["DecisionBreakdownDto"];
             playsByMonth: components["schemas"]["WrappedMonthStatDto"][];
         };
         UserStatsResponse: {
@@ -1721,9 +1709,9 @@ export interface components {
             topMovies: components["schemas"]["TopMediaStatDto"][];
             topShows: components["schemas"]["TopMediaStatDto"][];
             mostRewatched: components["schemas"]["RewatchedMediaStatDto"][];
-            decisionBreakdown: components["schemas"]["DecisionBreakdownStatDto"];
+            decisionBreakdown: components["schemas"]["DecisionBreakdownDto"];
             topPlatforms: components["schemas"]["PlatformStatDto"][];
-            libraryBreakdown: components["schemas"]["LibraryBreakdownStatDto"][];
+            libraryBreakdown: components["schemas"]["LibraryBreakdownDto"][];
         };
         LibrarySectionResponse: {
             id: string;

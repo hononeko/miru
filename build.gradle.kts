@@ -12,7 +12,7 @@ version =
     findProperty("version")
         ?.toString()
         ?.takeIf { it != "unspecified" && it.isNotBlank() }
-        ?: "0.1.0"
+        ?: "1.0.0"
 
 repositories {
     // Google's mirror of Maven Central first: Central rate-limits CI runners (HTTP 429), and Gradle moves to the next

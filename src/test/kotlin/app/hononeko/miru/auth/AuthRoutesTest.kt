@@ -13,7 +13,7 @@ import app.hononeko.miru.config.SessionConfig
 import app.hononeko.miru.http.AccountListResponse
 import app.hononeko.miru.http.AccountResponse
 import app.hononeko.miru.http.ApiKeyListResponse
-import app.hononeko.miru.http.AuthStatusResponse
+import app.hononeko.miru.http.AuthProvidersResponse
 import app.hononeko.miru.http.ChangePasswordRequest
 import app.hononeko.miru.http.CreateAccountRequest
 import app.hononeko.miru.http.CreateApiKeyRequest
@@ -225,15 +225,16 @@ class AuthRoutesTest :
 
                 testApplication {
                     setupAuthApp(harness)
-                    val statusResp = client.get("/api/v1/auth/status")
-                    statusResp.status shouldBe HttpStatusCode.OK
-                    MiruJson.decodeFromString<AuthStatusResponse>(statusResp.bodyAsText()) shouldBe
-                        AuthStatusResponse(
-                            authMode = "local",
-                            setupRequired = false,
-                            localEnabled = true,
-                            oidcEnabled = false,
-                        )
+                    val providersResp = client.get("/api/v1/auth/providers")
+                    providersResp.status shouldBe HttpStatusCode.OK
+                    val providers = MiruJson.decodeFromString<AuthProvidersResponse>(providersResp.bodyAsText())
+                    providers.authMode shouldBe "local"
+                    providers.setupRequired shouldBe false
+                    providers.localEnabled shouldBe true
+                    providers.oidcEnabled shouldBe false
+
+                    // Removed in favor of /providers
+                    client.get("/api/v1/auth/status").status shouldBe HttpStatusCode.NotFound
 
                     val setupResp =
                         client.post("/api/v1/auth/setup") {
@@ -250,15 +251,12 @@ class AuthRoutesTest :
                 testApplication {
                     setupAuthApp(harness)
 
-                    val initialStatus =
-                        MiruJson.decodeFromString<AuthStatusResponse>(client.get("/api/v1/auth/status").bodyAsText())
-                    initialStatus shouldBe
-                        AuthStatusResponse(
-                            authMode = "local",
-                            setupRequired = true,
-                            localEnabled = true,
-                            oidcEnabled = false,
-                        )
+                    val initialProviders =
+                        MiruJson.decodeFromString<AuthProvidersResponse>(client.get("/api/v1/auth/providers").bodyAsText())
+                    initialProviders.authMode shouldBe "local"
+                    initialProviders.setupRequired shouldBe true
+                    initialProviders.localEnabled shouldBe true
+                    initialProviders.oidcEnabled shouldBe false
 
                     val setupResponse =
                         client.post("/api/v1/auth/setup") {

@@ -134,7 +134,7 @@ class SecurityHeadersTest :
                     for (apiCase in listOf(
                         "/healthz" to HttpStatusCode.OK,
                         "/readyz" to HttpStatusCode.OK,
-                        "/api/v1/auth/status" to HttpStatusCode.OK,
+                        "/api/v1/auth/providers" to HttpStatusCode.OK,
                         "/api/v1/auth/me" to HttpStatusCode.Unauthorized,
                         "/api/v1/nonexistent" to HttpStatusCode.NotFound,
                     )) {

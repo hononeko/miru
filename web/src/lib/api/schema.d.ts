@@ -58,23 +58,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/auth/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Retrieve authentication mode and initial setup status */
-        get: operations["getAuthStatus"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/auth/providers": {
         parameters: {
             query?: never;
@@ -1021,14 +1004,6 @@ export interface components {
         MediaUserLinkMode: "AUTO" | "MANUAL";
         /** @enum {string} */
         AuthSource: "SESSION_COOKIE" | "API_KEY" | "DEV_BYPASS";
-        AuthStatusResponse: {
-            /** @enum {string} */
-            authMode: "local" | "oidc" | "none";
-            setupRequired: boolean;
-            localEnabled?: boolean | null;
-            oidcEnabled?: boolean | null;
-            oidcDisplayName?: string | null;
-        };
         AuthProvidersResponse: {
             /** @enum {string} */
             authMode: "local" | "oidc" | "none";
@@ -2241,26 +2216,6 @@ export interface operations {
                 };
                 content: {
                     "application/problem+json": components["schemas"]["ProblemDetails"];
-                };
-            };
-        };
-    };
-    getAuthStatus: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Authentication status */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AuthStatusResponse"];
                 };
             };
         };

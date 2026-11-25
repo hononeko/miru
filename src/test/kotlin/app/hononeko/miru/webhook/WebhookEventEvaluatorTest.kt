@@ -406,7 +406,7 @@ class WebhookEventEvaluatorTest :
             val payload = matches[0].payload
             payload.event shouldBe "stream.terminated"
             payload.details["reason"]?.jsonPrimitive?.content shouldBe "4K transcode blocked"
-            payload.details["source"]?.jsonPrimitive?.content shouldBe "guardrail"
+            payload.details["source"]?.jsonPrimitive?.content shouldBe "GUARDRAIL"
             payload.details["ruleType"]?.jsonPrimitive?.content shouldBe "TRANSCODE_4K"
             payload.details["actorName"]?.jsonPrimitive?.content shouldBe "Guardrail: 4K Transcode"
             payload.user.shouldNotBeNull().username shouldBe "alice"

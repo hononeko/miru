@@ -150,7 +150,7 @@ describe('Miru telemetry formatters', () => {
 		expect(resolveApiKeyExpiresAtMs('7d', '', now)).toBe(now + 7 * dayMs);
 		expect(resolveApiKeyExpiresAtMs('30d', '', now)).toBe(now + 30 * dayMs);
 		expect(resolveApiKeyExpiresAtMs('90d', '', now)).toBe(now + 90 * dayMs);
-		expect(resolveApiKeyExpiresAtMs('1y', '', now)).toBe(now + 365 * dayMs);
+		expect(resolveApiKeyExpiresAtMs('365d', '', now)).toBe(now + 365 * dayMs);
 
 		const customFuture = resolveApiKeyExpiresAtMs('custom', '2026-12-31', now);
 		expect(customFuture).toBe(new Date(2026, 11, 31, 23, 59, 59, 999).getTime());

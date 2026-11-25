@@ -1160,14 +1160,14 @@ export interface components {
             role?: components["schemas"]["MiruRole"];
             /**
              * Format: int64
-             * @description Optional explicit expiration timestamp in epoch milliseconds (must be in the future).
+             * @description Optional expiration timestamp in epoch milliseconds, in the future. Must not be combined with expiresIn.
              */
             expiresAtMs?: number | null;
             /**
-             * @description Optional preset expiration interval when expiresAtMs is not provided.
+             * @description Optional preset expiration interval. Must not be combined with expiresAtMs.
              * @enum {string|null}
              */
-            expiresIn?: "7d" | "30d" | "90d" | "1y" | "never" | null;
+            expiresIn?: "7d" | "30d" | "90d" | "365d" | "never" | null;
         };
         ApiKeyResponse: {
             id: string;

@@ -292,7 +292,7 @@ export function validatePassword(password: string): string | null {
 	return missing.length === 0 ? null : `Password must contain ${missing.join(', ')}.`;
 }
 
-export type ApiKeyExpiryPreset = 'never' | '7d' | '30d' | '90d' | '1y' | 'custom';
+export type ApiKeyExpiryPreset = 'never' | '7d' | '30d' | '90d' | '365d' | 'custom';
 export type ApiKeyLifecycleStatus = 'ACTIVE' | 'EXPIRED' | 'REVOKED';
 
 const MILLIS_PER_DAY = 86_400_000;
@@ -302,7 +302,7 @@ export const API_KEY_EXPIRY_PRESETS: ReadonlyArray<{ value: ApiKeyExpiryPreset; 
 	{ value: '7d', label: '7 days' },
 	{ value: '30d', label: '30 days' },
 	{ value: '90d', label: '90 days' },
-	{ value: '1y', label: '1 year (365 days)' },
+	{ value: '365d', label: '1 year (365 days)' },
 	{ value: 'custom', label: 'Custom date…' }
 ];
 
@@ -320,7 +320,7 @@ export function resolveApiKeyExpiresAtMs(
 			return nowMs + 30 * MILLIS_PER_DAY;
 		case '90d':
 			return nowMs + 90 * MILLIS_PER_DAY;
-		case '1y':
+		case '365d':
 			return nowMs + 365 * MILLIS_PER_DAY;
 		case 'custom': {
 			const trimmed = customDate.trim();

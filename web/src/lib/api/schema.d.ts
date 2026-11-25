@@ -1973,13 +1973,13 @@ export interface components {
             lastWatchedAtMs?: number | null;
             lastWatchedUsername?: string | null;
             /** Format: double */
-            avgCompletionPercent?: number | null;
+            averageCompletionPercent?: number | null;
             /** Format: int64 */
-            directPlayCount: number;
+            directPlay: number;
             /** Format: int64 */
-            directStreamCount: number;
+            directStream: number;
             /** Format: int64 */
-            transcodeCount: number;
+            transcode: number;
             /** Format: int64 */
             totalWatchDurationSec: number;
         };
@@ -2005,7 +2005,7 @@ export interface components {
             parentTitle?: string | null;
             grandparentTitle?: string | null;
             parentIndex?: number | null;
-            index?: number | null;
+            mediaIndex?: number | null;
             childCount?: number | null;
             leafCount?: number | null;
             viewedLeafCount?: number | null;

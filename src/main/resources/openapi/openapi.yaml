@@ -5130,9 +5130,9 @@ components:
       required:
         - totalPlays
         - uniqueUsers
-        - directPlayCount
-        - directStreamCount
-        - transcodeCount
+        - directPlay
+        - directStream
+        - transcode
         - totalWatchDurationSec
       properties:
         totalPlays:
@@ -5147,17 +5147,17 @@ components:
         lastWatchedUsername:
           type: string
           nullable: true
-        avgCompletionPercent:
+        averageCompletionPercent:
           type: number
           format: double
           nullable: true
-        directPlayCount:
+        directPlay:
           type: integer
           format: int64
-        directStreamCount:
+        directStream:
           type: integer
           format: int64
-        transcodeCount:
+        transcode:
           type: integer
           format: int64
         totalWatchDurationSec:
@@ -5226,7 +5226,7 @@ components:
         parentIndex:
           type: integer
           nullable: true
-        index:
+        mediaIndex:
           type: integer
           nullable: true
         childCount:

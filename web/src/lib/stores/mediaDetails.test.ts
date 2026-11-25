@@ -32,9 +32,9 @@ function makeDetails(ratingKey: string, title: string): MediaDetailsResponse {
 		playSummary: {
 			totalPlays: 2,
 			uniqueUsers: 1,
-			directPlayCount: 2,
-			directStreamCount: 0,
-			transcodeCount: 0,
+			directPlay: 2,
+			directStream: 0,
+			transcode: 0,
 			totalWatchDurationSec: 5400
 		}
 	};

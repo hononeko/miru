@@ -27,10 +27,10 @@ function makeDetails(overrides: Partial<MediaDetailsResponse> = {}): MediaDetail
 		playSummary: {
 			totalPlays: 2,
 			uniqueUsers: 1,
-			avgCompletionPercent: 0.4,
-			directPlayCount: 2,
-			directStreamCount: 0,
-			transcodeCount: 0,
+			averageCompletionPercent: 0.4,
+			directPlay: 2,
+			directStream: 0,
+			transcode: 0,
 			totalWatchDurationSec: 30
 		},
 		...overrides

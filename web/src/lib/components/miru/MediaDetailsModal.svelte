@@ -81,11 +81,11 @@
 		if (!data) return null;
 		if (data.mediaType === 'episode') {
 			const s = data.parentIndex != null ? `S${String(data.parentIndex).padStart(2, '0')}` : '';
-			const e = data.index != null ? `E${String(data.index).padStart(2, '0')}` : '';
+			const e = data.mediaIndex != null ? `E${String(data.mediaIndex).padStart(2, '0')}` : '';
 			return [s, e].filter(Boolean).join(' · ') || null;
 		}
-		if (data.mediaType === 'season' && data.index != null) {
-			return `SEASON ${data.index}`;
+		if (data.mediaType === 'season' && data.mediaIndex != null) {
+			return `SEASON ${data.mediaIndex}`;
 		}
 		return null;
 	});
@@ -523,9 +523,9 @@
 									Miru Play Summary
 								</h2>
 							</div>
-							{#if data.playSummary.avgCompletionPercent != null}
+							{#if data.playSummary.averageCompletionPercent != null}
 								<Badge tone="direct-play" mono>
-									{formatStatPercent(data.playSummary.avgCompletionPercent, 0)} AVG COMPLETION
+									{formatStatPercent(data.playSummary.averageCompletionPercent, 0)} AVG COMPLETION
 								</Badge>
 							{/if}
 						</div>
@@ -558,9 +558,9 @@
 						</div>
 
 						<div class="flex flex-wrap items-center gap-1.5 text-[11px]">
-							<Badge tone="direct-play" mono>{data.playSummary.directPlayCount} Direct</Badge>
-							<Badge tone="direct-stream" mono>{data.playSummary.directStreamCount} Remux</Badge>
-							<Badge tone="hw-transcode" mono>{data.playSummary.transcodeCount} Transcode</Badge>
+							<Badge tone="direct-play" mono>{data.playSummary.directPlay} Direct</Badge>
+							<Badge tone="direct-stream" mono>{data.playSummary.directStream} Remux</Badge>
+							<Badge tone="hw-transcode" mono>{data.playSummary.transcode} Transcode</Badge>
 						</div>
 
 						<div class="text-xs text-fg-secondary">

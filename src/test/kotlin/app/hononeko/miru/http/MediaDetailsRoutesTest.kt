@@ -368,6 +368,10 @@ class MediaDetailsRoutesTest :
                     movie.technical.shouldNotBeNull().videoProfile shouldBe "high"
                     movie.playSummary.totalPlays shouldBe 1L
                     movie.playSummary.lastWatchedUsername shouldBe "Alice"
+                    movie.playSummary.averageCompletionPercent shouldBe 100.0
+                    movie.playSummary.directPlay shouldBe 1L
+                    movie.playSummary.directStream shouldBe 0L
+                    movie.playSummary.transcode shouldBe 0L
 
                     val episodeBody =
                         client
@@ -381,6 +385,8 @@ class MediaDetailsRoutesTest :
                     val episode = MiruJson.decodeFromString<MediaDetailsResponse>(episodeBody)
                     episode.ratingKey shouldBe "54321"
                     episode.mediaType shouldBe "episode"
+                    episode.parentIndex shouldBe 5
+                    episode.mediaIndex shouldBe 14
                     episode.thumbUrl shouldBe "/api/v1/media/54321/thumb"
                     // An episode's art is its show's (/library/metadata/54000/art/...), so the URL names the show.
                     episode.artUrl shouldBe "/api/v1/media/54000/art"

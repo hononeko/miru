@@ -3,5 +3,25 @@
   "extends": [
     "github>hononeko/renovate-config",
     "github>hononeko/renovate-config:hononeko-actions"
+  ],
+  "minimumReleaseAge": "7 days",
+  "packageRules": [
+    {
+      "description": "Our own images are not third-party",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["ghcr.io/hononeko/**"],
+      "minimumReleaseAge": null
+    },
+    {
+      "description": "gcr.io has no release dates, so updates of the base image would be held back forever",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["gcr.io/distroless/**"],
+      "minimumReleaseAge": null
+    },
+    {
+      "description": "Renovate has no release dates for these update types and would hold them back forever (same list as its security:minimumReleaseAge* presets)",
+      "matchUpdateTypes": ["bump", "lockFileMaintenance", "lockfileUpdate", "pin", "replacement", "rollback"],
+      "minimumReleaseAge": null
+    }
   ]
 }

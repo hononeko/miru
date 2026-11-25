@@ -99,10 +99,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * Initiate OIDC Authorization Code + PKCE login flow
-         * @description Asks the identity provider for a fresh login (`prompt=login`) if the browser logged out of Miru without ending its session at the provider.
-         */
+        /** Initiate OIDC Authorization Code + PKCE login flow */
         get: operations["oidcLogin"];
         put?: never;
         post?: never;
@@ -136,10 +133,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * Invalidate Miru session and redirect to OIDC RP-Initiated Logout endpoint if configured
-         * @description If the provider has no `end_session_endpoint`, its session stays alive and the next OIDC login from this browser asks for a fresh login.
-         */
+        /** Invalidate Miru session and redirect to OIDC RP-Initiated Logout endpoint if configured */
         get: operations["oidcLogout"];
         put?: never;
         post?: never;

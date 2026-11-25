@@ -39,6 +39,17 @@ class PlexMapperTest :
             PlexMapper.mapSessions(response.mediaContainer).shouldBeEmpty()
         }
 
+        test("takes the session ID only from the Session element") {
+            fun sessionIdOf(metadata: String): String? =
+                PlexMapper
+                    .mapSession(MiruJson.decodeFromString<PlexMetadataDto>(metadata))
+                    .sessionId
+
+            sessionIdOf("""{"ratingKey":"1","sessionKey":"23","Session":{"id":"abc"}}""") shouldBe "abc"
+            sessionIdOf("""{"ratingKey":"1","sessionKey":"23","Session":{"id":" "}}""").shouldBeNull()
+            sessionIdOf("""{"ratingKey":"1","sessionKey":"23"}""").shouldBeNull()
+        }
+
         test("maps movie direct play LAN session") {
             val response = MiruJson.decodeFromString<PlexSessionsResponse>(PlexFixtures.movieDirectPlayLanJson)
             val sessions = PlexMapper.mapSessions(response.mediaContainer)

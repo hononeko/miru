@@ -65,6 +65,15 @@ class ErrorMappingTest :
             }
         }
 
+        test("upstream auth errors hide the message and show only a detail meant for clients") {
+            MiruError.UpstreamAuthError("plex", "raw upstream message").toProblemDetails().detail shouldBe
+                "Authentication with upstream provider 'plex' failed"
+            MiruError
+                .UpstreamAuthError("plex", "raw upstream message", detail = "Needs Plex Pass")
+                .toProblemDetails()
+                .detail shouldBe "Needs Plex Pass"
+        }
+
         test("respondEither serializes Right payload and RFC 7807 ProblemDetails for Left") {
             testApplication {
                 application {

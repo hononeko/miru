@@ -95,8 +95,14 @@ data class StreamTechnicalInfo(
     val transcodeSpeed: Double? = null,
 )
 
+/**
+ * A stream as currently listed by the media server.
+ *
+ * [sessionId] is the server's own ID of the playback session, the only one it accepts to terminate the stream.
+ * It is null when the server does not report one; [sessionKey] is never a substitute for it.
+ */
 data class ActiveStreamSnapshot(
-    val sessionId: String,
+    val sessionId: String? = null,
     val sessionKey: String? = null,
     val state: PlaybackState,
     val viewOffsetMs: Long,

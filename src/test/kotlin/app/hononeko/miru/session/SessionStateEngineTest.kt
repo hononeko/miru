@@ -115,7 +115,7 @@ private fun newEnv(): EngineTestEnv {
 
 @Suppress("LongParameterList")
 private fun sampleSnapshot(
-    sessionId: String = "plex-sess-1",
+    sessionId: String? = "plex-sess-1",
     sessionKey: String? = "10",
     ratingKey: String = "movie-1",
     mediaType: MediaType = MediaType.MOVIE,
@@ -487,6 +487,80 @@ class SessionStateEngineTest :
             }
         }
 
+        test("a session reported as stopped is finalized as soon as the server no longer lists it") {
+            runTest {
+                newEnv().use { env ->
+                    env.seedServer()
+                    val engine = env.createEngine(config = SessionConfig(minPlayDurationSeconds = 10))
+                    val stop = setOf(StoppedPlayback("10", "movie-1"))
+
+                    env.nowMs = 0L
+                    engine.reconcile(listOf(sampleSnapshot()), ReconcileTrigger.PERIODIC).shouldBeRight()
+
+                    // Still listed: the report alone does not end it
+                    env.nowMs = 60_000L
+                    engine
+                        .reconcile(listOf(sampleSnapshot(viewOffsetMs = 60_000L)), ReconcileTrigger.NOTIFICATION, stop)
+                        .shouldBeRight()
+                        .single()
+                        .shouldBeInstanceOf<SessionEvent.SessionUpdated>()
+
+                    env.nowMs = 62_000L
+                    val stopped =
+                        engine
+                            .reconcile(emptyList(), ReconcileTrigger.NOTIFICATION, stop)
+                            .shouldBeRight()
+                            .single()
+                            .shouldBeInstanceOf<SessionEvent.SessionStopped>()
+                    stopped.reason shouldBe StopReason.EXPLICIT_STOP
+                    stopped.historyRecord.shouldNotBeNull().stoppedAtMs shouldBe 60_000L
+                    engine.currentSessions().shouldBeEmpty()
+                    env.sessions.findByServer(DEFAULT_SERVER_ID).shouldBeRight().shouldBeEmpty()
+                }
+            }
+        }
+
+        test("a stop reported for another session or item does not finalize a missing session") {
+            runTest {
+                newEnv().use { env ->
+                    env.seedServer()
+                    val engine = env.createEngine()
+                    engine.reconcile(listOf(sampleSnapshot()), ReconcileTrigger.PERIODIC).shouldBeRight()
+
+                    engine
+                        .reconcile(
+                            emptyList(),
+                            ReconcileTrigger.NOTIFICATION,
+                            setOf(StoppedPlayback("11", "movie-1"), StoppedPlayback("10", "movie-2")),
+                        ).shouldBeRight()
+                        .shouldBeEmpty()
+                    engine.currentSessions().single().missedPolls shouldBe 1
+                }
+            }
+        }
+
+        test("a session without a session ID is tracked but keeps no substitute for it") {
+            runTest {
+                newEnv().use { env ->
+                    env.seedServer()
+                    val engine = env.createEngine()
+
+                    engine
+                        .reconcile(
+                            listOf(
+                                sampleSnapshot(sessionId = null),
+                                sampleSnapshot(sessionId = null, sessionKey = null, ratingKey = "movie-2"),
+                            ),
+                            ReconcileTrigger.PERIODIC,
+                        ).shouldBeRight()
+
+                    val sessions = engine.currentSessions()
+                    sessions.map { it.sessionKey } shouldBe listOf("10", "movie-2:player-1")
+                    sessions.map { it.sessionId } shouldBe listOf(null, null)
+                }
+            }
+        }
+
         test("short-play filter removes active session, writes no history row, and emits SessionStopped(historyRecord=null)") {
             runTest {
                 newEnv().use { env ->
@@ -816,7 +890,7 @@ class SessionStateEngineTest :
 
                     // When Plex is down and DB has no matching server, reconcile returns Left and onSnapshots handles it cleanly
                     engine.reconcile(emptyList(), ReconcileTrigger.PERIODIC).shouldBeLeft()
-                    engine.onSnapshots(emptyList(), ReconcileTrigger.PERIODIC)
+                    engine.onSnapshots(emptyList(), ReconcileTrigger.PERIODIC, emptySet())
 
                     // When Plex comes up, serverId is resolved via checkHealth() and persisted to media_servers
                     plexUp = true

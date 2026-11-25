@@ -565,7 +565,7 @@ class WebhookDispatcherAndRunnerTest :
                 val reconciler =
                     SessionReconciler(
                         adapter = stubAdapter,
-                        sink = ActiveSessionsSink { _, _ -> },
+                        sink = ActiveSessionsSink { _, _, _ -> },
                         scope = scope,
                         interval = 1.hours,
                         onReconcileOutcome = { outcome ->

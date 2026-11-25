@@ -28,6 +28,7 @@ import app.hononeko.miru.webhook.StreamTerminatedEvent
 import arrow.core.Either
 import arrow.core.raise.either
 import arrow.core.raise.ensure
+import arrow.core.raise.ensureNotNull
 import app.hononeko.miru.logging.kv
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -113,48 +114,41 @@ class StreamControlService(
                     ?: sessions.firstOrNull { it.sessionKey == trimmedSessionId }
                     ?: raise(MiruError.NotFound(resource = "Stream session", id = trimmedSessionId))
 
-            val plexSessionId = session.sessionId?.takeIf { it.isNotBlank() } ?: session.sessionKey
-            adapter.terminateSession(plexSessionId, effectiveReason).bind()
-
+            val outcome = terminateOnServer(session, effectiveReason)
             val targetUsername =
                 userRepository
                     .findById(session.userId)
                     .getOrNull()
                     ?.let { user -> user.displayName?.takeIf { it.isNotBlank() } ?: user.username }
-            val mediaTitle = formatAuditMediaTitle(session.media)
-            val nowMs = clock()
-            val auditId = idGenerator()
+            val audit =
+                session.toAuditRecord(
+                    source = TerminationAuditSource.MANUAL,
+                    outcome = outcome,
+                    actorName = principal.username,
+                    targetUsername = targetUsername,
+                    reason = effectiveReason,
+                ).copy(actorAccountId = principal.accountId)
+            insertAudit(audit)
 
-            auditRepository
-                .insert(
-                    StreamTerminationAuditRecord(
-                        id = auditId,
-                        createdAtMs = nowMs,
-                        serverId = session.serverId,
-                        sessionId = plexSessionId,
-                        sessionKey = session.sessionKey,
-                        source = TerminationAuditSource.MANUAL,
-                        action = TerminationAuditAction.TERMINATED,
-                        ruleType = null,
-                        actorAccountId = principal.accountId,
-                        actorName = principal.username,
-                        targetUserId = session.userId,
-                        targetUsername = targetUsername,
-                        mediaRatingKey = session.media.ratingKey,
-                        mediaTitle = mediaTitle,
-                        streamDecision = session.streamTech.streamDecision,
-                        videoResolution = session.streamTech.videoResolution,
-                        reason = effectiveReason,
-                    ),
-                ).bind()
+            outcome
+                .onLeft { error ->
+                    logger.warn(
+                        "Admin stream termination failed {} {} {} {} {}",
+                        kv("event", "stream_terminate_failed"),
+                        kv("actor", principal.username),
+                        kv("sessionId", audit.sessionId),
+                        kv("targetUser", targetUsername ?: session.userId),
+                        kv("reason", error.message),
+                    )
+                }.bind()
 
             logger.info(
                 "Admin terminated active stream {} {} {} {} {}",
                 kv("event", "stream_terminated"),
                 kv("actor", principal.username),
-                kv("sessionId", plexSessionId),
+                kv("sessionId", audit.sessionId),
                 kv("targetUser", targetUsername ?: session.userId),
-                kv("mediaTitle", mediaTitle),
+                kv("mediaTitle", audit.mediaTitle),
             )
 
             _terminatedEvents.tryEmit(
@@ -165,16 +159,16 @@ class StreamControlService(
                     source = TerminationAuditSource.MANUAL,
                     ruleType = null,
                     actorName = principal.username,
-                    timestampMs = nowMs,
+                    timestampMs = audit.createdAtMs,
                 ),
             )
 
             TerminateStreamResponse(
-                sessionId = plexSessionId,
+                sessionId = audit.sessionId,
                 sessionKey = session.sessionKey,
                 reason = effectiveReason,
-                auditEventId = auditId,
-                terminatedAtMs = nowMs,
+                auditEventId = audit.id,
+                terminatedAtMs = audit.createdAtMs,
             )
         }
 
@@ -319,78 +313,52 @@ class StreamControlService(
         targetUsername: String?,
     ) {
         val session = decision.session
-        val plexSessionId = session.sessionId?.takeIf { it.isNotBlank() } ?: session.sessionKey
-        val mediaTitle = formatAuditMediaTitle(session.media)
-        val actorName = guardrailActorName(decision.ruleType)
+        val outcome =
+            if (decision.mode == GuardrailMode.ENFORCE) terminateOnServer(session, decision.reason) else null
+        val audit =
+            session.toAuditRecord(
+                source = TerminationAuditSource.GUARDRAIL,
+                outcome = outcome,
+                actorName = guardrailActorName(decision.ruleType),
+                targetUsername = targetUsername,
+                reason = decision.reason,
+            ).copy(ruleType = decision.ruleType)
 
-        var action = TerminationAuditAction.WARNED
-        var errorDetail: String? = null
+        when (outcome) {
+            null ->
+                logger.warn(
+                    "Guardrail dry-run warning {} {} {} {} {}",
+                    kv("event", "guardrail_warn"),
+                    kv("rule", decision.ruleType.name),
+                    kv("sessionId", audit.sessionId),
+                    kv("targetUser", targetUsername ?: session.userId),
+                    kv("mediaTitle", audit.mediaTitle),
+                )
 
-        if (decision.mode == GuardrailMode.WARN) {
-            logger.warn(
-                "Guardrail dry-run warning {} {} {} {} {}",
-                kv("event", "guardrail_warn"),
-                kv("rule", decision.ruleType.name),
-                kv("sessionId", plexSessionId),
-                kv("targetUser", targetUsername ?: session.userId),
-                kv("mediaTitle", mediaTitle),
-            )
-        } else if (decision.mode == GuardrailMode.ENFORCE) {
-            adapter.terminateSession(plexSessionId, decision.reason).fold(
-                ifLeft = { error ->
-                    action = TerminationAuditAction.TERMINATE_FAILED
-                    errorDetail = error.message
-                    logger.warn(
-                        "Guardrail stream termination failed {} {} {} {} {}",
-                        kv("event", "guardrail_terminate_failed"),
-                        kv("rule", decision.ruleType.name),
-                        kv("sessionId", plexSessionId),
-                        kv("targetUser", targetUsername ?: session.userId),
-                        kv("reason", error.message),
-                    )
-                },
-                ifRight = {
-                    action = TerminationAuditAction.TERMINATED
-                    logger.info(
-                        "Guardrail terminated active stream {} {} {} {} {}",
-                        kv("event", "guardrail_terminated"),
-                        kv("rule", decision.ruleType.name),
-                        kv("sessionId", plexSessionId),
-                        kv("targetUser", targetUsername ?: session.userId),
-                        kv("mediaTitle", mediaTitle),
-                    )
-                },
-            )
+            is Either.Left ->
+                logger.warn(
+                    "Guardrail stream termination failed {} {} {} {} {}",
+                    kv("event", "guardrail_terminate_failed"),
+                    kv("rule", decision.ruleType.name),
+                    kv("sessionId", audit.sessionId),
+                    kv("targetUser", targetUsername ?: session.userId),
+                    kv("reason", outcome.value.message),
+                )
+
+            is Either.Right ->
+                logger.info(
+                    "Guardrail terminated active stream {} {} {} {} {}",
+                    kv("event", "guardrail_terminated"),
+                    kv("rule", decision.ruleType.name),
+                    kv("sessionId", audit.sessionId),
+                    kv("targetUser", targetUsername ?: session.userId),
+                    kv("mediaTitle", audit.mediaTitle),
+                )
         }
 
-        val nowMs = clock()
-        auditRepository
-            .insert(
-                StreamTerminationAuditRecord(
-                    id = idGenerator(),
-                    createdAtMs = nowMs,
-                    serverId = session.serverId,
-                    sessionId = plexSessionId,
-                    sessionKey = session.sessionKey,
-                    source = TerminationAuditSource.GUARDRAIL,
-                    action = action,
-                    ruleType = decision.ruleType,
-                    actorAccountId = null,
-                    actorName = actorName,
-                    targetUserId = session.userId,
-                    targetUsername = targetUsername,
-                    mediaRatingKey = session.media.ratingKey,
-                    mediaTitle = mediaTitle,
-                    streamDecision = session.streamTech.streamDecision,
-                    videoResolution = session.streamTech.videoResolution,
-                    reason = decision.reason,
-                    errorDetail = errorDetail,
-                ),
-            ).onLeft { error ->
-                logger.warn("Failed to persist guardrail audit event {}: {}", decision.ruleType.name, error.message)
-            }
+        insertAudit(audit)
 
-        if (decision.mode == GuardrailMode.ENFORCE && action == TerminationAuditAction.TERMINATED) {
+        if (audit.action == TerminationAuditAction.TERMINATED) {
             _terminatedEvents.tryEmit(
                 StreamTerminatedEvent(
                     serverId = session.serverId,
@@ -398,9 +366,67 @@ class StreamControlService(
                     reason = decision.reason,
                     source = TerminationAuditSource.GUARDRAIL,
                     ruleType = decision.ruleType,
-                    actorName = actorName,
-                    timestampMs = nowMs,
+                    actorName = audit.actorName,
+                    timestampMs = audit.createdAtMs,
                 ),
+            )
+        }
+    }
+
+    /** Asks the media server to terminate [session], which takes only its own session ID for that. */
+    private suspend fun terminateOnServer(
+        session: ActiveSessionRecord,
+        reason: String,
+    ): Either<MiruError, Unit> =
+        either {
+            val sessionId =
+                ensureNotNull(session.sessionId?.takeIf { it.isNotBlank() }) {
+                    MiruError.Conflict("Plex has not reported a session ID for this stream, so it cannot be stopped")
+                }
+            adapter.terminateSession(sessionId, reason).bind()
+        }
+
+    /** [outcome] is null for a dry run, which does not ask the media server for anything. */
+    private fun ActiveSessionRecord.toAuditRecord(
+        source: TerminationAuditSource,
+        outcome: Either<MiruError, Unit>?,
+        actorName: String,
+        targetUsername: String?,
+        reason: String,
+    ): StreamTerminationAuditRecord =
+        StreamTerminationAuditRecord(
+            id = idGenerator(),
+            createdAtMs = clock(),
+            serverId = serverId,
+            sessionId = sessionId?.takeIf { it.isNotBlank() } ?: sessionKey,
+            sessionKey = sessionKey,
+            source = source,
+            action =
+                when (outcome) {
+                    null -> TerminationAuditAction.WARNED
+                    is Either.Left -> TerminationAuditAction.TERMINATE_FAILED
+                    is Either.Right -> TerminationAuditAction.TERMINATED
+                },
+            actorName = actorName,
+            targetUserId = userId,
+            targetUsername = targetUsername,
+            mediaRatingKey = media.ratingKey,
+            mediaTitle = formatAuditMediaTitle(media),
+            streamDecision = streamTech.streamDecision,
+            videoResolution = streamTech.videoResolution,
+            reason = reason,
+            errorDetail = outcome?.leftOrNull()?.message,
+        )
+
+    /** Never fails the caller: by now the media server has already been asked, and its answer is what counts. */
+    private suspend fun insertAudit(record: StreamTerminationAuditRecord) {
+        auditRepository.insert(record).onLeft { error ->
+            logger.error(
+                "Failed to persist stream termination audit entry {} {} {} {}",
+                kv("event", "termination_audit_failed"),
+                kv("action", record.action.name),
+                kv("sessionId", record.sessionId),
+                kv("reason", error.message),
             )
         }
     }

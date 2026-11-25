@@ -23,6 +23,7 @@ private fun testSession(
     audioDecision: String? = null,
     videoResolution: String? = "1080p",
     startedAtMs: Long = 1_000L,
+    missedPolls: Int = 0,
 ): ActiveSessionRecord =
     ActiveSessionRecord(
         serverId = "srv-1",
@@ -48,6 +49,7 @@ private fun testSession(
         player = PlayerRecord(playerName = "Apple TV", location = "lan"),
         startedAtMs = startedAtMs,
         lastSeenAtMs = startedAtMs,
+        missedPolls = missedPolls,
     )
 
 private fun rulesMap(
@@ -212,5 +214,42 @@ class StreamGuardrailEvaluatorTest :
             enforceDecisions shouldHaveSize 1
             enforceDecisions.single().session.sessionKey shouldBe "3"
             enforceDecisions.single().ruleType shouldBe GuardrailRuleType.TRANSCODE_4K
+        }
+
+        test("a stream that Plex no longer lists does not count towards the limit or get terminated itself") {
+            val evaluator = StreamGuardrailEvaluator()
+            val rules = rulesMap(transcode4k = GuardrailMode.ENFORCE, concurrentStreams = GuardrailMode.ENFORCE to 1)
+            val ended =
+                testSession(
+                    "1",
+                    startedAtMs = 1_000L,
+                    missedPolls = 1,
+                    streamDecision = "transcode",
+                    videoDecision = "transcode",
+                    videoResolution = "4k",
+                )
+            val next = testSession("2", startedAtMs = 2_000L)
+
+            evaluator.evaluate(listOf(ended, next), rules, nowMs = 3_000L).shouldBeEmpty()
+
+            // It was only a hiccup: the first stream is back, so the second one is over the limit
+            evaluator
+                .evaluate(listOf(ended.copy(missedPolls = 0), next), rules, nowMs = 4_000L)
+                .map { it.session.sessionKey } shouldContainExactly listOf("1", "2")
+        }
+
+        test("a missed poll resets neither the pause duration nor the trigger of a session") {
+            val evaluator = StreamGuardrailEvaluator(enforceRetryCooldownMs = 60_000L)
+            val rules = rulesMap(pausedTimeout = GuardrailMode.ENFORCE to 1)
+            val paused = testSession("1", state = "paused")
+            val missing = paused.copy(missedPolls = 1)
+
+            evaluator.evaluate(listOf(paused), rules, nowMs = 0L).shouldBeEmpty()
+            evaluator.evaluate(listOf(missing), rules, nowMs = 60_000L).shouldBeEmpty()
+            evaluator.evaluate(listOf(paused), rules, nowMs = 61_000L) shouldHaveSize 1
+
+            // Still within the retry cooldown
+            evaluator.evaluate(listOf(missing), rules, nowMs = 70_000L).shouldBeEmpty()
+            evaluator.evaluate(listOf(paused), rules, nowMs = 80_000L).shouldBeEmpty()
         }
     })

@@ -25,6 +25,7 @@ import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.string.shouldNotContain
 import io.kotest.matchers.types.shouldBeInstanceOf
 import io.ktor.client.HttpClient
@@ -36,6 +37,7 @@ import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.HttpResponseData
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import kotlinx.coroutines.flow.flowOf
@@ -759,9 +761,10 @@ class PlexMediaServerAdapterTest :
             disabledTvAdapter.fetchUserLibraryAccess().shouldBeRight().shouldBeEmpty()
         }
 
-        test("terminateSession sends GET /status/sessions/terminate with query params and token header") {
+        test("terminateSession sends POST /status/sessions/terminate with query params and token header") {
             val (adapter, requests) =
                 adapterWithMock { request ->
+                    request.method shouldBe HttpMethod.Post
                     request.url.encodedPath shouldBe "/status/sessions/terminate"
                     request.url.parameters["sessionId"] shouldBe "sess-42"
                     request.url.parameters["reason"] shouldBe "4K transcode limit"
@@ -779,6 +782,7 @@ class PlexMediaServerAdapterTest :
                     when (request.url.parameters["sessionId"]) {
                         "missing" -> respond("not found", HttpStatusCode.NotFound)
                         "unauthorized" -> respond("denied", HttpStatusCode.Unauthorized)
+                        "forbidden" -> respond("denied", HttpStatusCode.Forbidden)
                         else -> respond("boom $TEST_TOKEN", HttpStatusCode.InternalServerError)
                     }
                 }
@@ -795,10 +799,19 @@ class PlexMediaServerAdapterTest :
             notFound.resource shouldBe "Stream session"
             notFound.id shouldBe "missing"
 
+            // Plex documents 401 as "Server does not have the feature enabled" and 403 as "sessionId is empty"
             adapter
                 .terminateSession("unauthorized", "bye")
                 .shouldBeLeft()
                 .shouldBeInstanceOf<MiruError.UpstreamAuthError>()
+                .detail
+                .shouldNotBeNull() shouldContain "does not have this feature enabled"
+            adapter
+                .terminateSession("forbidden", "bye")
+                .shouldBeLeft()
+                .shouldBeInstanceOf<MiruError.UpstreamAuthError>()
+                .detail
+                .shouldNotBeNull() shouldContain "did not accept its session ID"
 
             val unavailable =
                 adapter

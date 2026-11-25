@@ -109,8 +109,9 @@ class SessionStateEngine(
     override suspend fun onSnapshots(
         snapshots: List<ActiveStreamSnapshot>,
         trigger: ReconcileTrigger,
+        stopped: Set<StoppedPlayback>,
     ) {
-        reconcile(snapshots, trigger).fold(
+        reconcile(snapshots, trigger, stopped).fold(
             ifLeft = { error ->
                 logger.warn(
                     "Session reconciliation failed {} {}",
@@ -125,6 +126,7 @@ class SessionStateEngine(
     suspend fun reconcile(
         snapshots: List<ActiveStreamSnapshot>,
         trigger: ReconcileTrigger,
+        stopped: Set<StoppedPlayback> = emptySet(),
     ): Either<MiruError, List<SessionEvent>> {
         val result =
             mutex.withLock {
@@ -159,7 +161,8 @@ class SessionStateEngine(
 
                     for ((key, prev) in tracked.entries.toList()) {
                         if (key in incomingKeys) continue
-                        val event = handleMissingSession(serverId, prev, incomingSessionKeys, nowMs)
+                        val reportedStopped = stopped.any { it.matches(key.sessionKey, key.ratingKey) }
+                        val event = handleMissingSession(serverId, prev, incomingSessionKeys, reportedStopped, nowMs)
                         if (event != null) {
                             events += event
                         }
@@ -304,6 +307,7 @@ class SessionStateEngine(
         serverId: String,
         prev: TrackedSession,
         incomingSessionKeys: Set<String>,
+        reportedStopped: Boolean,
         nowMs: Long,
     ): SessionEvent? {
         if (prev.fromCrashRecovery) {
@@ -335,14 +339,15 @@ class SessionStateEngine(
             )
         }
 
+        // Without a stop report the session may only be missing from this one response, so give it another poll.
         val nextMissedPolls = prev.record.missedPolls + 1
-        if (nextMissedPolls >= missedPollsThreshold) {
+        if (reportedStopped || nextMissedPolls >= missedPollsThreshold) {
             return finalizeSession(
                 serverId = serverId,
                 record = prev.record,
                 pausedDurationMs = prev.pausedDurationMs,
                 stoppedAtMs = prev.record.lastSeenAtMs,
-                reason = StopReason.VANISHED,
+                reason = if (reportedStopped) StopReason.EXPLICIT_STOP else StopReason.VANISHED,
                 eventTimestampMs = nowMs,
                 peakStreamTech = prev.peakStreamTech,
             )
@@ -575,7 +580,10 @@ class SessionStateEngine(
     ): ActiveSessionKey =
         ActiveSessionKey(
             serverId = serverId,
-            sessionKey = snapshot.sessionKey ?: snapshot.sessionId,
+            sessionKey =
+                snapshot.sessionKey
+                    ?: snapshot.sessionId
+                    ?: "${snapshot.media.ratingKey}:${snapshot.player.machineIdentifier}",
             ratingKey = snapshot.media.ratingKey,
         )
 

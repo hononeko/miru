@@ -57,7 +57,10 @@ private val snapshot =
         technical = StreamTechnicalInfo(decision = StreamDecision.DIRECT_PLAY),
     )
 
-private fun playing(state: PlaybackState = PlaybackState.PLAYING) = MediaServerEvent.PlayingEvent(sessionKey = "23", state = state)
+private fun playing(
+    state: PlaybackState = PlaybackState.PLAYING,
+    ratingKey: String? = null,
+) = MediaServerEvent.PlayingEvent(sessionKey = "23", ratingKey = ratingKey, state = state)
 
 private class FakeAdapter(
     private val clock: () -> Long,
@@ -129,12 +132,15 @@ private class RecordingSink(
     private val failOnCall: Int? = null,
 ) : ActiveSessionsSink {
     val calls = mutableListOf<Reconciled>()
+    val stops = mutableListOf<Set<StoppedPlayback>>()
 
     override suspend fun onSnapshots(
         snapshots: List<ActiveStreamSnapshot>,
         trigger: ReconcileTrigger,
+        stopped: Set<StoppedPlayback>,
     ) {
         calls += Reconciled(clock(), trigger, snapshots)
+        stops += stopped
         if (calls.size == failOnCall) error("sink blew up")
     }
 }
@@ -249,6 +255,93 @@ class SessionReconcilerTest :
                 last.trigger shouldBe ReconcileTrigger.PERIODIC
                 last.at shouldBe 20_500L
                 last.snapshots.shouldBeEmpty()
+            }
+        }
+
+        test("a reported stop is passed on with the next fetch, and only once when the session is gone") {
+            runTest {
+                val h = harness()
+                h.reconciler.start()
+                runCurrent()
+
+                h.adapter.events.emit(playing(PlaybackState.STOPPED, ratingKey = "12345"))
+                advanceTimeBy(501)
+                runCurrent()
+                advanceTimeBy(20.seconds)
+                runCurrent()
+
+                h.sink.stops shouldContainExactly
+                    listOf(emptySet(), setOf(StoppedPlayback("23", "12345")), emptySet())
+            }
+        }
+
+        test("a reported stop is kept while the server still lists the session") {
+            runTest {
+                val h = harness()
+                h.adapter.response = { call -> (if (call < 3) listOf(snapshot) else emptyList()).right() }
+                h.reconciler.start()
+                runCurrent()
+
+                h.adapter.events.emit(playing(PlaybackState.STOPPED, ratingKey = "12345"))
+                advanceTimeBy(501)
+                runCurrent()
+                advanceTimeBy(20.seconds)
+                runCurrent()
+                advanceTimeBy(20.seconds)
+                runCurrent()
+
+                val stop = setOf(StoppedPlayback("23", "12345"))
+                h.sink.stops shouldContainExactly listOf(emptySet(), stop, stop, emptySet())
+            }
+        }
+
+        test("a reported stop survives a failed fetch") {
+            runTest {
+                val h = harness()
+                h.adapter.response = { call ->
+                    if (call == 2) MiruError.UpstreamUnavailable("plex", "down").left() else emptyList<ActiveStreamSnapshot>().right()
+                }
+                h.reconciler.start()
+                runCurrent()
+
+                h.adapter.events.emit(playing(PlaybackState.STOPPED))
+                advanceTimeBy(501)
+                runCurrent()
+                advanceTimeBy(20.seconds)
+                runCurrent()
+
+                h.sink.stops shouldContainExactly listOf(emptySet(), setOf(StoppedPlayback("23")))
+            }
+        }
+
+        test("a session that plays again after a reported stop is no longer stopped") {
+            runTest {
+                val h = harness()
+                h.reconciler.start()
+                runCurrent()
+
+                h.adapter.events.emit(playing(PlaybackState.STOPPED, ratingKey = "12345"))
+                h.adapter.events.emit(playing(PlaybackState.PLAYING, ratingKey = "67890"))
+                advanceTimeBy(501)
+                runCurrent()
+
+                h.sink.stops shouldContainExactly listOf(emptySet(), emptySet())
+            }
+        }
+
+        test("a stop reported during a fetch is left for the next one") {
+            runTest {
+                val h = harness()
+                h.adapter.fetchDelay = 1.seconds
+                h.reconciler.start()
+                runCurrent()
+
+                advanceTimeBy(500)
+                h.adapter.events.emit(playing(PlaybackState.STOPPED))
+                advanceTimeBy(5.seconds)
+                runCurrent()
+
+                h.sink.stops shouldContainExactly listOf(emptySet(), setOf(StoppedPlayback("23")))
             }
         }
 

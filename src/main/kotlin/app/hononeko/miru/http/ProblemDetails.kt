@@ -113,7 +113,7 @@ fun MiruError.toProblemDetails(instance: String? = null): ProblemDetails {
                 type = "https://miru.hononeko.app/errors/upstream-auth",
                 title = "Upstream Authentication Failed",
                 status = status.value,
-                detail = "Authentication with upstream provider '$provider' failed",
+                detail = detail ?: "Authentication with upstream provider '$provider' failed",
                 instance = instance,
             )
 

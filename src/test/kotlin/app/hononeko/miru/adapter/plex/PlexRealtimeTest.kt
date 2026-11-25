@@ -118,7 +118,7 @@ class PlexRealtimeTest :
                 val reconciler =
                     SessionReconciler(
                         adapter = adapter,
-                        sink = ActiveSessionsSink { _, _ -> },
+                        sink = ActiveSessionsSink { _, _, _ -> },
                         scope = ownedScope,
                         interval = 20.seconds,
                         reconnectSignals = listener.reconnected,
@@ -163,7 +163,7 @@ class PlexRealtimeTest :
                 val reconciler =
                     SessionReconciler(
                         adapter = adapter,
-                        sink = ActiveSessionsSink { _, _ -> },
+                        sink = ActiveSessionsSink { _, _, _ -> },
                         scope = ownedScope,
                         interval = 20.seconds,
                     )

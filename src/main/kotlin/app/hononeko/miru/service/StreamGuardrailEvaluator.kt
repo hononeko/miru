@@ -57,6 +57,9 @@ internal fun is4kVideoTranscode(session: ActiveSessionRecord): Boolean {
  *
  * Ensures dry-run `WARN` rules emit once per continuous violation and `ENFORCE` rules respect a retry cooldown
  * while Plex tears down a terminated stream.
+ *
+ * A session that Plex did not list in the last poll has most likely ended, so it neither violates a rule nor counts
+ * towards a limit. Its pause start and prior triggers are kept in case it reappears.
  */
 class StreamGuardrailEvaluator(
     private val enforceRetryCooldownMs: Long = DEFAULT_ENFORCE_RETRY_COOLDOWN_MS,
@@ -79,8 +82,10 @@ class StreamGuardrailEvaluator(
             val activeSessions = sessions.filterNot { it.state.equals("stopped", ignoreCase = true) }
             syncPauseTrackingLocked(activeSessions, nowMs)
 
-            val violations = collectViolationsLocked(activeSessions, rules, nowMs)
-            triggered.keys.removeAll { it !in violations.keys }
+            val (listedSessions, missingSessions) = activeSessions.partition { it.missedPolls == 0 }
+            val missingKeys = missingSessions.mapTo(HashSet(missingSessions.size)) { it.key }
+            val violations = collectViolationsLocked(listedSessions, rules, nowMs)
+            triggered.keys.removeAll { it !in violations.keys && it.first !in missingKeys }
 
             val enforcedSessions = hashSetOf<ActiveSessionKey>()
             val decisions = mutableListOf<GuardrailDecision>()

@@ -8,6 +8,7 @@ import app.hononeko.miru.persistence.model.LibrarySnapshotRecord
 import app.hononeko.miru.persistence.model.MediaItemCacheRecord
 import app.hononeko.miru.persistence.model.MediaItemTechRecord
 import app.hononeko.miru.persistence.model.MediaMetadataRecord
+import app.hononeko.miru.persistence.model.MediaPlayRow
 import app.hononeko.miru.persistence.model.MediaServerRecord
 import app.hononeko.miru.persistence.model.OverviewStatsRow
 import app.hononeko.miru.persistence.model.PlaybackHistoryRecord
@@ -211,6 +212,24 @@ internal fun ResultRow.toOverviewStatsRow(): OverviewStatsRow =
         stoppedAtMs = this[PlaybackHistoryTable.stoppedAtMs],
     )
 
+/** Requires a row of the history with the library cache joined to it. */
+internal fun ResultRow.toMediaPlayRow(): MediaPlayRow =
+    MediaPlayRow(
+        userId = this[PlaybackHistoryTable.userId],
+        mediaType = this[PlaybackHistoryTable.mediaType],
+        ratingKey = this[PlaybackHistoryTable.ratingKey],
+        title = this[PlaybackHistoryTable.title],
+        grandparentTitle = this[PlaybackHistoryTable.grandparentTitle],
+        year = this[PlaybackHistoryTable.year],
+        thumbPath = this[PlaybackHistoryTable.thumbPath],
+        sectionKey =
+            this[PlaybackHistoryTable.librarySectionKey]?.takeIf { it.isNotBlank() }
+                ?: this.getOrNull(MediaItemsCacheTable.sectionKey),
+        grandparentRatingKey = this.getOrNull(MediaItemsCacheTable.grandparentRatingKey),
+        watchedDurationSec = this[PlaybackHistoryTable.watchedDurationSec],
+        startedAtMs = this[PlaybackHistoryTable.startedAtMs],
+    )
+
 internal fun ResultRow.toClientStatsRow(): ClientStatsRow =
     ClientStatsRow(
         watchedDurationSec = this[PlaybackHistoryTable.watchedDurationSec],
@@ -279,6 +298,7 @@ internal fun ResultRow.toMediaItemCacheRecord(): MediaItemCacheRecord =
             ),
         addedAtMs = this[MediaItemsCacheTable.addedAtMs],
         updatedAtMs = this[MediaItemsCacheTable.updatedAtMs],
+        grandparentRatingKey = this[MediaItemsCacheTable.grandparentRatingKey],
     )
 
 internal fun ResultRow.toUserLibraryAccessRecord(): UserLibraryAccessRecord {

@@ -149,6 +149,8 @@ data class LibraryItemInfo(
     val videoCodec: String? = null,
     val audioCodec: String? = null,
     val addedAtEpochSeconds: Long? = null,
+    /** The show of an episode, or the artist of a track. */
+    val grandparentRatingKey: String? = null,
 )
 
 data class LibraryItemsPage(

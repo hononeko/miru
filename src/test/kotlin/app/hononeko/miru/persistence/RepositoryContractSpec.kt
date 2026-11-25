@@ -10,6 +10,7 @@ import app.hononeko.miru.persistence.model.ActiveSessionRecord
 import app.hononeko.miru.persistence.model.ApiKeyRecord
 import app.hononeko.miru.persistence.model.AuthAccountRecord
 import app.hononeko.miru.persistence.model.AuthSessionRecord
+import app.hononeko.miru.persistence.model.GrandparentItemRecord
 import app.hononeko.miru.persistence.model.GuardrailMode
 import app.hononeko.miru.persistence.model.GuardrailRuleRecord
 import app.hononeko.miru.persistence.model.GuardrailRuleType
@@ -22,6 +23,7 @@ import app.hononeko.miru.persistence.model.LibrarySnapshotRecord
 import app.hononeko.miru.persistence.model.MediaItemCacheRecord
 import app.hononeko.miru.persistence.model.MediaItemTechRecord
 import app.hononeko.miru.persistence.model.MediaMetadataRecord
+import app.hononeko.miru.persistence.model.MediaPlayRow
 import app.hononeko.miru.persistence.model.MediaPlaySummary
 import app.hononeko.miru.persistence.model.MediaServerRecord
 import app.hononeko.miru.persistence.model.PlaybackHistoryRecord
@@ -138,6 +140,8 @@ fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
         playbackHistorySortAndStatsTests { ctx }
         libraryTests { ctx }
         libraryGrowthTests { ctx }
+        libraryGrandparentTests { ctx }
+        mediaPlayTests { ctx }
         staleMediaTests { ctx }
         cascadeTests { ctx }
         authAccountTests { ctx }
@@ -968,6 +972,188 @@ private fun FunSpecRootScope.libraryTests(ctxProvider: () -> ContractContext) {
 
             ctx.library.deleteItemsNotIn("srv-1", "sec-1", emptySet()).shouldBeRight() shouldBe 1
             ctx.library.findRecentlyAdded("srv-1", sectionKey = "sec-1").shouldBeRight() shouldHaveSize 0
+        }
+    }
+}
+
+private fun cachedItem(
+    ratingKey: String,
+    mediaType: String,
+    sectionKey: String,
+    grandparentTitle: String? = null,
+    grandparentRatingKey: String? = null,
+    serverId: String = "srv-1",
+): MediaItemCacheRecord =
+    MediaItemCacheRecord(
+        serverId = serverId,
+        ratingKey = ratingKey,
+        sectionKey = sectionKey,
+        mediaType = mediaType,
+        title = "Item $ratingKey",
+        grandparentTitle = grandparentTitle,
+        addedAtMs = 1_000L,
+        updatedAtMs = 1_000L,
+        grandparentRatingKey = grandparentRatingKey,
+    )
+
+private fun FunSpecRootScope.libraryGrandparentTests(ctxProvider: () -> ContractContext) {
+    context("LibraryRepository shows and artists") {
+        test("keeps the show or artist of cached items per server, and takes over a changed one") {
+            val ctx = ctxProvider()
+            ctx.servers.upsert(sampleServer(id = "srv-1")).shouldBeRight()
+            ctx.servers.upsert(sampleServer(id = "srv-2", machineId = "mach-2")).shouldBeRight()
+            ctx.library
+                .upsertMediaItems(
+                    listOf(
+                        cachedItem("201", "episode", "2", "Severance", "200"),
+                        cachedItem("202", "episode", "2", "Severance", "200"),
+                        cachedItem("601", "track", "3", "Autechre", "600"),
+                        cachedItem("209", "episode", "2", "Unscanned"),
+                        cachedItem("11", "movie", "1"),
+                        cachedItem("201", "episode", "2", "Elsewhere", "900", serverId = "srv-2"),
+                    ),
+                ).shouldBeRight()
+
+            ctx.library.findGrandparentKeys("srv-1", setOf("201", "601", "209", "11", "missing")).shouldBeRight() shouldBe
+                mapOf("201" to "200", "601" to "600")
+            ctx.library.findGrandparentKeys("srv-1", emptySet()).shouldBeRight() shouldBe emptyMap()
+            // More keys than fit in one statement
+            ctx.library.findGrandparentKeys("srv-1", (1..2_500).map { "$it" }.toSet()).shouldBeRight() shouldBe
+                mapOf("201" to "200", "202" to "200", "601" to "600")
+            ctx.library.findGrandparents("srv-1").shouldBeRight() shouldContainExactlyInAnyOrder
+                listOf(
+                    GrandparentItemRecord(sectionKey = "2", title = "Severance", ratingKey = "200"),
+                    GrandparentItemRecord(sectionKey = "3", title = "Autechre", ratingKey = "600"),
+                )
+
+            ctx.library.upsertMediaItems(listOf(cachedItem("201", "episode", "2", "Severance", "250"))).shouldBeRight()
+            ctx.library.findGrandparentKeys("srv-1", setOf("201")).shouldBeRight() shouldBe mapOf("201" to "250")
+            ctx.library.findRecentlyAdded("srv-1").shouldBeRight().single { it.ratingKey == "201" }.grandparentRatingKey shouldBe "250"
+        }
+
+        test("knows when no cached item has its show or artist yet") {
+            val ctx = ctxProvider()
+            ctx.servers.upsert(sampleServer(id = "srv-1")).shouldBeRight()
+            ctx.library.lacksGrandparentKeys("srv-1").shouldBeRight() shouldBe false
+
+            ctx.library.upsertMediaItems(listOf(cachedItem("11", "movie", "1"))).shouldBeRight()
+            ctx.library.lacksGrandparentKeys("srv-1").shouldBeRight() shouldBe false
+
+            ctx.library.upsertMediaItems(listOf(cachedItem("201", "episode", "2", "Severance"))).shouldBeRight()
+            ctx.library.lacksGrandparentKeys("srv-1").shouldBeRight() shouldBe true
+            ctx.library.lacksGrandparentKeys("srv-2").shouldBeRight() shouldBe false
+
+            ctx.library.upsertMediaItems(listOf(cachedItem("202", "episode", "2", "Severance", "200"))).shouldBeRight()
+            ctx.library.lacksGrandparentKeys("srv-1").shouldBeRight() shouldBe false
+        }
+    }
+}
+
+private fun FunSpecRootScope.mediaPlayTests(ctxProvider: () -> ContractContext) {
+    context("PlaybackHistoryRepository plays with their library items") {
+        test("streams the plays of a server oldest first, with the show and section that the library cache knows") {
+            val ctx = ctxProvider()
+            ctx.servers.upsert(sampleServer(id = "srv-1")).shouldBeRight()
+            ctx.servers.upsert(sampleServer(id = "srv-2", machineId = "mach-2")).shouldBeRight()
+            ctx.users.upsert(sampleUser(id = "u-1", serverId = "srv-1")).shouldBeRight()
+            ctx.users.upsert(sampleUser(id = "u-2", serverId = "srv-1", username = "bob")).shouldBeRight()
+            ctx.users.upsert(sampleUser(id = "u-9", serverId = "srv-2", username = "other")).shouldBeRight()
+            ctx.library
+                .upsertMediaItems(
+                    listOf(
+                        cachedItem("201", "episode", "2", "Severance", "200"),
+                        cachedItem("201", "episode", "8", "Elsewhere", "900", serverId = "srv-2"),
+                    ),
+                ).shouldBeRight()
+
+            val episode =
+                sampleHistory(
+                    id = "h-ep", userId = "u-1", ratingKey = "201", title = "Pilot", mediaType = "episode",
+                    grandparentTitle = "Severance", sectionKey = "2", startedAtMs = 3_000L, stoppedAtMs = 4_000L,
+                )
+            val records =
+                listOf(
+                    episode,
+                    episode.copy(
+                        id = "h-ep-nosection",
+                        userId = "u-2",
+                        media = episode.media.copy(librarySectionKey = null),
+                        startedAtMs = 1_000L,
+                        stoppedAtMs = 9_000L,
+                    ),
+                    episode.copy(
+                        id = "h-ep-unknown",
+                        media = episode.media.copy(ratingKey = "299"),
+                        startedAtMs = 5_000L,
+                        stoppedAtMs = 6_000L,
+                    ),
+                    sampleHistory(
+                        id = "h-old",
+                        userId = "u-1",
+                        ratingKey = "201",
+                        mediaType = "episode",
+                        startedAtMs = 1L,
+                        stoppedAtMs = 2L,
+                    ),
+                    sampleHistory(id = "h-movie", userId = "u-1", ratingKey = "11", startedAtMs = 2_000L, stoppedAtMs = 5_000L),
+                    sampleHistory(
+                        id = "h-other", serverId = "srv-2", userId = "u-9", ratingKey = "201", mediaType = "episode",
+                        startedAtMs = 2_000L, stoppedAtMs = 5_000L,
+                    ),
+                )
+            records.forEach { ctx.history.insert(it).shouldBeRight() }
+
+            suspend fun plays(
+                mediaTypes: Set<String>,
+                userIds: Set<String>? = null,
+            ): List<MediaPlayRow> {
+                val rows = mutableListOf<MediaPlayRow>()
+                ctx.history.forEachMediaPlay("srv-1", mediaTypes, fromMs = 4_000L, userIds = userIds) { rows += it }.shouldBeRight()
+                return rows
+            }
+
+            plays(setOf("episode")).map { listOf(it.userId, it.ratingKey, it.sectionKey, it.grandparentRatingKey) } shouldContainExactly
+                listOf(
+                    listOf("u-2", "201", "2", "200"),
+                    listOf("u-1", "201", "2", "200"),
+                    listOf("u-1", "299", "2", null),
+                )
+            plays(setOf("episode", "movie")).map { it.startedAtMs } shouldContainExactly listOf(1_000L, 2_000L, 3_000L, 5_000L)
+            plays(setOf("episode"), userIds = setOf("u-2")).map { it.startedAtMs } shouldContainExactly listOf(1_000L)
+            plays(setOf("episode"), userIds = emptySet()) shouldHaveSize 0
+            plays(emptySet()) shouldHaveSize 0
+        }
+
+        test("filters the history by several rating keys, sections and media types, and by when plays started") {
+            val ctx = ctxProvider()
+            ctx.servers.upsert(sampleServer(id = "srv-1")).shouldBeRight()
+            ctx.users.upsert(sampleUser(id = "u-1", serverId = "srv-1")).shouldBeRight()
+            listOf(
+                sampleHistory(id = "a", userId = "u-1", ratingKey = "1", sectionKey = "1", startedAtMs = 1_000L, stoppedAtMs = 9_000L),
+                sampleHistory(id = "b", userId = "u-1", ratingKey = "2", sectionKey = "2", mediaType = "episode", startedAtMs = 2_000L),
+                sampleHistory(id = "c", userId = "u-1", ratingKey = "3", sectionKey = "3", mediaType = "track", startedAtMs = 3_000L),
+            ).forEach { ctx.history.insert(it).shouldBeRight() }
+
+            suspend fun ids(filter: HistoryFilter): List<String> =
+                ctx.history
+                    .query(filter.copy(sortBy = HistorySortField.STARTED_AT, sortDir = HistorySortDirection.ASC))
+                    .shouldBeRight()
+                    .items
+                    .map { it.id }
+
+            ids(HistoryFilter(ratingKeys = setOf("1", "3", "9"))) shouldContainExactly listOf("a", "c")
+            ids(HistoryFilter(librarySectionKeys = setOf("2", "3"))) shouldContainExactly listOf("b", "c")
+            ids(HistoryFilter(mediaTypes = setOf("movie", "track"))) shouldContainExactly listOf("a", "c")
+            ids(HistoryFilter(startedFromMs = 2_000L)) shouldContainExactly listOf("b", "c")
+            ids(HistoryFilter(startedBeforeMs = 2_000L)) shouldContainExactly listOf("a")
+            ids(HistoryFilter(ratingKeys = setOf("1", "2"), librarySectionKeys = setOf("2"))) shouldContainExactly listOf("b")
+            for (empty in listOf(
+                HistoryFilter(ratingKeys = emptySet()),
+                HistoryFilter(librarySectionKeys = emptySet()),
+                HistoryFilter(mediaTypes = emptySet()),
+            )) {
+                ctx.history.query(empty).shouldBeRight().totalCount shouldBe 0L
+            }
         }
     }
 }

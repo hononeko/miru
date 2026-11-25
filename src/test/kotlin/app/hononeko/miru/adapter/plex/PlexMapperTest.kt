@@ -347,9 +347,11 @@ class PlexMapperTest :
             movie.videoCodec shouldBe "h264"
             movie.audioCodec shouldBe "dts"
             movie.addedAtEpochSeconds shouldBe 1_700_000_000L
+            movie.grandparentRatingKey.shouldBeNull()
 
             val episode = page.items[1]
             episode.mediaType shouldBe MediaType.EPISODE
+            episode.grandparentRatingKey shouldBe "54000"
             episode.parentTitle shouldBe "Season 5"
             episode.grandparentTitle shouldBe "Breaking Bad"
             episode.videoCodec shouldBe "hevc"

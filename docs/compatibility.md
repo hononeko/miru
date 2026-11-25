@@ -26,6 +26,7 @@ Clients therefore need to:
 ## Not covered
 
 - The web app, and `/api` paths that `openapi.yaml` does not list
+- [`/api/v2`](tautulli-api.md), which follows Tautulli and the tools that use its API
 - The database schema
 - Log messages, and the `title` and `detail` texts of errors
 - The session and sign-in cookies

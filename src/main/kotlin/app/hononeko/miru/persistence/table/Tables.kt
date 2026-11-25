@@ -185,6 +185,7 @@ object MediaItemsCacheTable : Table("media_items_cache") {
     val audioCodec = text("audio_codec").nullable()
     val addedAtMs = long("added_at_ms")
     val updatedAtMs = long("updated_at_ms")
+    val grandparentRatingKey = text("grandparent_rating_key").nullable()
 
     override val primaryKey = PrimaryKey(serverId, ratingKey)
 }

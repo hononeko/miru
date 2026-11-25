@@ -36,6 +36,8 @@ tags:
 
   - name: Libraries
     description: Library section statistics, growth snapshots, recently added media, and manual sync triggers
+  - name: Tautulli
+    description: The part of Tautulli's API that Kometa and similar tools use (ENABLE_TAUTULLI_COMPAT_API)
 paths:
   /healthz:
     get:
@@ -2850,8 +2852,176 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /api/v2:
+    get:
+      tags: [Tautulli]
+      operationId: tautulliApi
+      summary: Answer a command of Tautulli's API (administrator API keys only)
+      description: >-
+        Only there with ENABLE_TAUTULLI_COMPAT_API=true. Errors have Tautulli's format instead of Problem Details.
+        Filters of Tautulli that Miru does not support are refused rather than ignored. See
+        https://github.com/hononeko/miru/blob/main/docs/tautulli-api.md.
+      security:
+        - TautulliApiKey: []
+        - ApiKeyAuth: []
+      parameters:
+        - name: cmd
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [arnold, get_history, get_home_stats, get_tautulli_info, status]
+        - name: time_range
+          in: query
+          description: Days (get_home_stats)
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 36500
+            default: 30
+        - name: stats_count
+          in: query
+          description: Rows per statistic (get_home_stats)
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 10000
+            default: 10
+        - name: stats_start
+          in: query
+          description: First row of each statistic (get_home_stats)
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 10000
+            default: 0
+        - name: stats_type
+          in: query
+          description: What statistics are ranked by (get_home_stats)
+          schema:
+            type: string
+            enum: [plays, duration]
+            default: plays
+        - name: stat_id
+          in: query
+          description: Answer only this statistic (get_home_stats)
+          schema:
+            type: string
+            enum: [top_movies, popular_movies, top_tv, popular_tv, top_music, popular_music]
+        - name: section_id
+          in: query
+          description: Key of a library section; several separated by commas in get_history
+          schema:
+            type: string
+        - name: user_id
+          in: query
+          description: ID of a Plex account, or several separated by commas
+          schema:
+            type: string
+        - name: rating_key
+          in: query
+          description: Rating key of an item, or several separated by commas (get_history)
+          schema:
+            type: string
+        - name: media_type
+          in: query
+          description: movie, episode, track, clip, live or all, or several separated by commas (get_history)
+          schema:
+            type: string
+        - name: after
+          in: query
+          description: First day, in UTC (get_history)
+          schema:
+            type: string
+            format: date
+        - name: before
+          in: query
+          description: Last day, in UTC (get_history)
+          schema:
+            type: string
+            format: date
+        - name: order_column
+          in: query
+          description: What plays are sorted by (get_history)
+          schema:
+            type: string
+            enum: [date, started, stopped, duration, full_title]
+            default: date
+        - name: order_dir
+          in: query
+          description: Direction plays are sorted in (get_history)
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+        - name: start
+          in: query
+          description: First play (get_history)
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: length
+          in: query
+          description: Number of plays (get_history)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 25
+        - name: draw
+          in: query
+          description: Returned as it is (get_history)
+          schema:
+            type: integer
+            minimum: 0
+            default: 1
+      responses:
+        '200':
+          description: The answer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TautulliResponse'
+        '400':
+          description: Unknown command, or a parameter that is not supported or not valid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TautulliResponse'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TautulliResponse'
+        '403':
+          description: The API key does not belong to an administrator
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TautulliResponse'
+        '404':
+          description: The Tautulli API is not enabled
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TautulliResponse'
+        '502':
+          description: The media server is not connected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TautulliResponse'
+
 components:
   securitySchemes:
+    TautulliApiKey:
+      type: apiKey
+      in: query
+      name: apikey
     CookieAuth:
       type: apiKey
       in: cookie
@@ -2865,6 +3035,22 @@ components:
       scheme: bearer
 
   schemas:
+    TautulliResponse:
+      type: object
+      required: [response]
+      properties:
+        response:
+          type: object
+          required: [result, message, data]
+          properties:
+            result:
+              type: string
+              enum: [success, error]
+            message:
+              type: [string, 'null']
+            data:
+              description: The answer in Tautulli's format. An empty object for errors.
+
     HealthResponse:
       type: object
       required: [status, service, version]

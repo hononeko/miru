@@ -34,6 +34,7 @@ import app.hononeko.miru.http.respondError
 import app.hononeko.miru.http.staticWebRoutes
 import app.hononeko.miru.http.streamControlRoutes
 import app.hononeko.miru.http.streamsAndUsersRoutes
+import app.hononeko.miru.http.tautulliCompatRoutes
 import app.hononeko.miru.http.webhookRoutes
 import app.hononeko.miru.importer.TautulliCli
 import app.hononeko.miru.importer.TautulliImporterService
@@ -64,6 +65,7 @@ import app.hononeko.miru.service.PlexUserSyncService
 import app.hononeko.miru.service.StreamControlService
 import app.hononeko.miru.service.StreamGuardrailRunner
 import app.hononeko.miru.service.StreamsAndUsersService
+import app.hononeko.miru.service.TautulliCompatService
 import app.hononeko.miru.service.WebhookService
 import app.hononeko.miru.session.SessionEvent
 import app.hononeko.miru.webhook.WebhookDispatcher
@@ -173,6 +175,13 @@ private fun runServer() {
         createWebhookServices(databaseHandle, plexRuntimeManager, streamControlService, userRepository, appConfig, appVersion)
     val mediaDetailsService =
         MediaDetailsService(plexRuntimeManager.adapter, playbackHistoryRepository, libraryRepository, sectionAccessChecker)
+    val tautulliCompatService =
+        TautulliCompatService(
+            playbackHistoryRepository = playbackHistoryRepository,
+            userRepository = userRepository,
+            libraryRepository = libraryRepository,
+            serverIdProvider = plexRuntimeManager.serverIdProvider,
+        )
     val syncServices =
         createSyncServices(
             plexRuntimeManager = plexRuntimeManager,
@@ -210,6 +219,7 @@ private fun runServer() {
                 librarySyncTrigger = syncServices.libraryStatsCollector,
                 mediaDetailsService = mediaDetailsService,
                 tautulliImporterService = tautulliImporterService,
+                tautulliCompatService = tautulliCompatService,
                 plexOAuthService = plexOAuthService,
             )
         }
@@ -426,7 +436,9 @@ internal fun createSyncServices(
             null
         }
     plexRuntimeManager.setOnReloadLibrarySync {
-        libraryStatsCollector.syncFastCounts()
+        libraryStatsCollector.syncInitial().onLeft { error ->
+            logger.warn("Post-reload library sync failed: {}", error.message)
+        }
         plexUserSyncService.syncOnce().onLeft { error ->
             logger.warn("Post-reload user sync failed: {}", error.message)
         }
@@ -644,6 +656,7 @@ fun Application.miruModule(
     librarySyncTrigger: LibrarySyncTrigger? = null,
     mediaDetailsService: MediaDetailsService? = null,
     tautulliImporterService: TautulliImporterService? = null,
+    tautulliCompatService: TautulliCompatService? = null,
     plexOAuthService: PlexOAuthService? = null,
     authRateLimiter: AuthRateLimiter = AuthRateLimiter(config.auth.rateLimit),
 ) {
@@ -754,6 +767,15 @@ fun Application.miruModule(
                     authService = authService,
                     authMode = config.auth.mode,
                     watchedThresholdPercent = config.session.watchedThresholdPercent,
+                )
+            }
+            if (tautulliCompatService != null && config.tautulliCompat.enabled) {
+                tautulliCompatRoutes(
+                    tautulliCompatService = tautulliCompatService,
+                    authService = authService,
+                    authMode = config.auth.mode,
+                    watchedThresholdPercent = config.session.watchedThresholdPercent,
+                    appVersion = appVersion,
                 )
             }
         }

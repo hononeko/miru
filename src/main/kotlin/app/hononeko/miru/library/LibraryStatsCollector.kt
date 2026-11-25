@@ -116,6 +116,23 @@ class LibraryStatsCollector(
             syncDeepLocked(sectionKeyFilter)
         }
 
+    /**
+     * Counts all sections. Items that were cached before Miru kept the show or artist they belong to are also scanned
+     * again, which is the case once after an upgrade.
+     */
+    suspend fun syncInitial(): Either<MiruError, LibrarySyncSummary> =
+        syncMutex.withLock {
+            either {
+                val counted = syncFastCountsLocked(sectionKeyFilter = null).bind()
+                val serverId = serverIdProvider().bind()
+                if (libraryRepository.lacksGrandparentKeys(serverId).bind()) {
+                    syncDeepLocked(sectionKeyFilter = null).bind()
+                } else {
+                    counted
+                }
+            }
+        }
+
     suspend fun syncLibraryAccess(): Either<MiruError, Int> =
         syncMutex.withLock {
             syncLibraryAccessLocked()
@@ -512,6 +529,7 @@ class LibraryStatsCollector(
                 ),
             addedAtMs = addedAtEpochSeconds?.let { it * MILLIS_PER_SECOND } ?: nowMs,
             updatedAtMs = nowMs,
+            grandparentRatingKey = grandparentRatingKey,
         )
 
     private suspend fun run() {
@@ -550,7 +568,7 @@ class LibraryStatsCollector(
             }
 
             launch(CoroutineName("library-sync-actor")) {
-                runSafeSync("initial fast count sync") { syncFastCounts(sectionKeyFilter = null) }
+                runSafeSync("initial sync") { syncInitial() }
                 while (true) {
                     select {
                         deepScanSignals.onReceive {

@@ -584,6 +584,7 @@ internal object PlexFixtures {
                 "type": "episode",
                 "title": "Ozymandias",
                 "parentTitle": "Season 5",
+                "grandparentRatingKey": "54000",
                 "grandparentTitle": "Breaking Bad",
                 "year": 2013,
                 "thumb": "/library/metadata/54321/thumb/1700000100",

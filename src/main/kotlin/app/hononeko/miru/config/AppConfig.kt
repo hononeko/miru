@@ -168,6 +168,10 @@ data class GuardrailsConfig(
     }
 }
 
+data class TautulliCompatConfig(
+    val enabled: Boolean = false,
+)
+
 data class AppConfig(
     val server: ServerConfig,
     val database: DatabaseConfig,
@@ -175,6 +179,7 @@ data class AppConfig(
     val session: SessionConfig,
     val auth: AuthConfig,
     val guardrails: GuardrailsConfig = GuardrailsConfig(),
+    val tautulliCompat: TautulliCompatConfig = TautulliCompatConfig(),
 )
 
 data class DatabaseAndSessionConfig(
@@ -202,6 +207,7 @@ object AppConfigLoader {
             val session = parseSessionConfig(get, errors)
             val auth = parseAuthConfig(get, errors)
             val guardrails = parseGuardrailsConfig(get, errors)
+            val tautulliCompat = parseTautulliCompatConfig(get, errors)
 
             ensure(errors.isEmpty()) {
                 MiruError.ValidationError(
@@ -217,6 +223,7 @@ object AppConfigLoader {
                 session = session,
                 auth = auth,
                 guardrails = guardrails,
+                tautulliCompat = tautulliCompat,
             )
         }
 
@@ -392,6 +399,18 @@ object AppConfigLoader {
             clientIdentifier = clientIdentifier,
             plexTvBaseUrl = plexTvBaseUrl,
         )
+    }
+
+    private fun parseTautulliCompatConfig(
+        get: (String, String, String?) -> String?,
+        errors: MutableMap<String, String>,
+    ): TautulliCompatConfig {
+        val enabledRaw = get("ENABLE_TAUTULLI_COMPAT_API", "miru.tautulliCompat.enabled", null) ?: "false"
+        val enabled = enabledRaw.toBooleanStrictOrNull()
+        if (enabled == null) {
+            errors["ENABLE_TAUTULLI_COMPAT_API"] = "must be 'true' or 'false'"
+        }
+        return TautulliCompatConfig(enabled = enabled ?: false)
     }
 
     private fun parseSessionConfig(

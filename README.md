@@ -70,6 +70,7 @@ Open <http://localhost:8080>, complete first-run admin setup, and connect Plex f
 - **Configuration:** Every setting is documented with defaults and validation rules in [`docs/environment-variables.md`](docs/environment-variables.md).
 - **Real-time Plex sync:** Subscribes to Plex's WebSocket notification stream (`PLEX_WEBSOCKET_ENABLED=true`) with debounced updates, jittered reconnect backoff, and a fallback reconciler (`PLEX_POLL_INTERVAL_SECONDS=20`), pushing live updates to browsers over SSE.
 - **API & webhooks:** [`docs/compatibility.md`](docs/compatibility.md) lists what stays compatible between releases, and [`docs/webhooks.md`](docs/webhooks.md) describes the webhook payloads and signature.
+- **Kometa & Tautulli API:** Kometa and similar tools can read from Miru instead of Tautulli, see [`docs/tautulli-api.md`](docs/tautulli-api.md).
 - **System endpoints:** `GET /healthz` (liveness), `GET /readyz` (readiness), `GET /api/v1/openapi.yaml` (OpenAPI 3.1 contract).
 
 ## Development

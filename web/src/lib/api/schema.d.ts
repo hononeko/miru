@@ -961,10 +961,39 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Answer a command of Tautulli's API (administrator API keys only)
+         * @description Only there with ENABLE_TAUTULLI_COMPAT_API=true. Errors have Tautulli's format instead of Problem Details. Filters of Tautulli that Miru does not support are refused rather than ignored. See https://github.com/hononeko/miru/blob/main/docs/tautulli-api.md.
+         */
+        get: operations["tautulliApi"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        TautulliResponse: {
+            response: {
+                /** @enum {string} */
+                result: "success" | "error";
+                message: string | null;
+                /** @description The answer in Tautulli's format. An empty object for errors. */
+                data: unknown;
+            };
+        };
         HealthResponse: {
             /** @example ok */
             status: string;
@@ -5275,6 +5304,112 @@ export interface operations {
                 };
                 content: {
                     "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    tautulliApi: {
+        parameters: {
+            query: {
+                cmd: "arnold" | "get_history" | "get_home_stats" | "get_tautulli_info" | "status";
+                /** @description Days (get_home_stats) */
+                time_range?: number;
+                /** @description Rows per statistic (get_home_stats) */
+                stats_count?: number;
+                /** @description First row of each statistic (get_home_stats) */
+                stats_start?: number;
+                /** @description What statistics are ranked by (get_home_stats) */
+                stats_type?: "plays" | "duration";
+                /** @description Answer only this statistic (get_home_stats) */
+                stat_id?: "top_movies" | "popular_movies" | "top_tv" | "popular_tv" | "top_music" | "popular_music";
+                /** @description Key of a library section; several separated by commas in get_history */
+                section_id?: string;
+                /** @description ID of a Plex account, or several separated by commas */
+                user_id?: string;
+                /** @description Rating key of an item, or several separated by commas (get_history) */
+                rating_key?: string;
+                /** @description movie, episode, track, clip, live or all, or several separated by commas (get_history) */
+                media_type?: string;
+                /** @description First day, in UTC (get_history) */
+                after?: string;
+                /** @description Last day, in UTC (get_history) */
+                before?: string;
+                /** @description What plays are sorted by (get_history) */
+                order_column?: "date" | "started" | "stopped" | "duration" | "full_title";
+                /** @description Direction plays are sorted in (get_history) */
+                order_dir?: "asc" | "desc";
+                /** @description First play (get_history) */
+                start?: number;
+                /** @description Number of plays (get_history) */
+                length?: number;
+                /** @description Returned as it is (get_history) */
+                draw?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The answer */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TautulliResponse"];
+                };
+            };
+            /** @description Unknown command, or a parameter that is not supported or not valid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TautulliResponse"];
+                };
+            };
+            /** @description Missing or invalid API key */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TautulliResponse"];
+                };
+            };
+            /** @description The API key does not belong to an administrator */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TautulliResponse"];
+                };
+            };
+            /** @description The Tautulli API is not enabled */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TautulliResponse"];
+                };
+            };
+            /** @description The media server is not connected */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TautulliResponse"];
                 };
             };
         };

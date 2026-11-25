@@ -144,6 +144,13 @@ data class HistoryFilter(
     val sortDir: HistorySortDirection = HistorySortDirection.DESC,
     val limit: Int = 50,
     val offset: Int = 0,
+    val ratingKeys: Set<String>? = null,
+    val librarySectionKeys: Set<String>? = null,
+    val mediaTypes: Set<String>? = null,
+    /** Plays started at or after this time. */
+    val startedFromMs: Long? = null,
+    /** Plays started before this time. */
+    val startedBeforeMs: Long? = null,
 )
 
 data class HistoryPage(
@@ -230,6 +237,21 @@ data class OverviewStatsRow(
     val streamDecision: String,
     val hwTranscode: Boolean,
     val stoppedAtMs: Long,
+)
+
+/** A play with the library item it belongs to, as far as the library cache knows it. */
+data class MediaPlayRow(
+    val userId: String,
+    val mediaType: String,
+    val ratingKey: String,
+    val title: String,
+    val grandparentTitle: String?,
+    val year: Int?,
+    val thumbPath: String?,
+    val sectionKey: String?,
+    val grandparentRatingKey: String?,
+    val watchedDurationSec: Int,
+    val startedAtMs: Long,
 )
 
 data class ClientStatsRow(
@@ -325,6 +347,15 @@ data class MediaItemCacheRecord(
     val tech: MediaItemTechRecord = MediaItemTechRecord(),
     val addedAtMs: Long,
     val updatedAtMs: Long,
+    /** The show of an episode, or the artist of a track. Null until a deep scan has seen the item. */
+    val grandparentRatingKey: String? = null,
+)
+
+/** A show or artist that has items in the library cache. */
+data class GrandparentItemRecord(
+    val sectionKey: String,
+    val title: String,
+    val ratingKey: String,
 )
 
 data class UserLibraryAccessRecord(

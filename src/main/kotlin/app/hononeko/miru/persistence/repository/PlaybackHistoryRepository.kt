@@ -9,17 +9,20 @@ import app.hononeko.miru.persistence.model.HistoryFilter
 import app.hononeko.miru.persistence.model.HistoryPage
 import app.hononeko.miru.persistence.model.HistorySortDirection
 import app.hononeko.miru.persistence.model.HistorySortField
+import app.hononeko.miru.persistence.model.MediaPlayRow
 import app.hononeko.miru.persistence.model.MediaPlaySummary
 import app.hononeko.miru.persistence.model.OverviewStatsRow
 import app.hononeko.miru.persistence.model.PlaybackHistoryRecord
 import app.hononeko.miru.persistence.model.PlaybackHistoryStatsRow
 import app.hononeko.miru.persistence.model.UserPlaybackSummary
+import app.hononeko.miru.persistence.table.MediaItemsCacheTable
 import app.hononeko.miru.persistence.table.PlaybackHistoryTable
 import app.hononeko.miru.persistence.table.UsersTable
 import arrow.core.Either
 import org.jetbrains.exposed.v1.core.Case
 import org.jetbrains.exposed.v1.core.Coalesce
 import org.jetbrains.exposed.v1.core.Expression
+import org.jetbrains.exposed.v1.core.JoinType
 import org.jetbrains.exposed.v1.core.LikePattern
 import org.jetbrains.exposed.v1.core.LongColumnType
 import org.jetbrains.exposed.v1.core.Op
@@ -32,6 +35,7 @@ import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.intLiteral
 import org.jetbrains.exposed.v1.core.isNotNull
+import org.jetbrains.exposed.v1.core.less
 import org.jetbrains.exposed.v1.core.lessEq
 import org.jetbrains.exposed.v1.core.like
 import org.jetbrains.exposed.v1.core.lowerCase
@@ -137,6 +141,15 @@ interface PlaybackHistoryRepository {
                 )
             }
         }
+
+    /** Plays of [mediaTypes] on a server that stopped at or after [fromMs], oldest first. */
+    suspend fun forEachMediaPlay(
+        serverId: String,
+        mediaTypes: Set<String>,
+        fromMs: Long,
+        userIds: Set<String>? = null,
+        onRow: (MediaPlayRow) -> Unit,
+    ): Either<MiruError.PersistenceError, Unit> = Either.Right(Unit)
 
     suspend fun forEachClientStatsRow(
         serverId: String? = null,
@@ -303,7 +316,10 @@ class ExposedPlaybackHistoryRepository(
     override suspend fun query(filter: HistoryFilter): Either<MiruError.PersistenceError, HistoryPage> {
         val safeLimit = filter.limit.coerceAtLeast(0)
         val safeOffset = filter.offset.coerceAtLeast(0)
-        if (filter.userIds != null && filter.userIds.isEmpty()) {
+        val hasEmptySet =
+            listOfNotNull(filter.userIds, filter.ratingKeys, filter.librarySectionKeys, filter.mediaTypes)
+                .any { it.isEmpty() }
+        if (hasEmptySet) {
             return Either.Right(HistoryPage(emptyList(), 0L, safeLimit, safeOffset))
         }
 
@@ -449,6 +465,48 @@ class ExposedPlaybackHistoryRepository(
                 .orderBy(PlaybackHistoryTable.stoppedAtMs to SortOrder.ASC, PlaybackHistoryTable.id to SortOrder.ASC)
                 .fetchSize(STATS_STREAM_FETCH_SIZE)
                 .forEach { row -> onRow(row.toOverviewStatsRow()) }
+        }
+    }
+
+    override suspend fun forEachMediaPlay(
+        serverId: String,
+        mediaTypes: Set<String>,
+        fromMs: Long,
+        userIds: Set<String>?,
+        onRow: (MediaPlayRow) -> Unit,
+    ): Either<MiruError.PersistenceError, Unit> {
+        if (mediaTypes.isEmpty() || (userIds != null && userIds.isEmpty())) {
+            return Either.Right(Unit)
+        }
+
+        return database.exposedQuery("playback_history_stream_media_plays") {
+            val condition =
+                buildStatsCondition(serverId, userIds, fromMs, null) and (PlaybackHistoryTable.mediaType inList mediaTypes)
+            PlaybackHistoryTable
+                .join(
+                    otherTable = MediaItemsCacheTable,
+                    joinType = JoinType.LEFT,
+                    additionalConstraint = {
+                        (MediaItemsCacheTable.serverId eq PlaybackHistoryTable.serverId) and
+                            (MediaItemsCacheTable.ratingKey eq PlaybackHistoryTable.ratingKey)
+                    },
+                ).select(
+                    PlaybackHistoryTable.userId,
+                    PlaybackHistoryTable.mediaType,
+                    PlaybackHistoryTable.ratingKey,
+                    PlaybackHistoryTable.title,
+                    PlaybackHistoryTable.grandparentTitle,
+                    PlaybackHistoryTable.year,
+                    PlaybackHistoryTable.thumbPath,
+                    PlaybackHistoryTable.librarySectionKey,
+                    PlaybackHistoryTable.watchedDurationSec,
+                    PlaybackHistoryTable.startedAtMs,
+                    MediaItemsCacheTable.sectionKey,
+                    MediaItemsCacheTable.grandparentRatingKey,
+                ).where { condition }
+                .orderBy(PlaybackHistoryTable.startedAtMs to SortOrder.ASC, PlaybackHistoryTable.id to SortOrder.ASC)
+                .fetchSize(STATS_STREAM_FETCH_SIZE)
+                .forEach { row -> onRow(row.toMediaPlayRow()) }
         }
     }
 
@@ -735,6 +793,11 @@ class ExposedPlaybackHistoryRepository(
         filter.streamDecision?.let { predicates += PlaybackHistoryTable.streamDecision eq it }
         filter.fromMs?.let { predicates += PlaybackHistoryTable.stoppedAtMs greaterEq it }
         filter.toMs?.let { predicates += PlaybackHistoryTable.stoppedAtMs lessEq it }
+        filter.ratingKeys?.let { predicates += PlaybackHistoryTable.ratingKey inList it }
+        filter.librarySectionKeys?.let { predicates += PlaybackHistoryTable.librarySectionKey inList it }
+        filter.mediaTypes?.let { predicates += PlaybackHistoryTable.mediaType inList it }
+        filter.startedFromMs?.let { predicates += PlaybackHistoryTable.startedAtMs greaterEq it }
+        filter.startedBeforeMs?.let { predicates += PlaybackHistoryTable.startedAtMs less it }
         filter.q?.trim()?.takeIf { it.isNotEmpty() }?.let { raw ->
             val pattern = LikePattern("%${escapeLikePattern(raw.lowercase())}%", escapeChar = '\\')
             predicates +=

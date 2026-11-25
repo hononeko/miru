@@ -200,6 +200,7 @@ object PlexMapper {
             videoCodec = primaryMedia?.videoCodec?.takeIf { it.isNotBlank() } ?: videoStream?.codec?.takeIf { it.isNotBlank() },
             audioCodec = primaryMedia?.audioCodec?.takeIf { it.isNotBlank() } ?: audioStream?.codec?.takeIf { it.isNotBlank() },
             addedAtEpochSeconds = metadata.addedAt,
+            grandparentRatingKey = metadata.grandparentRatingKey?.takeIf { it.isNotBlank() },
         )
     }
 

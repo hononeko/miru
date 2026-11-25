@@ -62,6 +62,12 @@ Miru connects to Plex in one of two ways:
 | `RESUME_MERGE_WINDOW_SECONDS` | `120` | When a user resumes the same item on the same player within this many seconds of stopping, Miru extends the earlier history entry instead of adding a new one. `0` turns merging off. |
 | `WATCHED_THRESHOLD_PERCENT` | `85` | Progress, in percent, at which a play counts as watched. From 1 to 100. Also the default for Tautulli imports. |
 
+## Tautulli API
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `ENABLE_TAUTULLI_COMPAT_API` | `false` | `true` answers the part of Tautulli's API that Kometa uses at `/api/v2`. See [Tautulli API](tautulli-api.md). |
+
 ## Stream Guardrails
 
 Automated stream guardrails default to `disabled`. Setting a rule's mode to `warn` runs it in dry-run mode (recording structured warnings and audit log entries without terminating Plex sessions), while `enforce` automatically terminates matching Plex streams and sends the configured message to the viewer. Rules can also be adjusted at runtime from the Admin Console.

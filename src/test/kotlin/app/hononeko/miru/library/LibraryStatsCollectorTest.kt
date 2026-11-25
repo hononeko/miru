@@ -709,6 +709,63 @@ class LibraryStatsCollectorTest :
             }
         }
 
+        test("syncInitial scans the libraries once after an upgrade, to learn the shows of cached episodes") {
+            createCollectorHarness().use { harness ->
+                runTest {
+                    val episode =
+                        movieItem("201", sectionKey = "2").copy(
+                            mediaType = MediaType.EPISODE,
+                            grandparentTitle = "Severance",
+                            grandparentRatingKey = "200",
+                        )
+                    val adapter =
+                        FakeMediaServerAdapter(
+                            sectionsResult = listOf(LibrarySectionInfo("2", "TV Shows", LibrarySectionType.SHOW)).right(),
+                            countHandler = { _, _ -> 1.right() },
+                            itemsHandler = { _, _, _, _ ->
+                                LibraryItemsPage(totalSize = 1, offset = 0, items = listOf(episode)).right()
+                            },
+                        )
+                    val collector =
+                        LibraryStatsCollector(
+                            adapter = adapter,
+                            serverIdProvider = { harness.serverId.right() },
+                            libraryRepository = harness.libraryRepository,
+                            scope = this,
+                            clock = { harness.clockMs.get() },
+                        )
+
+                    // Nothing cached yet: only counts
+                    collector.syncInitial().shouldBeRight().mode shouldBe LibrarySyncMode.FAST
+                    adapter.itemsCalls.shouldBeEmpty()
+
+                    // Cached by an older version
+                    harness.libraryRepository
+                        .upsertMediaItems(
+                            listOf(
+                                MediaItemCacheRecord(
+                                    serverId = harness.serverId,
+                                    ratingKey = "201",
+                                    sectionKey = "2",
+                                    mediaType = "episode",
+                                    title = "Good News",
+                                    grandparentTitle = "Severance",
+                                    addedAtMs = 1_000L,
+                                    updatedAtMs = 1_000L,
+                                ),
+                            ),
+                        ).shouldBeRight()
+                    collector.syncInitial().shouldBeRight().mode shouldBe LibrarySyncMode.DEEP
+                    adapter.itemsCalls shouldHaveSize 1
+                    harness.libraryRepository.findGrandparentKeys(harness.serverId, setOf("201")).shouldBeRight() shouldBe
+                        mapOf("201" to "200")
+
+                    collector.syncInitial().shouldBeRight().mode shouldBe LibrarySyncMode.FAST
+                    adapter.itemsCalls shouldHaveSize 1
+                }
+            }
+        }
+
         test("syncLibraryAccess persists shared-library permissions, replaces revocations, and preserves existing rows on failure") {
             runTest {
                 createCollectorHarness().use { harness ->

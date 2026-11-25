@@ -423,6 +423,18 @@ class AppConfigLoaderTest :
                 )
         }
 
+        test("turns on the Tautulli API only on request") {
+            AppConfigLoader.load(env = baseSqliteEnv()).shouldBeRight().tautulliCompat.enabled shouldBe false
+            AppConfigLoader
+                .load(env = baseSqliteEnv(mapOf("ENABLE_TAUTULLI_COMPAT_API" to "true")))
+                .shouldBeRight()
+                .tautulliCompat.enabled shouldBe true
+            AppConfigLoader
+                .load(env = baseSqliteEnv(mapOf("ENABLE_TAUTULLI_COMPAT_API" to "yes")))
+                .shouldBeLeft()
+                .fieldErrors.keys shouldBe setOf("ENABLE_TAUTULLI_COMPAT_API")
+        }
+
         test("loads and validates AUTH_COOKIE_SECURE") {
             AppConfigLoader.load(env = baseSqliteEnv()).shouldBeRight().auth.cookieSecure shouldBe CookieSecureMode.AUTO
             AppConfigLoader

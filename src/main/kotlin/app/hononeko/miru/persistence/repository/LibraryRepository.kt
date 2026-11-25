@@ -4,6 +4,7 @@ import app.hononeko.miru.MiruJson
 import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.persistence.DatabaseHandle
 import app.hononeko.miru.persistence.exposedQuery
+import app.hononeko.miru.persistence.model.GrandparentItemRecord
 import app.hononeko.miru.persistence.model.LibraryGrowthDayRecord
 import app.hononeko.miru.persistence.model.LibrarySectionRecord
 import app.hononeko.miru.persistence.model.LibrarySnapshotRecord
@@ -33,6 +34,7 @@ import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.isNotNull
 import org.jetbrains.exposed.v1.core.lessEq
 import org.jetbrains.exposed.v1.core.statements.StatementType
 import org.jetbrains.exposed.v1.jdbc.Database
@@ -82,6 +84,20 @@ interface LibraryRepository {
     ): Either<MiruError.PersistenceError, List<LibraryGrowthDayRecord>> = Either.Right(emptyList())
 
     suspend fun upsertMediaItems(items: List<MediaItemCacheRecord>): Either<MiruError.PersistenceError, Int>
+
+    /** The shows of episodes and artists of tracks with the [ratingKeys], by the rating key of the episode or track. */
+    suspend fun findGrandparentKeys(
+        serverId: String,
+        ratingKeys: Set<String>,
+    ): Either<MiruError.PersistenceError, Map<String, String>> = Either.Right(emptyMap())
+
+    /** Every show and artist that has cached items. */
+    suspend fun findGrandparents(
+        serverId: String,
+    ): Either<MiruError.PersistenceError, List<GrandparentItemRecord>> = Either.Right(emptyList())
+
+    /** Whether episodes or tracks are cached, but none of them with its show or artist. */
+    suspend fun lacksGrandparentKeys(serverId: String): Either<MiruError.PersistenceError, Boolean> = Either.Right(false)
 
     suspend fun findRecentlyAdded(
         serverId: String,
@@ -345,11 +361,73 @@ class ExposedLibraryRepository(
                     this[MediaItemsCacheTable.audioCodec] = item.tech.audioCodec
                     this[MediaItemsCacheTable.addedAtMs] = item.addedAtMs
                     this[MediaItemsCacheTable.updatedAtMs] = item.updatedAtMs
+                    this[MediaItemsCacheTable.grandparentRatingKey] = item.grandparentRatingKey
                 }
             }
             items.size
         }
     }
+
+    override suspend fun findGrandparentKeys(
+        serverId: String,
+        ratingKeys: Set<String>,
+    ): Either<MiruError.PersistenceError, Map<String, String>> {
+        if (ratingKeys.isEmpty()) return Either.Right(emptyMap())
+        return database.exposedQuery("library_find_grandparent_keys") {
+            ratingKeys
+                .chunked(BATCH_SIZE)
+                .flatMap { chunk ->
+                    MediaItemsCacheTable
+                        .select(MediaItemsCacheTable.ratingKey, MediaItemsCacheTable.grandparentRatingKey)
+                        .where {
+                            (MediaItemsCacheTable.serverId eq serverId) and
+                                (MediaItemsCacheTable.ratingKey inList chunk) and
+                                MediaItemsCacheTable.grandparentRatingKey.isNotNull()
+                        }.mapNotNull { row ->
+                            row[MediaItemsCacheTable.grandparentRatingKey]?.let { row[MediaItemsCacheTable.ratingKey] to it }
+                        }
+                }.toMap()
+        }
+    }
+
+    override suspend fun findGrandparents(
+        serverId: String,
+    ): Either<MiruError.PersistenceError, List<GrandparentItemRecord>> =
+        database.exposedQuery("library_find_grandparents") {
+            MediaItemsCacheTable
+                .select(
+                    MediaItemsCacheTable.sectionKey,
+                    MediaItemsCacheTable.grandparentTitle,
+                    MediaItemsCacheTable.grandparentRatingKey,
+                ).withDistinct()
+                .where {
+                    (MediaItemsCacheTable.serverId eq serverId) and
+                        MediaItemsCacheTable.grandparentTitle.isNotNull() and
+                        MediaItemsCacheTable.grandparentRatingKey.isNotNull()
+                }.mapNotNull { row ->
+                    val title = row[MediaItemsCacheTable.grandparentTitle] ?: return@mapNotNull null
+                    val ratingKey = row[MediaItemsCacheTable.grandparentRatingKey] ?: return@mapNotNull null
+                    GrandparentItemRecord(
+                        sectionKey = row[MediaItemsCacheTable.sectionKey],
+                        title = title,
+                        ratingKey = ratingKey,
+                    )
+                }
+        }
+
+    override suspend fun lacksGrandparentKeys(serverId: String): Either<MiruError.PersistenceError, Boolean> =
+        database.exposedQuery("library_lacks_grandparent_keys") {
+            val cachedItems =
+                (MediaItemsCacheTable.serverId eq serverId) and
+                    (MediaItemsCacheTable.mediaType inList listOf("episode", "track"))
+            val anyItem = MediaItemsCacheTable.selectAll().where { cachedItems }.limit(1).any()
+            anyItem &&
+                MediaItemsCacheTable
+                    .selectAll()
+                    .where { cachedItems and MediaItemsCacheTable.grandparentRatingKey.isNotNull() }
+                    .limit(1)
+                    .none()
+        }
 
     override suspend fun findRecentlyAdded(
         serverId: String,

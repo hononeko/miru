@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Build the SvelteKit static PWA bundle natively on the build host
-FROM --platform=$BUILDPLATFORM oven/bun:1.4.2-alpine AS web-build
+FROM --platform=$BUILDPLATFORM oven/bun:1.4.4-alpine AS web-build
 WORKDIR /web
 
 COPY web/package.json web/bun.lock ./

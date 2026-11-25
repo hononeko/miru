@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { ArrowRight, LoaderCircle } from 'lucide-svelte';
+	import { ArrowRight, LoaderCircle } from '@lucide/svelte';
 	import { MiruApiError } from '$api/client';
 	import MiruLogo from '$components/layout/MiruLogo.svelte';
 	import Badge from '$components/ui/Badge.svelte';

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { OctagonX } from 'lucide-svelte';
+	import { OctagonX } from '@lucide/svelte';
 	import { api, MiruApiError, unwrap } from '$api/client';
 	import type { ActiveStreamDto, TerminateStreamResponse } from '$api/types';
 	import Badge from '$components/ui/Badge.svelte';

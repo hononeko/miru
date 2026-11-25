@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Link2 } from 'lucide-svelte';
+	import { Link2 } from '@lucide/svelte';
 
 	type Props = {
 		context: string;

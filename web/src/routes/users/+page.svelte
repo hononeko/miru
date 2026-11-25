@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { Search } from 'lucide-svelte';
+	import { Search } from '@lucide/svelte';
 	import { api, MiruApiError, unwrap } from '$api/client';
 	import type { UserSummaryDto } from '$api/types';
 	import Badge from '$components/ui/Badge.svelte';

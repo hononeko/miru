@@ -13,7 +13,7 @@
 		Sun,
 		Moon,
 		LogOut
-	} from 'lucide-svelte';
+	} from '@lucide/svelte';
 	import MiruLogo from './MiruLogo.svelte';
 	import Badge from '$components/ui/Badge.svelte';
 	import ProxiedImage from '$components/miru/ProxiedImage.svelte';

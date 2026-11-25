@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { ArrowLeft, Calendar, Flame, Sparkles } from 'lucide-svelte';
+	import { ArrowLeft, Calendar, Flame, Sparkles } from '@lucide/svelte';
 	import { api, MiruApiError, unwrap } from '$api/client';
 	import type {
 		AnalyticsMetricPreference,

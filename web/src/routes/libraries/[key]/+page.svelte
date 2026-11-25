@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { ArrowLeft, Lock } from 'lucide-svelte';
+	import { ArrowLeft, Lock } from '@lucide/svelte';
 	import { api, MiruApiError, unwrap } from '$api/client';
 	import type { LibraryStatsResponse, RecentMediaItemResponse } from '$api/types';
 	import LibrarySectionDetail from '$components/miru/LibrarySectionDetail.svelte';

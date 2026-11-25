@@ -36,7 +36,7 @@
 		statBarWidth,
 		streamKey
 	} from '$lib/utils';
-	import { CheckCircle2, Link2, Radio, Server, Tv, X } from 'lucide-svelte';
+	import { CheckCircle2, Link2, Radio, Server, Tv, X } from '@lucide/svelte';
 
 	let lastDefaultRange = preferencesStore.prefs.defaultStatsRange;
 	let range = $state<StatsRange>(lastDefaultRange);

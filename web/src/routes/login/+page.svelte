@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { ArrowRight, LoaderCircle, LogIn } from 'lucide-svelte';
+	import { ArrowRight, LoaderCircle, LogIn } from '@lucide/svelte';
 	import { MiruApiError } from '$api/client';
 	import MiruLogo from '$components/layout/MiruLogo.svelte';
 	import Badge from '$components/ui/Badge.svelte';

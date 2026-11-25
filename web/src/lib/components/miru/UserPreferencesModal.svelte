@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { tick } from 'svelte';
-	import { Monitor, Moon, Sun, LogOut } from 'lucide-svelte';
+	import { Monitor, Moon, Sun, LogOut } from '@lucide/svelte';
 	import { api, MiruApiError } from '$api/client';
 	import Badge from '$components/ui/Badge.svelte';
 	import Button from '$components/ui/Button.svelte';

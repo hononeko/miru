@@ -36,7 +36,7 @@ Any `2xx` status counts as delivered. Redirects are not followed.
 
 After a network error, a timeout (5 seconds to connect, 10 seconds in total), `408`, `429` or `5xx`, Miru tries twice more, after 2 and then 6 seconds. Any other status fails at once. Test deliveries are not retried.
 
-Up to four deliveries are sent at a time, and the rest wait in memory. Waiting ones are lost on a restart, events can be dropped during a burst, and the order is not guaranteed.
+Up to four deliveries are sent at a time, including the ones that wait for a retry, and up to 128 more wait in memory. Events are dropped when that is full, waiting ones are lost on a restart, and the order is not guaranteed.
 
 ## Events
 

@@ -34,7 +34,6 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.encodeToString
 import org.slf4j.LoggerFactory
 import java.net.URI
@@ -162,27 +161,38 @@ class WebhookDispatcher(
         }
 
     private suspend fun runWorker() {
-        for (job in queue) {
-            scope.launch(CoroutineName("webhook-delivery")) {
-                semaphore.withPermit {
-                    try {
-                        deliverInternal(
-                            target = job.target,
-                            payload = job.payload,
-                            maxAttempts = retryDelaysMs.size + 1,
-                        )
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        logger.warn(
-                            "Unexpected webhook delivery failure {} {} {}",
-                            kv("targetId", job.target.id),
-                            kv("event", job.payload.event),
-                            kv("reason", WebhookUrlSafety.sanitizeErrorMessage(e.message)),
-                        )
-                    }
+        while (true) {
+            // A slot before a job, so that jobs wait in the bounded queue and not in coroutines
+            semaphore.acquire()
+            val job =
+                try {
+                    queue.receive()
+                } catch (e: CancellationException) {
+                    semaphore.release()
+                    throw e
                 }
-            }
+            scope
+                .launch(CoroutineName("webhook-delivery")) { deliverLogged(job) }
+                .invokeOnCompletion { semaphore.release() }
+        }
+    }
+
+    private suspend fun deliverLogged(job: DispatchJob) {
+        try {
+            deliverInternal(
+                target = job.target,
+                payload = job.payload,
+                maxAttempts = retryDelaysMs.size + 1,
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger.warn(
+                "Unexpected webhook delivery failure {} {} {}",
+                kv("targetId", job.target.id),
+                kv("event", job.payload.event),
+                kv("reason", WebhookUrlSafety.sanitizeErrorMessage(e.message)),
+            )
         }
     }
 

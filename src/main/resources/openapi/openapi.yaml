@@ -119,9 +119,6 @@ paths:
       tags: [Auth]
       operationId: oidcLogin
       summary: Initiate OIDC Authorization Code + PKCE login flow
-      description: >-
-        Asks the identity provider for a fresh login (`prompt=login`) if the browser logged out of Miru without ending
-        its session at the provider.
       responses:
         '302':
           description: Redirect to OIDC identity provider authorization endpoint
@@ -197,9 +194,6 @@ paths:
       tags: [Auth]
       operationId: oidcLogout
       summary: Invalidate Miru session and redirect to OIDC RP-Initiated Logout endpoint if configured
-      description: >-
-        If the provider has no `end_session_endpoint`, its session stays alive and the next OIDC login from this browser
-        asks for a fresh login.
       responses:
         '302':
           description: Redirect to OIDC end_session_endpoint or /login

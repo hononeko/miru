@@ -30,12 +30,8 @@ import io.ktor.server.routing.route
 private const val DEFAULT_COOKIE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 private const val OIDC_TX_COOKIE_NAME = "miru_oidc_tx"
 private const val OIDC_HINT_COOKIE_NAME = "miru_oidc_hint"
-
-/** Set by a logout that leaves the provider's session alive, so that the next single sign-on asks for a fresh login. */
-private const val OIDC_FRESH_LOGIN_COOKIE_NAME = "miru_oidc_fresh_login"
 private const val OIDC_COOKIE_PATH = "/api/v1/auth/oidc"
 private const val OIDC_TX_COOKIE_MAX_AGE_SECONDS = 600
-private const val OIDC_FRESH_LOGIN_COOKIE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
 
 fun Route.authRoutes(
     authService: AuthService,
@@ -214,9 +210,6 @@ private fun Route.publicAuthRoutes(
                 val secure = call.shouldUseSecureCookies(cookieSecureMode)
                 call.clearSessionCookie(secure = secure)
                 call.clearOidcHintCookie(secure = secure)
-                if (oidcAuthService != null) {
-                    call.appendOidcFreshLoginCookie(secure = secure)
-                }
                 call.respond(HttpStatusCode.NoContent)
             },
         )
@@ -242,8 +235,7 @@ private fun Route.oidcRoutes(
                 call.respondError(MiruError.Conflict("OIDC authentication is disabled"))
                 return@get
             }
-            val freshLogin = call.request.cookies[OIDC_FRESH_LOGIN_COOKIE_NAME] != null
-            oidcAuthService.startAuthorization(freshLogin = freshLogin).fold(
+            oidcAuthService.startAuthorization().fold(
                 ifLeft = { call.respondError(it) },
                 ifRight = { start ->
                     val secure = call.shouldUseSecureCookies(cookieSecureMode)
@@ -284,7 +276,6 @@ private fun Route.oidcRoutes(
                     if (!hint.isNullOrBlank() && oidcAuthService.hasEndSessionEndpoint()) {
                         call.appendOidcHintCookie(hint, sessionMaxAgeSeconds, secure = secure)
                     }
-                    call.clearOidcFreshLoginCookie(secure = secure)
                     call.respondRedirect("/", permanent = false)
                 },
             )
@@ -298,9 +289,6 @@ private fun Route.oidcRoutes(
             call.clearSessionCookie(secure = secure)
             call.clearOidcHintCookie(secure = secure)
             val endSessionUrl = oidcAuthService?.buildEndSessionUrl(idTokenHint)
-            if (oidcAuthService != null && endSessionUrl == null) {
-                call.appendOidcFreshLoginCookie(secure = secure)
-            }
             call.respondRedirect(endSessionUrl ?: "/login", permanent = false)
         }
     }
@@ -552,34 +540,6 @@ private fun ApplicationCall.clearOidcHintCookie(secure: Boolean) {
     response.cookies.append(
         Cookie(
             name = OIDC_HINT_COOKIE_NAME,
-            value = "",
-            maxAge = 0,
-            path = OIDC_COOKIE_PATH,
-            secure = secure,
-            httpOnly = true,
-            extensions = mapOf("SameSite" to "Lax"),
-        ),
-    )
-}
-
-private fun ApplicationCall.appendOidcFreshLoginCookie(secure: Boolean) {
-    response.cookies.append(
-        Cookie(
-            name = OIDC_FRESH_LOGIN_COOKIE_NAME,
-            value = "1",
-            maxAge = OIDC_FRESH_LOGIN_COOKIE_MAX_AGE_SECONDS,
-            path = OIDC_COOKIE_PATH,
-            secure = secure,
-            httpOnly = true,
-            extensions = mapOf("SameSite" to "Lax"),
-        ),
-    )
-}
-
-private fun ApplicationCall.clearOidcFreshLoginCookie(secure: Boolean) {
-    response.cookies.append(
-        Cookie(
-            name = OIDC_FRESH_LOGIN_COOKIE_NAME,
             value = "",
             maxAge = 0,
             path = OIDC_COOKIE_PATH,

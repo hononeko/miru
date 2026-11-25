@@ -11,15 +11,6 @@ import app.hononeko.miru.persistence.model.UserPreferencesRecord
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class AuthStatusResponse(
-    val authMode: String,
-    val setupRequired: Boolean,
-    val localEnabled: Boolean? = null,
-    val oidcEnabled: Boolean? = null,
-    val oidcDisplayName: String? = null,
-)
-
-@Serializable
 data class AuthProvidersResponse(
     val authMode: String,
     val localEnabled: Boolean,

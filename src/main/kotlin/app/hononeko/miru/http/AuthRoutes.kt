@@ -123,20 +123,6 @@ private fun Route.publicAuthRoutes(
     trustProxyHeaders: Boolean,
     oidcAuthService: OidcAuthService?,
 ) {
-    get("/status") {
-        val result =
-            authService.getAuthProviders().map { providers ->
-                AuthStatusResponse(
-                    authMode = providers.authMode,
-                    setupRequired = providers.setupRequired,
-                    localEnabled = providers.localEnabled,
-                    oidcEnabled = providers.oidcEnabled,
-                    oidcDisplayName = if (providers.oidcEnabled) providers.oidcDisplayName else null,
-                )
-            }
-        call.respondEither(result)
-    }
-
     get("/providers") {
         val result = authService.getAuthProviders().map { it.toResponse() }
         call.respondEither(result)

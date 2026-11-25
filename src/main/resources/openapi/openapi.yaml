@@ -4740,9 +4740,9 @@ components:
 
     RecentMediaListResponse:
       type: object
-      required: [sectionId, items]
+      required: [sectionKey, items]
       properties:
-        sectionId:
+        sectionKey:
           type: string
         items:
           type: array
@@ -4804,7 +4804,7 @@ components:
     StaleMediaListResponse:
       type: object
       required:
-        - sectionId
+        - sectionKey
         - unwatchedDays
         - sort
         - totalStaleCount
@@ -4812,7 +4812,7 @@ components:
         - neverPlayedCount
         - items
       properties:
-        sectionId:
+        sectionKey:
           type: string
         unwatchedDays:
           type: integer
@@ -5201,7 +5201,7 @@ components:
           type: array
           items:
             type: string
-        librarySectionId:
+        librarySectionKey:
           type: string
           nullable: true
         librarySectionTitle:

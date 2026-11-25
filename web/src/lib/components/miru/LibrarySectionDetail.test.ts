@@ -108,7 +108,7 @@ describe('LibrarySectionDetail', () => {
 	it('offers the hygiene report to admins only', async () => {
 		const getSpy = vi.spyOn(api, 'GET').mockResolvedValue({
 			data: {
-				sectionId: '1',
+				sectionKey: '1',
 				unwatchedDays: 180,
 				sort: 'size_desc',
 				totalStaleCount: 0,
@@ -141,7 +141,7 @@ describe('LibrarySectionDetail', () => {
 				answer.set(init.params.path.id, (items) =>
 					resolve({
 						data: {
-							sectionId: init.params.path.id,
+							sectionKey: init.params.path.id,
 							unwatchedDays: 180,
 							sort: 'size_desc',
 							totalStaleCount: 1,

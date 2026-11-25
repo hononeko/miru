@@ -358,6 +358,7 @@ class MediaDetailsRoutesTest :
                     movie.ratingKey shouldBe "12345"
                     movie.mediaType shouldBe "movie"
                     movie.title shouldBe "Spirited Away"
+                    movie.librarySectionKey shouldBe "1"
                     movie.thumbUrl shouldBe "/api/v1/media/12345/thumb"
                     movie.artUrl shouldBe "/api/v1/media/12345/art"
                     movie.addedAtMs shouldBe 1_700_000_000_000L

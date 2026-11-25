@@ -1807,7 +1807,7 @@ export interface components {
             addedAtMs: number;
         };
         RecentMediaListResponse: {
-            sectionId: string;
+            sectionKey: string;
             items: components["schemas"]["RecentMediaItemResponse"][];
         };
         StaleMediaItemResponse: {
@@ -1834,7 +1834,7 @@ export interface components {
             playCount: number;
         };
         StaleMediaListResponse: {
-            sectionId: string;
+            sectionKey: string;
             unwatchedDays: number;
             /** @enum {string} */
             sort: "size_desc" | "size_asc" | "age_desc" | "age_asc";
@@ -1996,7 +1996,7 @@ export interface components {
             summary?: string | null;
             genres: string[];
             directors: string[];
-            librarySectionId?: string | null;
+            librarySectionKey?: string | null;
             librarySectionTitle?: string | null;
             /** Format: int64 */
             addedAtMs?: number | null;

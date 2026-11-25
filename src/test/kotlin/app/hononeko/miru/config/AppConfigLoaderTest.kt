@@ -417,7 +417,7 @@ class AppConfigLoaderTest :
                 )
         }
 
-        test("loads and validates AUTH_COOKIE_SECURE and COOKIE_SECURE fallback") {
+        test("loads and validates AUTH_COOKIE_SECURE") {
             AppConfigLoader.load(env = baseSqliteEnv()).shouldBeRight().auth.cookieSecure shouldBe CookieSecureMode.AUTO
             AppConfigLoader
                 .load(env = baseSqliteEnv(mapOf("AUTH_COOKIE_SECURE" to "true")))
@@ -428,13 +428,18 @@ class AppConfigLoaderTest :
                 .shouldBeRight()
                 .auth.cookieSecure shouldBe CookieSecureMode.ALWAYS
             AppConfigLoader
-                .load(env = baseSqliteEnv(mapOf("COOKIE_SECURE" to "false")))
+                .load(env = baseSqliteEnv(mapOf("AUTH_COOKIE_SECURE" to "false")))
                 .shouldBeRight()
                 .auth.cookieSecure shouldBe CookieSecureMode.NEVER
             AppConfigLoader
-                .load(env = baseSqliteEnv(mapOf("COOKIE_SECURE" to "never")))
+                .load(env = baseSqliteEnv(mapOf("AUTH_COOKIE_SECURE" to "never")))
                 .shouldBeRight()
                 .auth.cookieSecure shouldBe CookieSecureMode.NEVER
+            // No longer a fallback
+            AppConfigLoader
+                .load(env = baseSqliteEnv(mapOf("COOKIE_SECURE" to "never")))
+                .shouldBeRight()
+                .auth.cookieSecure shouldBe CookieSecureMode.AUTO
             AppConfigLoader
                 .load(env = mapOf("AUTH_SESSION_SECRET" to validSecret), hocon = MapApplicationConfig("miru.auth.cookieSecure" to "always"))
                 .shouldBeRight()

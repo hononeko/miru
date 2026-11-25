@@ -69,15 +69,21 @@ class AppConfigLoaderTest :
             val hocon =
                 MapApplicationConfig(
                     "miru.server.port" to "9090",
-                    "miru.plex.baseUrl" to "https://plex.example.com",
+                    "miru.plex.url" to "https://plex.example.com",
                     "miru.plex.token" to "hocon-token",
                     "miru.auth.mode" to "none",
+                    "miru.auth.rateLimit.loginMaxAttempts" to "31",
+                    "miru.auth.rateLimit.accountMaxFailures" to "6",
+                    "miru.auth.rateLimit.setupMaxAttempts" to "5",
                 )
 
             val config = AppConfigLoader.load(env = emptyMap(), hocon = hocon).shouldBeRight()
             config.server.port shouldBe 9090
             config.plex.baseUrl shouldBe "https://plex.example.com"
             config.auth.mode shouldBe AuthMode.NONE
+            config.auth.rateLimit.loginMaxPerIp shouldBe 31
+            config.auth.rateLimit.loginMaxFailuresPerAccount shouldBe 6
+            config.auth.rateLimit.setupMaxPerIp shouldBe 5
         }
 
         test("accumulates multiple startup validation errors in one ValidationError") {

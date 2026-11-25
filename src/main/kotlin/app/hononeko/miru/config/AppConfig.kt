@@ -346,7 +346,7 @@ object AppConfigLoader {
         get: (String, String, String?) -> String?,
         errors: MutableMap<String, String>,
     ): PlexConfig {
-        val baseUrl = get("PLEX_URL", "miru.plex.baseUrl", null).orEmpty().trimEnd('/')
+        val baseUrl = get("PLEX_URL", "miru.plex.url", null).orEmpty().trimEnd('/')
         val token = get("PLEX_TOKEN", "miru.plex.token", null).orEmpty()
 
         if (baseUrl.isNotBlank() && !isValidHttpUrl(baseUrl)) {
@@ -526,7 +526,7 @@ object AppConfigLoader {
         val loginMaxPerIp =
             parseBoundedInt(
                 envKey = "AUTH_RATE_LIMIT_LOGIN_MAX_ATTEMPTS",
-                hoconPath = "miru.auth.rateLimit.loginMaxPerIp",
+                hoconPath = "miru.auth.rateLimit.loginMaxAttempts",
                 default = AuthRateLimitConfig.DEFAULT_LOGIN_MAX_PER_IP,
                 min = AuthRateLimitConfig.MIN_ATTEMPTS,
                 max = AuthRateLimitConfig.MAX_ATTEMPTS,
@@ -536,7 +536,7 @@ object AppConfigLoader {
         val loginMaxFailuresPerAccount =
             parseBoundedInt(
                 envKey = "AUTH_RATE_LIMIT_ACCOUNT_MAX_FAILURES",
-                hoconPath = "miru.auth.rateLimit.loginMaxFailuresPerAccount",
+                hoconPath = "miru.auth.rateLimit.accountMaxFailures",
                 default = AuthRateLimitConfig.DEFAULT_LOGIN_MAX_FAILURES_PER_ACCOUNT,
                 min = AuthRateLimitConfig.MIN_ATTEMPTS,
                 max = AuthRateLimitConfig.MAX_ATTEMPTS,
@@ -546,7 +546,7 @@ object AppConfigLoader {
         val setupMaxPerIp =
             parseBoundedInt(
                 envKey = "AUTH_RATE_LIMIT_SETUP_MAX_ATTEMPTS",
-                hoconPath = "miru.auth.rateLimit.setupMaxPerIp",
+                hoconPath = "miru.auth.rateLimit.setupMaxAttempts",
                 default = AuthRateLimitConfig.DEFAULT_SETUP_MAX_PER_IP,
                 min = AuthRateLimitConfig.MIN_ATTEMPTS,
                 max = AuthRateLimitConfig.MAX_ATTEMPTS,

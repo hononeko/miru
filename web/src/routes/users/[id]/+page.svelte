@@ -406,7 +406,7 @@
 					<div class="flex flex-wrap gap-1.5 border-t border-border pt-3">
 						{#each stats.libraryBreakdown as lib}
 							<Badge tone="cyan" mono>
-								Sec {lib.librarySectionKey} · {formatStatPercent(lib.percent, 0)}
+								Sec {lib.librarySectionKey ?? 'unknown'} · {formatStatPercent(lib.percent, 0)}
 							</Badge>
 						{/each}
 					</div>

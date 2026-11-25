@@ -89,6 +89,7 @@ function makeOverview(): OverviewStatsResponse {
 			directStream: 0,
 			transcode: 0,
 			hwTranscode: 0,
+			total: 24,
 			directPlayPercent: 100,
 			directStreamPercent: 0,
 			transcodePercent: 0,

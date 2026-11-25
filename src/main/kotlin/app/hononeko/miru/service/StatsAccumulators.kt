@@ -2,8 +2,8 @@ package app.hononeko.miru.service
 
 import app.hononeko.miru.http.ClientBreakdownItemDto
 import app.hononeko.miru.http.DailyPlayStatDto
-import app.hononeko.miru.http.DecisionBreakdownStatDto
-import app.hononeko.miru.http.LibraryBreakdownStatDto
+import app.hononeko.miru.http.DecisionBreakdownDto
+import app.hononeko.miru.http.LibraryBreakdownDto
 import app.hononeko.miru.http.PlatformStatDto
 import app.hononeko.miru.http.RewatchedMediaStatDto
 import app.hononeko.miru.http.TopMediaStatDto
@@ -82,7 +82,7 @@ internal data class CommonStatsResult(
     val playsPerDay: List<DailyPlayStatDto>,
     val topMovies: List<TopMediaStatDto>,
     val topShows: List<TopMediaStatDto>,
-    val decisionBreakdown: DecisionBreakdownStatDto,
+    val decisionBreakdown: DecisionBreakdownDto,
 )
 
 internal class CommonStatsAccumulator(
@@ -220,22 +220,24 @@ internal class CommonStatsAccumulator(
         val decisionBreakdown =
             when (metric) {
                 AnalyticsMetric.PLAYS ->
-                    DecisionBreakdownStatDto(
+                    DecisionBreakdownDto(
                         directPlay = directPlay,
                         directStream = directStream,
                         transcode = transcode,
                         hwTranscode = hwTranscode,
+                        total = totalPlays,
                         directPlayPercent = computeStatsPercent(directPlay, totalPlays),
                         directStreamPercent = computeStatsPercent(directStream, totalPlays),
                         transcodePercent = computeStatsPercent(transcode, totalPlays),
                         hwTranscodePercent = computeStatsPercent(hwTranscode, totalPlays),
                     )
                 AnalyticsMetric.DURATION ->
-                    DecisionBreakdownStatDto(
+                    DecisionBreakdownDto(
                         directPlay = directPlay,
                         directStream = directStream,
                         transcode = transcode,
                         hwTranscode = hwTranscode,
+                        total = totalPlays,
                         directPlayPercent = computeStatsPercent(directPlayDurationSec, totalWatchDurationSec),
                         directStreamPercent = computeStatsPercent(directStreamDurationSec, totalWatchDurationSec),
                         transcodePercent = computeStatsPercent(transcodeDurationSec, totalWatchDurationSec),
@@ -315,7 +317,7 @@ internal class RewatchAndBreakdownAccumulator(
 
     private val rewatched = HashMap<String, RewatchedBucket>()
     private val platforms = HashMap<String, CountDuration>()
-    private val libraries = if (trackLibraries) HashMap<String, CountDuration>() else null
+    private val libraries = if (trackLibraries) HashMap<String?, CountDuration>() else null
     private val clients = if (trackClients) HashMap<String, CountDuration>() else null
 
     fun record(row: PlaybackHistoryStatsRow) {
@@ -349,7 +351,7 @@ internal class RewatchAndBreakdownAccumulator(
         platforms.getOrPut(platformKey) { CountDuration() }.add(duration)
 
         if (libraries != null) {
-            val libraryKey = row.librarySectionKey?.takeIf { it.isNotBlank() } ?: "unknown"
+            val libraryKey = row.librarySectionKey?.takeIf { it.isNotBlank() }
             libraries.getOrPut(libraryKey) { CountDuration() }.add(duration)
         }
         if (clients != null) {
@@ -409,7 +411,7 @@ internal class RewatchAndBreakdownAccumulator(
         totalPlays: Long,
         totalWatchDurationSec: Long,
         metric: AnalyticsMetric,
-    ): List<LibraryBreakdownStatDto> =
+    ): List<LibraryBreakdownDto> =
         libraries
             .orEmpty()
             .entries
@@ -419,7 +421,7 @@ internal class RewatchAndBreakdownAccumulator(
                         AnalyticsMetric.PLAYS -> computeStatsPercent(stats.playCount, totalPlays)
                         AnalyticsMetric.DURATION -> computeStatsPercent(stats.watchDurationSec, totalWatchDurationSec)
                     }
-                LibraryBreakdownStatDto(
+                LibraryBreakdownDto(
                     librarySectionKey = librarySectionKey,
                     playCount = stats.playCount,
                     watchDurationSec = stats.watchDurationSec,
@@ -699,16 +701,16 @@ private fun platformComparator(metric: AnalyticsMetric): Comparator<PlatformStat
                 .thenBy { it.platform.lowercase() }
     }
 
-private fun libraryComparator(metric: AnalyticsMetric): Comparator<LibraryBreakdownStatDto> =
+private fun libraryComparator(metric: AnalyticsMetric): Comparator<LibraryBreakdownDto> =
     when (metric) {
         AnalyticsMetric.PLAYS ->
-            compareByDescending<LibraryBreakdownStatDto> { it.playCount }
+            compareByDescending<LibraryBreakdownDto> { it.playCount }
                 .thenByDescending { it.watchDurationSec }
-                .thenBy { it.librarySectionKey.lowercase() }
+                .thenBy { it.librarySectionKey.orEmpty().lowercase() }
         AnalyticsMetric.DURATION ->
-            compareByDescending<LibraryBreakdownStatDto> { it.watchDurationSec }
+            compareByDescending<LibraryBreakdownDto> { it.watchDurationSec }
                 .thenByDescending { it.playCount }
-                .thenBy { it.librarySectionKey.lowercase() }
+                .thenBy { it.librarySectionKey.orEmpty().lowercase() }
     }
 
 private fun rewatchedComparator(metric: AnalyticsMetric): Comparator<RewatchedMediaStatDto> =

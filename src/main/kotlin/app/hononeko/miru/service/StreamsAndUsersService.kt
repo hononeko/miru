@@ -315,51 +315,44 @@ class StreamsAndUsersService(
         var directPlay = 0L
         var directStream = 0L
         var transcode = 0L
+        var hwTranscode = 0L
         for (record in history) {
             when (record.streamTech.streamDecision.lowercase()) {
                 "direct_play" -> directPlay += 1L
                 "direct_stream" -> directStream += 1L
                 "transcode" -> transcode += 1L
             }
+            if (record.streamTech.hwTranscode) hwTranscode += 1L
         }
         val total = history.size.toLong()
         return DecisionBreakdownDto(
             directPlay = directPlay,
             directStream = directStream,
             transcode = transcode,
+            hwTranscode = hwTranscode,
             total = total,
-            directPlayPercent = percentage(directPlay, total),
-            directStreamPercent = percentage(directStream, total),
-            transcodePercent = percentage(transcode, total),
+            directPlayPercent = computeStatsPercent(directPlay, total),
+            directStreamPercent = computeStatsPercent(directStream, total),
+            transcodePercent = computeStatsPercent(transcode, total),
+            hwTranscodePercent = computeStatsPercent(hwTranscode, total),
         )
     }
 
     private fun computeLibraryBreakdown(history: List<PlaybackHistoryRecord>): List<LibraryBreakdownDto> =
         history
-            .groupBy { it.media.librarySectionKey to it.media.mediaType }
-            .map { (key, records) ->
+            .groupBy { record -> record.media.librarySectionKey?.takeIf { it.isNotBlank() } }
+            .map { (sectionKey, records) ->
                 LibraryBreakdownDto(
-                    librarySectionKey = key.first,
-                    mediaType = key.second,
+                    librarySectionKey = sectionKey,
                     playCount = records.size.toLong(),
                     watchDurationSec = records.sumOf { it.watchedDurationSec.toLong() },
+                    percent = computeStatsPercent(records.size.toLong(), history.size.toLong()),
                 )
             }.sortedWith(
                 compareByDescending<LibraryBreakdownDto> { it.playCount }
                     .thenByDescending { it.watchDurationSec }
-                    .thenBy { it.mediaType }
                     .thenBy { it.librarySectionKey.orEmpty() },
             )
-
-    private fun percentage(
-        count: Long,
-        total: Long,
-    ): Double =
-        if (total > 0L) {
-            (count.toDouble() / total.toDouble()) * PERCENT_SCALE
-        } else {
-            0.0
-        }
 
     private fun UserRecord.avatarProxyUrl(): String? =
         thumbUrl?.let { "/api/v1/users/$id/avatar" }

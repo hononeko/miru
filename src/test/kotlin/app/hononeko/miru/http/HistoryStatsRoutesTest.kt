@@ -860,6 +860,31 @@ class HistoryStatsRoutesTest :
             }
         }
 
+        test("breaks user stats down by library, without a section key for plays whose section is not known") {
+            createHistoryHarness().use { harness ->
+                seedUsersAndHistory(harness)
+                val unknownSection = harness.historyRepo.findById("hist-1").shouldBeRight().shouldNotBeNull()
+                for ((id, sectionKey) in listOf("no-section" to null, "blank-section" to " ")) {
+                    harness.historyRepo
+                        .insert(
+                            unknownSection.copy(
+                                id = id,
+                                media = unknownSection.media.copy(librarySectionKey = sectionKey),
+                                externalImportKey = null,
+                            ),
+                        ).shouldBeRight()
+                }
+                val admin = MiruPrincipal(accountId = "acc-admin", username = "admin", role = MiruRole.ADMIN)
+
+                val stats = harness.historyService.getUserStats(principal = admin, userId = "u-alice", rangeRaw = "all").shouldBeRight()
+                val unknown = stats.libraryBreakdown.filter { it.librarySectionKey == null }
+                unknown.map { it.playCount } shouldContainExactly listOf(2L)
+                MiruJson.encodeToString(unknown.single()).contains("librarySectionKey") shouldBe false
+                stats.libraryBreakdown.sumOf { it.playCount } shouldBe stats.totalPlays
+                stats.decisionBreakdown.total shouldBe stats.totalPlays
+            }
+        }
+
         test("leaves heatmap samples outside its days out, whatever the repository returns") {
             createHistoryHarness().use { harness ->
                 val dayMs = 86_400_000L

@@ -3686,10 +3686,12 @@ components:
         - directPlay
         - directStream
         - transcode
+        - hwTranscode
         - total
         - directPlayPercent
         - directStreamPercent
         - transcodePercent
+        - hwTranscodePercent
       properties:
         directPlay:
           type: integer
@@ -3700,9 +3702,15 @@ components:
         transcode:
           type: integer
           format: int64
+          description: All transcoded plays, hardware-accelerated or not
+        hwTranscode:
+          type: integer
+          format: int64
+          description: Plays that used hardware-accelerated transcoding
         total:
           type: integer
           format: int64
+          description: All plays, including any with another decision
         directPlayPercent:
           type: number
           format: double
@@ -3712,22 +3720,27 @@ components:
         transcodePercent:
           type: number
           format: double
+        hwTranscodePercent:
+          type: number
+          format: double
 
     LibraryBreakdownDto:
       type: object
-      required: [mediaType, playCount, watchDurationSec]
+      required: [playCount, watchDurationSec, percent]
       properties:
         librarySectionKey:
           type: string
           nullable: true
-        mediaType:
-          type: string
+          description: Absent for plays whose library section is not known
         playCount:
           type: integer
           format: int64
         watchDurationSec:
           type: integer
           format: int64
+        percent:
+          type: number
+          format: double
 
     UserDetailResponse:
       type: object
@@ -4125,64 +4138,11 @@ components:
           type: string
           nullable: true
 
-    DecisionBreakdownStatDto:
-      type: object
-      required:
-        - directPlay
-        - directStream
-        - transcode
-        - hwTranscode
-        - directPlayPercent
-        - directStreamPercent
-        - transcodePercent
-        - hwTranscodePercent
-      properties:
-        directPlay:
-          type: integer
-          format: int64
-        directStream:
-          type: integer
-          format: int64
-        transcode:
-          type: integer
-          format: int64
-        hwTranscode:
-          type: integer
-          format: int64
-        directPlayPercent:
-          type: number
-          format: double
-        directStreamPercent:
-          type: number
-          format: double
-        transcodePercent:
-          type: number
-          format: double
-        hwTranscodePercent:
-          type: number
-          format: double
-
     PlatformStatDto:
       type: object
       required: [platform, playCount, watchDurationSec, percent]
       properties:
         platform:
-          type: string
-        playCount:
-          type: integer
-          format: int64
-        watchDurationSec:
-          type: integer
-          format: int64
-        percent:
-          type: number
-          format: double
-
-    LibraryBreakdownStatDto:
-      type: object
-      required: [librarySectionKey, playCount, watchDurationSec, percent]
-      properties:
-        librarySectionKey:
           type: string
         playCount:
           type: integer
@@ -4234,7 +4194,7 @@ components:
           items:
             $ref: '#/components/schemas/TopMediaStatDto'
         decisionBreakdown:
-          $ref: '#/components/schemas/DecisionBreakdownStatDto'
+          $ref: '#/components/schemas/DecisionBreakdownDto'
 
     RewatchedMediaStatDto:
       type: object
@@ -4496,7 +4456,7 @@ components:
           items:
             $ref: '#/components/schemas/ClientBreakdownItemDto'
         decisionBreakdown:
-          $ref: '#/components/schemas/DecisionBreakdownStatDto'
+          $ref: '#/components/schemas/DecisionBreakdownDto'
         playsByMonth:
           type: array
           items:
@@ -4569,7 +4529,7 @@ components:
           items:
             $ref: '#/components/schemas/RewatchedMediaStatDto'
         decisionBreakdown:
-          $ref: '#/components/schemas/DecisionBreakdownStatDto'
+          $ref: '#/components/schemas/DecisionBreakdownDto'
         topPlatforms:
           type: array
           items:
@@ -4577,7 +4537,7 @@ components:
         libraryBreakdown:
           type: array
           items:
-            $ref: '#/components/schemas/LibraryBreakdownStatDto'
+            $ref: '#/components/schemas/LibraryBreakdownDto'
 
     LibrarySectionResponse:
       type: object

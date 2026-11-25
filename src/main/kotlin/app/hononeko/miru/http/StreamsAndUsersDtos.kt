@@ -166,25 +166,6 @@ data class UserUsageStatDto(
 )
 
 @Serializable
-data class DecisionBreakdownDto(
-    val directPlay: Long,
-    val directStream: Long,
-    val transcode: Long,
-    val total: Long,
-    val directPlayPercent: Double,
-    val directStreamPercent: Double,
-    val transcodePercent: Double,
-)
-
-@Serializable
-data class LibraryBreakdownDto(
-    val librarySectionKey: String? = null,
-    val mediaType: String,
-    val playCount: Long,
-    val watchDurationSec: Long,
-)
-
-@Serializable
 data class UserDetailResponse(
     val user: UserSummaryDto,
     val activeStreams: List<ActiveStreamDto>,

@@ -41,10 +41,12 @@ const sampleDetail: UserDetailResponse = {
 		directPlay: 10,
 		directStream: 0,
 		transcode: 0,
+		hwTranscode: 0,
 		total: 10,
 		directPlayPercent: 100,
 		directStreamPercent: 0,
-		transcodePercent: 0
+		transcodePercent: 0,
+		hwTranscodePercent: 0
 	},
 	libraryBreakdown: []
 };
@@ -70,6 +72,7 @@ const sampleStats: UserStatsResponse = {
 		directStream: 0,
 		transcode: 0,
 		hwTranscode: 0,
+		total: 10,
 		directPlayPercent: 100,
 		directStreamPercent: 0,
 		transcodePercent: 0,

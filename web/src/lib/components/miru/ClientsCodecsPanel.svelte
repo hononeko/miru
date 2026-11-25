@@ -5,6 +5,7 @@
 		ClientStatsResponse
 	} from '$api/types';
 	import Badge from '$components/ui/Badge.svelte';
+	import SegmentedBar, { type ShareSegment } from './SegmentedBar.svelte';
 	import { formatDurationSec, formatStatPercent, statBarWidth } from '$lib/utils';
 
 	type Props = {
@@ -26,15 +27,46 @@
 		subtitle: string;
 		lists: ItemList[];
 		total: number;
-		accentClass: string;
+		/** Draws each list as one stacked bar instead of a bar per row. */
+		stacked?: boolean;
+		accentClass?: string;
 		emptyLabel: string;
 	};
 
 	const MAX_ROWS = 5;
-	const MAX_CODEC_ROWS = 3;
+	const CODEC_COLORS = ['bg-chart-1', 'bg-chart-2', 'bg-chart-3', 'bg-chart-4'];
+	// Gray reads as "the rest" rather than as one more codec.
+	const REMAINING_COLOR = 'bg-fg-muted';
 
 	function singleList(items: ClientBreakdownItemDto[]): Pick<SectionGroup, 'lists' | 'total'> {
 		return { lists: [{ items: items.slice(0, MAX_ROWS) }], total: items.length };
+	}
+
+	function itemTitle(item: ClientBreakdownItemDto, name = item.name): string {
+		return `${name}: ${item.playCount} plays (${formatDurationSec(item.watchDurationSec)})`;
+	}
+
+	function codecSegments(items: ClientBreakdownItemDto[]): ShareSegment[] {
+		const segments = items.slice(0, CODEC_COLORS.length).map((item, idx) => ({
+			name: item.name,
+			percent: item.percent,
+			colorClass: CODEC_COLORS[idx],
+			title: itemTitle(item)
+		}));
+		const remaining = items.slice(CODEC_COLORS.length);
+		if (remaining.length === 0) return segments;
+
+		const sum = {
+			name: remaining.length === 1 ? remaining[0].name : 'Other',
+			playCount: remaining.reduce((total, item) => total + item.playCount, 0),
+			watchDurationSec: remaining.reduce((total, item) => total + item.watchDurationSec, 0),
+			percent: remaining.reduce((total, item) => total + item.percent, 0)
+		};
+		const names = remaining.map((item) => item.name).join(', ');
+		return [
+			...segments,
+			{ name: sum.name, percent: sum.percent, colorClass: REMAINING_COLOR, title: itemTitle(sum, names) }
+		];
 	}
 
 	const groups = $derived.by<SectionGroup[]>(() => {
@@ -59,11 +91,11 @@
 				title: 'Video & Audio Codecs',
 				subtitle: 'Source stream codec frequency',
 				lists: [
-					{ label: 'Video', items: videoCodecs.slice(0, MAX_CODEC_ROWS) },
-					{ label: 'Audio', items: audioCodecs.slice(0, MAX_CODEC_ROWS) }
+					{ label: 'Video', items: videoCodecs },
+					{ label: 'Audio', items: audioCodecs }
 				].filter((list) => list.items.length > 0),
 				total: videoCodecs.length + audioCodecs.length,
-				accentClass: 'bg-direct-play',
+				stacked: true,
 				emptyLabel: 'No codec telemetry in this range'
 			},
 			{
@@ -81,7 +113,7 @@
 
 <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
 	{#each groups as group (group.title)}
-		<div class="flex flex-col justify-between gap-3 rounded-xl border border-border bg-surface p-4">
+		<div class="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
 			<div class="flex items-start justify-between gap-2">
 				<div>
 					<h3 class="font-heading text-sm font-semibold text-fg-primary">{group.title}</h3>
@@ -111,25 +143,29 @@
 									{list.label}
 								</p>
 							{/if}
-							{#each list.items as item, idx (item.name)}
-								<div class="flex flex-col gap-1">
-									<div class="flex items-center justify-between gap-2 text-xs">
-										<span class="truncate font-medium text-fg-primary" title={item.name}>
-											{item.name}
-										</span>
-										<span class="shrink-0 font-mono text-[11px] text-fg-secondary tabular-nums">
-											{metric === 'duration' ? formatDurationSec(item.watchDurationSec) : item.playCount} · {formatStatPercent(item.percent)}
-										</span>
+							{#if group.stacked}
+								<SegmentedBar segments={codecSegments(list.items)} />
+							{:else}
+								{#each list.items as item, idx (item.name)}
+									<div class="flex flex-col gap-1">
+										<div class="flex items-center justify-between gap-2 text-xs">
+											<span class="truncate font-medium text-fg-primary" title={item.name}>
+												{item.name}
+											</span>
+											<span class="shrink-0 font-mono text-[11px] text-fg-secondary tabular-nums">
+												{metric === 'duration' ? formatDurationSec(item.watchDurationSec) : item.playCount} · {formatStatPercent(item.percent)}
+											</span>
+										</div>
+										<div class="h-1.5 w-full overflow-hidden rounded-full bg-subtle">
+											<div
+												class={`h-full rounded-full transition-[width] duration-500 ease-[var(--ease-out-quart)] ${idx === 0 ? group.accentClass : 'bg-cyan/75'} ${item.percent > 0 ? 'min-w-0.5' : ''}`}
+												style:width={statBarWidth(item.percent)}
+												title={itemTitle(item)}
+											></div>
+										</div>
 									</div>
-									<div class="h-1.5 w-full overflow-hidden rounded-full bg-subtle">
-										<div
-											class={`h-full rounded-full transition-[width] duration-500 ease-[var(--ease-out-quart)] ${idx === 0 ? group.accentClass : 'bg-cyan/75'} ${item.percent > 0 ? 'min-w-0.5' : ''}`}
-											style:width={statBarWidth(item.percent)}
-											title={`${item.name}: ${item.playCount} plays (${formatDurationSec(item.watchDurationSec)})`}
-										></div>
-									</div>
-								</div>
-							{/each}
+								{/each}
+							{/if}
 						</div>
 					{/each}
 				</div>

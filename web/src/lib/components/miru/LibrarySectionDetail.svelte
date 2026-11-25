@@ -11,6 +11,7 @@
 	import BarChart, { type BarPoint } from '$components/miru/BarChart.svelte';
 	import KpiCard from '$components/miru/KpiCard.svelte';
 	import ProxiedImage from '$components/miru/ProxiedImage.svelte';
+	import SegmentedBar, { type ShareSegment } from '$components/miru/SegmentedBar.svelte';
 	import { latestRequest } from '$lib/latestRequest';
 	import { authStore } from '$stores/auth.svelte';
 	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
@@ -23,8 +24,7 @@
 		formatRelativeTime,
 		formatShortDateTime,
 		formatStatPercent,
-		getCalendarDateAxisParts,
-		statBarWidth
+		getCalendarDateAxisParts
 	} from '$lib/utils';
 
 	type Props = {
@@ -59,18 +59,21 @@
 
 	const paletteColors = ['bg-chart-1', 'bg-chart-2', 'bg-chart-3', 'bg-chart-4', 'bg-fg-muted'];
 
-	function mapToDist(map: Record<string, number> | undefined) {
+	function mapToDist(map: Record<string, number> | undefined): ShareSegment[] {
 		const entries = Object.entries(map ?? {})
 			.filter(([, count]) => count > 0)
 			.sort((a, b) => b[1] - a[1])
 			.slice(0, 5);
 		const total = entries.reduce((sum, [, c]) => sum + c, 0);
-		return entries.map(([name, count], idx) => ({
-			name,
-			count,
-			pct: total > 0 ? (count / total) * 100 : 0,
-			colorClass: paletteColors[idx % paletteColors.length]
-		}));
+		return entries.map(([name, count], idx) => {
+			const percent = total > 0 ? (count / total) * 100 : 0;
+			return {
+				name,
+				percent,
+				colorClass: paletteColors[idx % paletteColors.length],
+				title: `${name}: ${count} (${formatStatPercent(percent)})`
+			};
+		});
 	}
 
 	const resDist = $derived(mapToDist(stats.byResolution));
@@ -219,23 +222,7 @@
 					{#if group.rows.length === 0}
 						<p class="text-[11px] text-fg-muted">Run a deep scan to populate codec breakdown.</p>
 					{:else}
-						<div class="flex h-2 w-full gap-1 overflow-hidden rounded-full bg-subtle">
-							{#each group.rows as seg}
-								<div
-									class={`h-full rounded-full transition-[width] duration-500 ease-[var(--ease-out-quart)] ${seg.colorClass} ${seg.pct > 0 ? 'min-w-0.5' : ''}`}
-									style:width={statBarWidth(seg.pct)}
-									title={`${seg.name}: ${seg.count} (${formatStatPercent(seg.pct)})`}
-								></div>
-							{/each}
-						</div>
-						<div class="flex flex-wrap gap-x-3 gap-y-1">
-							{#each group.rows as seg}
-								<span class="inline-flex items-center gap-1.5 font-mono text-[10px] text-fg-secondary">
-									<span class={`h-2 w-2 rounded-full ${seg.colorClass}`}></span>
-									{seg.name} {formatStatPercent(seg.pct, 0)}
-								</span>
-							{/each}
-						</div>
+						<SegmentedBar segments={group.rows} />
 					{/if}
 				</div>
 			{/each}

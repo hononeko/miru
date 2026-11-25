@@ -1,5 +1,6 @@
 package app.hononeko.miru.webhook
 
+import app.hononeko.miru.MiruJson
 import app.hononeko.miru.persistence.model.ActiveSessionRecord
 import app.hononeko.miru.persistence.model.GuardrailRuleType
 import app.hononeko.miru.persistence.model.MediaMetadataRecord
@@ -17,9 +18,12 @@ import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
+import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 
 private fun makeTarget(
@@ -454,4 +458,92 @@ class WebhookEventEvaluatorTest :
             payload.server shouldBe testServer
             payload.details["message"]?.jsonPrimitive?.content shouldBe "Test webhook delivery from Miru"
         }
+
+        test("docs/webhooks.md describes the payloads Miru sends") {
+            val docs = File("docs/webhooks.md").readText()
+            val sent = samplePayloadOfEveryEvent()
+            sent.keys shouldBe WebhookEventType.allKeys.toSet() + WebhookEventType.TEST_EVENT_KEY
+
+            val documentedDetails =
+                Regex("""(?m)^\| `([a-z]+\.[a-z_]+)` \| .* \| (.*) \|$""")
+                    .findAll(docs)
+                    .associate { row ->
+                        row.groupValues[1] to Regex("""`(\w+)`""").findAll(row.groupValues[2]).map { it.groupValues[1] }.toSet()
+                    }
+            documentedDetails shouldBe sent.mapValues { (_, payload) -> payload.details.keys }
+
+            // The examples are complete: nothing unknown, and all that Miru sends for that event
+            val examples =
+                Regex("(?s)```json\n(.*?)```")
+                    .findAll(docs)
+                    .map { MiruJson.parseToJsonElement(it.groupValues[1]).jsonObject }
+                    .toList()
+            examples shouldHaveSize 2
+            for (example in examples) {
+                val event = example.getValue("event").jsonPrimitive.content
+                val actual = MiruJson.encodeToJsonElement(sent.getValue(event)).jsonObject
+                example.keys shouldBe actual.keys
+                listOf("server", "user", "session", "details").filter { it in actual }.forEach { part ->
+                    example.getValue(part).jsonObject.keys shouldBe actual.getValue(part).jsonObject.keys
+                }
+            }
+            sent.values.forEach { it.schemaVersion shouldBe 1 }
+
+            // Without optional values, only the fields the docs call permanent are left
+            val bareSession =
+                WebhookSessionPayload(
+                    sessionKey = "1",
+                    state = "playing",
+                    mediaType = "movie",
+                    title = "t",
+                    streamDecision = "direct_play",
+                )
+            MiruJson.encodeToJsonElement(bareSession).jsonObject.keys shouldBe
+                setOf("sessionKey", "state", "mediaType", "title", "streamDecision", "hwTranscode")
+        }
     })
+
+private suspend fun samplePayloadOfEveryEvent(): Map<String, WebhookPayload> {
+    val evaluator = WebhookEventEvaluator()
+    val targets = listOf(makeTarget(cooldownSeconds = 0, concurrentStreamThreshold = 2, bufferingSpikeThreshold = 2))
+    val base = makeSession(streamDecision = "transcode", videoDecision = "transcode", videoResolution = "4k", hwTranscode = true)
+    val session = base.copy(media = base.media.copy(grandparentTitle = "Severance"))
+    val others = listOf(makeSession(sessionKey = "11"), makeSession(sessionKey = "12"))
+    val buffering = session.copy(state = "buffering")
+    val terminated =
+        StreamTerminatedEvent(
+            serverId = "srv-1",
+            session = session,
+            reason = "4K",
+            source = TerminationAuditSource.GUARDRAIL,
+            ruleType = GuardrailRuleType.TRANSCODE_4K,
+            actorName = "guardrail",
+            timestampMs = 40_000L,
+        )
+
+    val matches =
+        evaluator.onSessionEvent(
+            SessionEvent.SessionStarted("srv-1", session.key, 10_000L, session),
+            others + session,
+            targets,
+            testServer,
+            testUser,
+        ) +
+            listOf(20_000L, 30_000L).flatMap { atMs ->
+                evaluator.onSessionEvent(
+                    SessionEvent.SessionUpdated("srv-1", buffering.key, atMs, buffering, "playing", "transcode", false),
+                    listOf(buffering),
+                    targets,
+                    testServer,
+                    testUser,
+                )
+            } +
+            evaluator.onStreamTerminated(terminated, targets, testServer, testUser) +
+            listOf(50_000L, 60_000L, 70_000L).flatMap { atMs ->
+                val signal = ReconcileHealthSignal(reachable = false, errorMessage = "down", timestampMs = atMs)
+                evaluator.onReconcileHealth(signal, targets, testServer)
+            } +
+            evaluator.onReconcileHealth(ReconcileHealthSignal(reachable = true, timestampMs = 80_000L), targets, testServer)
+
+    return (matches.map { it.payload } + evaluator.buildTestPayload(testServer, 90_000L)).associateBy { it.event }
+}

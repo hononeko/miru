@@ -78,6 +78,8 @@ tasks.withType<Test>().configureEach {
 }
 
 tasks.named<Test>("test") {
+    // Checked against the payloads by WebhookEventEvaluatorTest
+    inputs.file("docs/webhooks.md").withPathSensitivity(PathSensitivity.RELATIVE)
     filter {
         excludeTestsMatching("*IntegrationTest")
         excludeTestsMatching("*IT")

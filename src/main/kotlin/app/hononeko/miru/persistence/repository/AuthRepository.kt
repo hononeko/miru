@@ -60,6 +60,8 @@ interface AuthAccountRepository {
 
     suspend fun findAll(): Either<MiruError.PersistenceError, List<AuthAccountRecord>>
 
+    suspend fun count(): Either<MiruError.PersistenceError, Long>
+
     suspend fun countAdmins(): Either<MiruError.PersistenceError, Long>
 
     suspend fun countActiveAdmins(): Either<MiruError.PersistenceError, Long>
@@ -253,6 +255,11 @@ class ExposedAuthAccountRepository(
                 .selectAll()
                 .orderBy(AuthAccountsTable.createdAtMs to SortOrder.ASC, AuthAccountsTable.id to SortOrder.ASC)
                 .map { it.toAuthAccountRecord() }
+        }
+
+    override suspend fun count(): Either<MiruError.PersistenceError, Long> =
+        database.exposedQuery("auth_account_count") {
+            AuthAccountsTable.selectAll().count()
         }
 
     override suspend fun countAdmins(): Either<MiruError.PersistenceError, Long> =

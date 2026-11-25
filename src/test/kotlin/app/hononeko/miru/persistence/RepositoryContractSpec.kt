@@ -1420,6 +1420,7 @@ private fun FunSpecRootScope.authAccountTests(ctxProvider: () -> ContractContext
             ctx.authAccounts.findById("acc-1").shouldBeRight() shouldBe admin
             ctx.authAccounts.findByNormalizedUsername("adminuser").shouldBeRight() shouldBe admin
             ctx.authAccounts.findAll().shouldBeRight() shouldContainExactly listOf(admin, viewer)
+            ctx.authAccounts.count().shouldBeRight() shouldBe 2L
             ctx.authAccounts.countAdmins().shouldBeRight() shouldBe 1L
 
             ctx.authAccounts.replaceLinkedMediaUserIds("acc-2", setOf("mu-1", "mu-2"), createdAtMs = 2_500L).shouldBeRight()

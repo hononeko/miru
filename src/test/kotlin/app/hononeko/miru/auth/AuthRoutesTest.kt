@@ -251,6 +251,33 @@ private suspend fun ApplicationTestBuilder.assertRoleModeUpdates(
 
 class AuthRoutesTest :
     FunSpec({
+        test("without an admin, setup stays closed once an account exists, and bootstrapAdminIfConfigured creates the admin") {
+            createHarness(adminUsername = "bootadmin", adminPassword = "Boot-password-1234").use { harness ->
+                harness.authService.isSetupRequired().shouldBeRight() shouldBe true
+                harness.accountRepo
+                    .insert(
+                        AuthAccountRecord(
+                            id = "acc-sso",
+                            username = "sso.user",
+                            usernameNormalized = "sso.user",
+                            passwordHash = "",
+                            role = "USER",
+                            authProvider = "OIDC",
+                            externalSubject = "sub-sso",
+                            createdAtMs = 1_000L,
+                            updatedAtMs = 1_000L,
+                        ),
+                    ).shouldBeRight()
+
+                harness.authService.isSetupRequired().shouldBeRight() shouldBe false
+                harness.authService.setupInitialAdmin("intruder", "Intruder-password-1").shouldBeLeft()
+                harness.accountRepo.countAdmins().shouldBeRight() shouldBe 0L
+
+                harness.authService.bootstrapAdminIfConfigured().shouldBeRight() shouldBe true
+                harness.accountRepo.countAdmins().shouldBeRight() shouldBe 1L
+            }
+        }
+
         test("bootstrapAdminIfConfigured creates admin idempotently when env credentials are provided") {
             createHarness(adminUsername = "bootadmin", adminPassword = "Boot-password-1234").use { harness ->
                 harness.authService.bootstrapAdminIfConfigured().shouldBeRight() shouldBe true

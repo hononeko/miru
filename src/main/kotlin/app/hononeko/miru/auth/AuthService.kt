@@ -646,15 +646,18 @@ class AuthService(
             errors["expiresAtMs"] = "must be in the future"
         }
         val normalizedPreset = expiresIn?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
+        if (expiresAtMs != null && normalizedPreset != null) {
+            errors["expiresAtMs"] = "must not be combined with expiresIn"
+        }
         val presetExpiresAtMs =
             when (normalizedPreset) {
                 null, "never" -> null
                 "7d" -> nowMs + DAYS_7 * MILLIS_PER_DAY
                 "30d" -> nowMs + DAYS_30 * MILLIS_PER_DAY
                 "90d" -> nowMs + DAYS_90 * MILLIS_PER_DAY
-                "1y" -> nowMs + DAYS_365 * MILLIS_PER_DAY
+                "365d" -> nowMs + DAYS_365 * MILLIS_PER_DAY
                 else -> {
-                    errors["expiresIn"] = "must be one of: 7d, 30d, 90d, 1y, never"
+                    errors["expiresIn"] = "must be one of: 7d, 30d, 90d, 365d, never"
                     null
                 }
             }

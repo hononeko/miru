@@ -653,7 +653,7 @@ class AuthRoutesTest :
             }
         }
 
-        test("API key creation supports preset intervals (7d, 30d, 90d, 1y, never), rejects past timestamps, and enforces EXPIRED cutoff") {
+        test("API key creation supports preset intervals, rejects past and ambiguous expirations, and enforces EXPIRED cutoff") {
             createHarness().use { harness ->
                 val adminLogin = harness.authService.setupInitialAdmin("admin", "Admin-password-123").shouldBeRight()
                 val baseNow = harness.nowMs.get()
@@ -667,7 +667,7 @@ class AuthRoutesTest :
                             "7d" to baseNow + 7L * dayMs,
                             "30d" to baseNow + 30L * dayMs,
                             "90d" to baseNow + 90L * dayMs,
-                            "1y" to baseNow + 365L * dayMs,
+                            "365d" to baseNow + 365L * dayMs,
                             "never" to null,
                         )
 
@@ -710,6 +710,30 @@ class AuthRoutesTest :
                     val pastProblem = MiruJson.decodeFromString<ProblemDetails>(pastResp.bodyAsText())
                     pastProblem.status shouldBe 400
                     pastProblem.errors.shouldNotBeNull().keys shouldContainExactly setOf("expiresAtMs")
+
+                    // Reject expiresAtMs together with expiresIn, even when the preset means no expiration
+                    for (preset in listOf("30d", "never")) {
+                        val bothResp =
+                            client.post("/api/v1/admin/api-keys") {
+                                cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                                contentType(ContentType.Application.Json)
+                                setBody(
+                                    MiruJson.encodeToString(
+                                        CreateApiKeyRequest(
+                                            name = "Both",
+                                            role = MiruRole.USER,
+                                            expiresAtMs = baseNow + dayMs,
+                                            expiresIn = preset,
+                                        ),
+                                    ),
+                                )
+                            }
+                        bothResp.status shouldBe HttpStatusCode.BadRequest
+                        MiruJson
+                            .decodeFromString<ProblemDetails>(bothResp.bodyAsText())
+                            .errors
+                            .shouldNotBeNull() shouldBe mapOf("expiresAtMs" to "must not be combined with expiresIn")
+                    }
 
                     // Reject unknown expiresIn preset with 400 ValidationError
                     val badPresetResp =

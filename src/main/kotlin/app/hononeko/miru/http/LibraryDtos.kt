@@ -85,7 +85,7 @@ data class RecentMediaItemResponse(
 
 @Serializable
 data class RecentMediaListResponse(
-    val sectionId: String,
+    val sectionKey: String,
     val items: List<RecentMediaItemResponse>,
 )
 
@@ -111,7 +111,7 @@ data class StaleMediaItemResponse(
 
 @Serializable
 data class StaleMediaListResponse(
-    val sectionId: String,
+    val sectionKey: String,
     val unwatchedDays: Int,
     val sort: String,
     val totalStaleCount: Int,
@@ -196,7 +196,7 @@ internal fun MediaItemCacheRecord.toRecentResponse(): RecentMediaItemResponse =
 
 internal fun LibraryRecentResult.toResponse(): RecentMediaListResponse =
     RecentMediaListResponse(
-        sectionId = section.sectionKey,
+        sectionKey = section.sectionKey,
         items = items.map { it.toRecentResponse() },
     )
 
@@ -222,7 +222,7 @@ internal fun StaleMediaItemRecord.toResponse(): StaleMediaItemResponse =
 
 internal fun LibraryStaleResult.toResponse(): StaleMediaListResponse =
     StaleMediaListResponse(
-        sectionId = section.sectionKey,
+        sectionKey = section.sectionKey,
         unwatchedDays = unwatchedDays,
         sort = sort,
         totalStaleCount = report.totalStaleCount,

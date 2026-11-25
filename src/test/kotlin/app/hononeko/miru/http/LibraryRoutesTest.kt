@@ -383,7 +383,7 @@ class LibraryRoutesTest :
                     recentText shouldNotContain SECRET_PLEX_URL
                     recentText shouldNotContain "/library/metadata/rk-1/thumb"
                     val recent = MiruJson.decodeFromString<RecentMediaListResponse>(recentText)
-                    recent.sectionId shouldBe "1"
+                    recent.sectionKey shouldBe "1"
                     recent.items.map { it.ratingKey to it.thumbUrl } shouldContainExactly
                         listOf(
                             "rk-2" to null,
@@ -401,7 +401,7 @@ class LibraryRoutesTest :
                     staleText shouldNotContain SECRET_PLEX_URL
                     staleText shouldNotContain "/library/metadata/rk-1/thumb"
                     val stale = MiruJson.decodeFromString<StaleMediaListResponse>(staleText)
-                    stale.sectionId shouldBe "1"
+                    stale.sectionKey shouldBe "1"
                     stale.unwatchedDays shouldBe 180
                     stale.sort shouldBe "size_desc"
                     stale.totalStaleCount shouldBe 2

@@ -1,10 +1,8 @@
-<script lang="ts">
-	import type { Snippet } from 'svelte';
-	import type { HTMLButtonAttributes } from 'svelte/elements';
-	import { tv, type VariantProps } from 'tailwind-variants';
-	import { cn } from '$lib/utils';
+<script lang="ts" module>
+	import { tv } from 'tailwind-variants';
 
-	const buttonVariants = tv({
+	/** Button styles, exported so links that act as buttons can look the same */
+	export const buttonVariants = tv({
 		base: 'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg font-heading text-xs font-semibold transition-[background-color,border-color,color,box-shadow,transform,opacity] duration-150 ease-[var(--ease-out-quart)] active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan disabled:pointer-events-none disabled:opacity-50 cursor-pointer',
 		variants: {
 			variant: {
@@ -31,6 +29,13 @@
 			size: 'md'
 		}
 	});
+</script>
+
+<script lang="ts">
+	import type { Snippet } from 'svelte';
+	import type { HTMLButtonAttributes } from 'svelte/elements';
+	import type { VariantProps } from 'tailwind-variants';
+	import { cn } from '$lib/utils';
 
 	type Props = HTMLButtonAttributes & {
 		variant?: VariantProps<typeof buttonVariants>['variant'];

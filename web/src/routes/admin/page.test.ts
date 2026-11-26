@@ -567,6 +567,8 @@ describe('Admin console Jellyfin Quick Connect wizard', () => {
 			avatarUrl: null
 		};
 		serversStore.reset();
+		// The Jellyfin wizard must never open a tab by itself; a spy lets tests check that, and keeps a real one from opening
+		if (!vi.isMockFunction(window.open)) vi.spyOn(window, 'open').mockReturnValue(null);
 		let currentJellyfinStatus = options.jellyfinStatus;
 		let currentAdminServers =
 			options.adminServers ?? [
@@ -876,5 +878,91 @@ describe('Admin console Jellyfin Quick Connect wizard', () => {
 		expect(serversStore.servers.some((s) => s.serverType === 'jellyfin' && s.configured)).toBe(true);
 		await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
 		await waitFor(() => expect(screen.getByRole('button', { name: 'Reconnect Jellyfin' })).toBeTruthy());
+	});
+
+	describe('copying the code and opening Jellyfin', () => {
+		const originalClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+		let writeText: ReturnType<typeof vi.fn>;
+
+		beforeEach(() => {
+			// Exercise the writeText path; the ClipboardItem path is covered in clipboard.test.ts
+			vi.stubGlobal('ClipboardItem', undefined);
+			writeText = vi.fn().mockResolvedValue(undefined);
+			Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+		});
+
+		afterEach(() => {
+			vi.unstubAllGlobals();
+			if (originalClipboard) Object.defineProperty(navigator, 'clipboard', originalClipboard);
+			else delete (navigator as { clipboard?: Clipboard }).clipboard;
+		});
+
+		async function startWaiting(code = '918273') {
+			setupJellyfinMocks({
+				jellyfinStatus: {
+					configured: false,
+					credentialSource: 'NOT_CONFIGURED',
+					encryptionKeyConfigured: true,
+					reachable: false
+				}
+			});
+			vi.spyOn(api, 'POST').mockResolvedValue({
+				data: {
+					attemptId: 'att-1',
+					code,
+					serverName: 'Studio Jellyfin',
+					serverVersion: '10.11.11',
+					expiresAtMs: Date.now() + 600_000
+				},
+				response: new Response(null, { status: 200 })
+			} as never);
+			const originalGet = vi.mocked(api.GET).getMockImplementation()!;
+			vi.mocked(api.GET).mockImplementation((async (url: string, ...rest: unknown[]) => {
+				if (url === '/api/v1/admin/jellyfin/quick-connect/{attemptId}') {
+					return {
+						data: { attemptId: 'att-1', status: 'PENDING', expiresAtMs: Date.now() + 500_000 },
+						response: new Response(null, { status: 200 })
+					};
+				}
+				return (originalGet as (...args: unknown[]) => unknown)(url, ...rest);
+			}) as never);
+
+			render(AdminPage);
+			await waitFor(() => expect(screen.getByRole('button', { name: 'Connect Jellyfin' })).toBeTruthy());
+			await fireEvent.click(screen.getByRole('button', { name: 'Connect Jellyfin' }));
+			const urlInput = await waitFor(() => screen.getByLabelText(/Jellyfin Server URL/i) as HTMLInputElement);
+			await fireEvent.input(urlInput, { target: { value: 'http://jf.local:8096/' } });
+			await fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+			await waitFor(() => expect(screen.getByTestId('jellyfin-qc-code').textContent?.trim()).toBe(code));
+		}
+
+		const quickConnectUrl = 'http://jf.local:8096/web/#/quickconnect?code=918273';
+
+		it('copies the code and offers a link to Quick Connect with the code filled in, without opening it', async () => {
+			await startWaiting();
+
+			await waitFor(() => expect(writeText).toHaveBeenCalledWith('918273'));
+			await waitFor(() => expect(screen.getByRole('button', { name: /Code Copied/ })).toBeTruthy());
+
+			const link = screen.getByRole('link', { name: /Open Jellyfin Quick Connect/ });
+			expect(link.getAttribute('href')).toBe(quickConnectUrl);
+			expect(link.getAttribute('target')).toBe('_blank');
+			expect(link.getAttribute('rel')).toBe('noopener noreferrer');
+
+			// Nothing opens by itself, however long the admin waits
+			await new Promise((resolve) => setTimeout(resolve, 2_500));
+			expect(window.open).not.toHaveBeenCalled();
+		});
+
+		it('still shows the code and the link when the clipboard is refused', async () => {
+			writeText.mockRejectedValue(new DOMException('Not allowed', 'NotAllowedError'));
+
+			await startWaiting();
+
+			await waitFor(() => expect(writeText).toHaveBeenCalled());
+			expect(screen.getByRole('button', { name: /Copy Code/ })).toBeTruthy();
+			expect(screen.queryByRole('button', { name: /Code Copied/ })).toBeNull();
+			expect(screen.getByRole('link', { name: /Open Jellyfin Quick Connect/ }).getAttribute('href')).toBe(quickConnectUrl);
+		});
 	});
 });

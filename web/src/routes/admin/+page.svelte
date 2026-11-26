@@ -897,13 +897,29 @@
 		linkOpen = true;
 	}
 
+	/** An account is linked to at most one media user on each server, so picking one replaces the other */
 	function toggleMediaUser(id: string) {
 		if (selectedMediaUserIds.includes(id)) {
 			selectedMediaUserIds = selectedMediaUserIds.filter((x) => x !== id);
-		} else {
-			selectedMediaUserIds = [...selectedMediaUserIds, id];
+			return;
 		}
+		const serverId = mediaUsers.find((mu) => mu.id === id)?.serverId;
+		const onOtherServers = selectedMediaUserIds.filter(
+			(x) => serverId === undefined || mediaUsers.find((mu) => mu.id === x)?.serverId !== serverId
+		);
+		selectedMediaUserIds = [...onOtherServers, id];
 	}
+
+	/** Media users picked together on one server, which saving would refuse; only links made before this rule */
+	const conflictingLinkUsers = $derived.by(() => {
+		const byServer = new Map<string, UserSummaryDto[]>();
+		for (const id of selectedMediaUserIds) {
+			const mu = mediaUsers.find((m) => m.id === id);
+			if (!mu) continue;
+			byServer.set(mu.serverId, [...(byServer.get(mu.serverId) ?? []), mu]);
+		}
+		return [...byServer.values()].filter((users) => users.length > 1);
+	});
 
 	async function handleSaveLinks() {
 		if (!linkTarget) return;
@@ -2314,6 +2330,18 @@
 		{#if mediaUsers.length === 0}
 			<p class="text-xs text-fg-muted">No media users synced yet.</p>
 		{:else}
+			<p class="text-[11px] text-fg-muted">
+				An account can be linked to one user on each media server; picking another user on the same server
+				replaces the first.
+			</p>
+			{#if conflictingLinkUsers.length > 0}
+				<div role="alert" class="rounded-xl border border-warning/50 bg-warning-soft px-3.5 py-2.5 text-xs text-warning">
+					This account is linked to more than one user on the same server:
+					{conflictingLinkUsers
+						.map((users) => users.map((mu) => mu.displayName || mu.username).join(' and '))
+						.join('; ')}. Keep one of them on each server to save.
+				</div>
+			{/if}
 			<div class="flex flex-col gap-2">
 				{#each mediaUsers as mu (mu.id)}
 					{@const checked = selectedMediaUserIds.includes(mu.id)}
@@ -2339,7 +2367,13 @@
 				{/each}
 			</div>
 		{/if}
-		<Button variant="cyan" size="lg" disabled={linkSubmitting} onclick={handleSaveLinks} class="mt-2 w-full">
+		<Button
+			variant="cyan"
+			size="lg"
+			disabled={linkSubmitting || conflictingLinkUsers.length > 0}
+			onclick={handleSaveLinks}
+			class="mt-2 w-full"
+		>
 			{linkSubmitting ? 'Saving…' : 'Save Linked Users'}
 		</Button>
 	</div>

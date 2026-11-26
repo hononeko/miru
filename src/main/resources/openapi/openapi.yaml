@@ -454,6 +454,9 @@ paths:
       tags: [Admin]
       operationId: createAccount
       summary: Create a new local account
+      description: >-
+        `linkedMediaUserIds` may hold at most one media user on each media server, since an account
+        stands for one person.
       security:
         - CookieAuth: []
         - ApiKeyAuth: []
@@ -472,7 +475,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/AccountResponse'
         '400':
-          description: Validation error
+          description: Validation error, including two linked media users on the same media server
           content:
             application/problem+json:
               schema:
@@ -617,7 +620,8 @@ paths:
       summary: Replace linked media server user IDs for an account
       description: >-
         Replaces the account's links and sets its `mediaUserLinkMode` to `MANUAL`, so SSO sign-in
-        no longer relinks it by email.
+        no longer relinks it by email. An account is linked to at most one media user on each media
+        server; a request linking two users on one server is refused with 400 and changes nothing.
       security:
         - CookieAuth: []
         - ApiKeyAuth: []
@@ -641,6 +645,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AccountResponse'
+        '400':
+          description: Two of the media users are on the same media server
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
         '401':
           description: Authentication required
           content:
@@ -668,7 +678,9 @@ paths:
       description: >-
         `AUTO` (SSO accounts only) links the account to the media users that share its verified email,
         right away if its last SSO sign-in recorded whether the email is verified, otherwise at its next
-        sign-in. `MANUAL` keeps the current links as they are.
+        sign-in. It links at most one user on each media server: when several users on one server share
+        the email, it keeps the one already linked, or links none there. `MANUAL` keeps the current links
+        as they are.
       security:
         - CookieAuth: []
         - ApiKeyAuth: []
@@ -3659,6 +3671,7 @@ components:
       required: [linkedMediaUserIds]
       properties:
         linkedMediaUserIds:
+          description: At most one media user on each media server
           type: array
           items:
             type: string

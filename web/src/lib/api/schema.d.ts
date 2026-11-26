@@ -268,7 +268,10 @@ export interface paths {
         /** List all local accounts */
         get: operations["listAccounts"];
         put?: never;
-        /** Create a new local account */
+        /**
+         * Create a new local account
+         * @description `linkedMediaUserIds` may hold at most one media user on each media server, since an account stands for one person.
+         */
         post: operations["createAccount"];
         delete?: never;
         options?: never;
@@ -307,7 +310,7 @@ export interface paths {
         get?: never;
         /**
          * Replace linked media server user IDs for an account
-         * @description Replaces the account's links and sets its `mediaUserLinkMode` to `MANUAL`, so SSO sign-in no longer relinks it by email.
+         * @description Replaces the account's links and sets its `mediaUserLinkMode` to `MANUAL`, so SSO sign-in no longer relinks it by email. An account is linked to at most one media user on each media server; a request linking two users on one server is refused with 400 and changes nothing.
          */
         put: operations["setLinkedMediaUsers"];
         post?: never;
@@ -327,7 +330,7 @@ export interface paths {
         get?: never;
         /**
          * Set how an account's linked media users are maintained
-         * @description `AUTO` (SSO accounts only) links the account to the media users that share its verified email, right away if its last SSO sign-in recorded whether the email is verified, otherwise at its next sign-in. `MANUAL` keeps the current links as they are.
+         * @description `AUTO` (SSO accounts only) links the account to the media users that share its verified email, right away if its last SSO sign-in recorded whether the email is verified, otherwise at its next sign-in. It links at most one user on each media server: when several users on one server share the email, it keeps the one already linked, or links none there. `MANUAL` keeps the current links as they are.
          */
         put: operations["setMediaUserLinkMode"];
         post?: never;
@@ -1274,6 +1277,7 @@ export interface components {
             linkedMediaUserIds?: string[];
         };
         SetLinkedMediaUsersRequest: {
+            /** @description At most one media user on each media server */
             linkedMediaUserIds: string[];
         };
         SetMediaUserLinkModeRequest: {
@@ -2951,7 +2955,7 @@ export interface operations {
                     "application/json": components["schemas"]["AccountResponse"];
                 };
             };
-            /** @description Validation error */
+            /** @description Validation error, including two linked media users on the same media server */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -3147,6 +3151,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AccountResponse"];
+                };
+            };
+            /** @description Two of the media users are on the same media server */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
             /** @description Authentication required */

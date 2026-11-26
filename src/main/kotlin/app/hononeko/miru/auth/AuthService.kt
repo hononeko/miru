@@ -358,7 +358,7 @@ class AuthService(
         either {
             val validated = validateCredentials(username, password, email).bind()
             val normalizedLinks = linkedMediaUserIds.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
-            validateMediaUserIdsExist(normalizedLinks).bind()
+            validateMediaUserLinks(normalizedLinks).bind()
 
             val existing = accountRepository.findByNormalizedUsername(validated.usernameNormalized).bind()
             ensure(existing == null) {
@@ -573,7 +573,7 @@ class AuthService(
                 accountRepository.findById(accountId).bind()
                     ?: raise(MiruError.NotFound(resource = "Account", id = accountId))
             val normalizedLinks = mediaUserIds.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
-            validateMediaUserIdsExist(normalizedLinks).bind()
+            validateMediaUserLinks(normalizedLinks).bind()
             val now = clock()
             val manual = MediaUserLinkMode.MANUAL.name
             accountRepository.replaceLinkedMediaUserIds(accountId, normalizedLinks, now, linkMode = manual).bind()
@@ -764,13 +764,24 @@ class AuthService(
             )
         }
 
-    private suspend fun validateMediaUserIdsExist(mediaUserIds: Set<String>): Either<MiruError, Unit> =
+    /**
+     * Checks that every media user exists and that no two are on the same media server: a Miru account
+     * stands for one person, who has one account on each media server.
+     */
+    private suspend fun validateMediaUserLinks(mediaUserIds: Set<String>): Either<MiruError, Unit> =
         either {
-            for (mediaUserId in mediaUserIds) {
-                val found = userRepository.findById(mediaUserId).bind()
-                if (found == null) {
-                    raise(MiruError.NotFound(resource = "MediaUser", id = mediaUserId))
+            val users =
+                mediaUserIds.map { mediaUserId ->
+                    userRepository.findById(mediaUserId).bind()
+                        ?: raise(MiruError.NotFound(resource = "MediaUser", id = mediaUserId))
                 }
+            val sameServer = users.groupBy { it.serverId }.values.firstOrNull { it.size > 1 }
+            ensure(sameServer == null) {
+                val names = sameServer.sortedBy { it.username }.joinToString(" and ") { "'${it.username}'" }
+                MiruError.ValidationError(
+                    message = "A Miru account can be linked to only one media user on each media server",
+                    fieldErrors = mapOf("linkedMediaUserIds" to "links $names, who are on the same media server"),
+                )
             }
         }
 

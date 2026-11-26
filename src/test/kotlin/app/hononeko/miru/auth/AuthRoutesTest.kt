@@ -177,14 +177,16 @@ private suspend fun seedMediaUser(
     harness: TestAuthHarness,
     userId: String = "media-user-1",
     externalUserId: String = "plex-42",
+    serverId: String = "srv-1",
+    username: String = "plexuser",
 ) {
     harness.serverRepo
         .upsert(
             MediaServerRecord(
-                id = "srv-1",
-                name = "Main Plex",
+                id = serverId,
+                name = if (serverId == "srv-1") "Main Plex" else "Server $serverId",
                 serverType = "PLEX",
-                machineId = "mach-1",
+                machineId = if (serverId == "srv-1") "mach-1" else "mach-$serverId",
                 baseUrl = "http://plex.local:32400",
                 createdAtMs = 1_000L,
                 updatedAtMs = 1_000L,
@@ -194,9 +196,9 @@ private suspend fun seedMediaUser(
         .upsert(
             UserRecord(
                 id = userId,
-                serverId = "srv-1",
+                serverId = serverId,
                 externalUserId = externalUserId,
-                username = "plexuser",
+                username = username,
                 displayName = "Plex User",
                 createdAtMs = 1_000L,
                 updatedAtMs = 1_000L,
@@ -485,6 +487,70 @@ class AuthRoutesTest :
                         .get("/api/v1/auth/me") {
                             cookie(SESSION_COOKIE_NAME, cookieVal2)
                         }.status shouldBe HttpStatusCode.Unauthorized
+                }
+            }
+        }
+
+        test("links an account to at most one media user on each media server") {
+            createHarness().use { harness ->
+                seedMediaUser(harness, userId = "mu-alice", externalUserId = "plex-1", username = "alice")
+                seedMediaUser(harness, userId = "mu-alice-old", externalUserId = "plex-2", username = "alice_old")
+                seedMediaUser(harness, userId = "mu-alice-jf", externalUserId = "jf-1", serverId = "srv-2", username = "alice")
+                val adminLogin = harness.authService.setupInitialAdmin("admin", "Admin-password-123").shouldBeRight()
+
+                testApplication {
+                    setupAuthApp(harness)
+
+                    suspend fun createAccount(links: Set<String>) =
+                        client.post("/api/v1/admin/accounts") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                            contentType(ContentType.Application.Json)
+                            setBody(
+                                MiruJson.encodeToString(
+                                    CreateAccountRequest(
+                                        username = "alice",
+                                        password = "Alice-password-123",
+                                        role = MiruRole.USER,
+                                        linkedMediaUserIds = links,
+                                    ),
+                                ),
+                            )
+                        }
+
+                    suspend fun setLinks(
+                        accountId: String,
+                        links: Set<String>,
+                    ) = client.put("/api/v1/admin/accounts/$accountId/media-users") {
+                        cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                        contentType(ContentType.Application.Json)
+                        setBody(MiruJson.encodeToString(SetLinkedMediaUsersRequest(links)))
+                    }
+
+                    // Two users on the same server are refused when creating the account, which isn't created
+                    val sameServerCreate = createAccount(setOf("mu-alice", "mu-alice-old"))
+                    sameServerCreate.status shouldBe HttpStatusCode.BadRequest
+                    val problem = MiruJson.decodeFromString<ProblemDetails>(sameServerCreate.bodyAsText())
+                    problem.detail shouldBe "A Miru account can be linked to only one media user on each media server"
+                    problem.errors.shouldNotBeNull()["linkedMediaUserIds"] shouldBe
+                        "links 'alice' and 'alice_old', who are on the same media server"
+                    harness.authService.listAccounts().shouldBeRight().map { it.account.username } shouldContainExactly listOf("admin")
+
+                    // One user on each of two servers is fine
+                    val created = createAccount(setOf("mu-alice", "mu-alice-jf"))
+                    created.status shouldBe HttpStatusCode.Created
+                    val account = MiruJson.decodeFromString<AccountResponse>(created.bodyAsText())
+                    account.linkedMediaUserIds.toSet() shouldBe setOf("mu-alice", "mu-alice-jf")
+
+                    // Replacing the links with two users on one server is refused and leaves the links as they were
+                    setLinks(account.id, setOf("mu-alice", "mu-alice-old", "mu-alice-jf")).status shouldBe HttpStatusCode.BadRequest
+                    harness.authService.listAccounts().shouldBeRight().single { it.account.id == account.id }.linkedMediaUserIds shouldBe
+                        setOf("mu-alice", "mu-alice-jf")
+
+                    // Swapping which user on a server is linked works
+                    val swapped = setLinks(account.id, setOf("mu-alice-old", "mu-alice-jf"))
+                    swapped.status shouldBe HttpStatusCode.OK
+                    MiruJson.decodeFromString<AccountResponse>(swapped.bodyAsText()).linkedMediaUserIds.toSet() shouldBe
+                        setOf("mu-alice-old", "mu-alice-jf")
                 }
             }
         }
@@ -975,11 +1041,24 @@ class AuthRoutesTest :
                             updatedAtMs = 1_000L,
                         ),
                     ).shouldBeRight()
+                // On a second server: an account has one media user per server
+                harness.serverRepo
+                    .upsert(
+                        MediaServerRecord(
+                            id = "srv-2",
+                            name = "Second Plex",
+                            serverType = "PLEX",
+                            machineId = "mach-2",
+                            baseUrl = "http://plex2.local:32400",
+                            createdAtMs = 1_000L,
+                            updatedAtMs = 1_000L,
+                        ),
+                    ).shouldBeRight()
                 harness.userRepo
                     .upsert(
                         UserRecord(
                             id = "media-with-thumb",
-                            serverId = "srv-1",
+                            serverId = "srv-2",
                             externalUserId = "plex-11",
                             username = "withthumb",
                             thumbUrl = "https://plex.tv/users/secret-hash/avatar?X-Plex-Token=leak",

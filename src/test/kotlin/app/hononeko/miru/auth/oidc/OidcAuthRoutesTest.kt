@@ -467,12 +467,13 @@ private suspend fun OidcTestHarness.upsertMediaUser(
     id: String,
     externalUserId: String,
     email: String?,
+    serverId: String = "srv-1",
 ) {
     userRepo
         .upsert(
             UserRecord(
                 id = id,
-                serverId = "srv-1",
+                serverId = serverId,
                 externalUserId = externalUserId,
                 username = id,
                 displayName = id,
@@ -492,6 +493,21 @@ private suspend fun OidcTestHarness.upsertPlexServer() {
                 serverType = "PLEX",
                 machineId = "m1",
                 baseUrl = "http://plex.local:32400",
+                createdAtMs = 1_000L,
+                updatedAtMs = 1_000L,
+            ),
+        ).shouldBeRight()
+}
+
+private suspend fun OidcTestHarness.upsertJellyfinServer() {
+    serverRepo
+        .upsert(
+            MediaServerRecord(
+                id = "srv-2",
+                name = "Jellyfin",
+                serverType = "JELLYFIN",
+                machineId = "jf1",
+                baseUrl = "http://jellyfin.local:8096",
                 createdAtMs = 1_000L,
                 updatedAtMs = 1_000L,
             ),
@@ -1055,6 +1071,7 @@ class OidcAuthRoutesTest :
 
             createOidcHarness(scenarioProvider = { scenario }, expectedChallengeHolder = expectedChallengeHolder).use { harness ->
                 harness.upsertPlexServer()
+                harness.upsertJellyfinServer()
                 harness.upsertMediaUser(id = "mu-alice", externalUserId = "100", email = "alice@miru.local")
                 harness.upsertMediaUser(id = "mu-other", externalUserId = "200", email = "other@miru.local")
 
@@ -1078,20 +1095,45 @@ class OidcAuthRoutesTest :
 
                     harness.accountRepo.findById(aliceAccountId).shouldBeRight().shouldNotBeNull().emailVerified shouldBe true
 
-                    // A sign-in with the same verified email does no linking work, even if Plex users changed...
-                    harness.upsertMediaUser(id = "mu-alice-2", externalUserId = "101", email = "Alice@Miru.local")
+                    // A sign-in with the same verified email does no linking work, even if media users changed...
+                    harness.upsertMediaUser(
+                        id = "mu-alice-jf",
+                        externalUserId = "jf-1",
+                        email = "Alice@Miru.local",
+                        serverId = "srv-2",
+                    )
                     val aliceSession = client.signInWithOidc("code-2", expectedChallengeHolder)
                     client.linkedMediaUserIds(aliceSession) shouldContainExactly listOf("mu-alice")
 
                     // ...the user sync picks the change up, and the existing session sees it straight away.
                     harness.emailLinker.relinkAll().shouldBeRight() shouldBe 1
-                    client.linkedMediaUserIds(aliceSession) shouldContainExactly listOf("mu-alice", "mu-alice-2")
+                    client.linkedMediaUserIds(aliceSession) shouldContainExactly listOf("mu-alice", "mu-alice-jf")
 
-                    // A Plex user whose email no longer matches is unlinked at the next user sync.
-                    harness.upsertMediaUser(id = "mu-alice-2", externalUserId = "101", email = "someone-else@miru.local")
+                    // A media user whose email no longer matches is unlinked at the next user sync.
+                    harness.upsertMediaUser(
+                        id = "mu-alice-jf",
+                        externalUserId = "jf-1",
+                        email = "someone-else@miru.local",
+                        serverId = "srv-2",
+                    )
                     harness.emailLinker.relinkAll().shouldBeRight() shouldBe 1
                     client.linkedMediaUserIds(aliceSession) shouldContainExactly listOf("mu-alice")
                     harness.emailLinker.relinkAll().shouldBeRight() shouldBe 0
+
+                    // An account has one user per server: a second Plex user with the same email isn't linked, and
+                    // the existing Plex link stays...
+                    harness.upsertMediaUser(id = "mu-alice-2", externalUserId = "101", email = "Alice@Miru.local")
+                    harness.emailLinker.relinkAll().shouldBeRight() shouldBe 0
+                    client.linkedMediaUserIds(aliceSession) shouldContainExactly listOf("mu-alice")
+
+                    // ...until only one of them matches again
+                    harness.upsertMediaUser(id = "mu-alice", externalUserId = "100", email = "old-alice@miru.local")
+                    harness.emailLinker.relinkAll().shouldBeRight() shouldBe 1
+                    client.linkedMediaUserIds(aliceSession) shouldContainExactly listOf("mu-alice-2")
+                    harness.upsertMediaUser(id = "mu-alice", externalUserId = "100", email = "alice@miru.local")
+                    harness.upsertMediaUser(id = "mu-alice-2", externalUserId = "101", email = "someone-else@miru.local")
+                    harness.emailLinker.relinkAll().shouldBeRight() shouldBe 1
+                    client.linkedMediaUserIds(aliceSession) shouldContainExactly listOf("mu-alice")
 
                     scenario = admin
                     val adminSession = client.signInWithOidc("code-admin", expectedChallengeHolder)
@@ -1180,6 +1222,30 @@ class OidcAuthRoutesTest :
                             "boss" to MediaUserLinkMode.AUTO,
                             "localviewer" to MediaUserLinkMode.MANUAL,
                         )
+                }
+            }
+        }
+
+        test("does not pick between media users on one server who share an SSO account's email") {
+            var scenario = MockIdpScenario()
+            val expectedChallengeHolder = mutableMapOf<String, String>()
+
+            createOidcHarness(scenarioProvider = { scenario }, expectedChallengeHolder = expectedChallengeHolder).use { harness ->
+                harness.upsertPlexServer()
+                harness.upsertJellyfinServer()
+                harness.upsertMediaUser(id = "mu-plex-a", externalUserId = "100", email = "alice@miru.local")
+                harness.upsertMediaUser(id = "mu-plex-b", externalUserId = "101", email = "ALICE@miru.local")
+                harness.upsertMediaUser(id = "mu-jf", externalUserId = "jf-1", email = "alice@miru.local", serverId = "srv-2")
+
+                testApplication {
+                    setupApp(harness)
+                    val client = createClient { followRedirects = false }
+                    scenario = MockIdpScenario(subject = "sub-alice", preferredUsername = "alice", email = "alice@miru.local")
+
+                    // Two Plex users match, so neither is linked; the single Jellyfin match is
+                    client.linkedMediaUserIds(client.signInWithOidc("code-1", expectedChallengeHolder)) shouldContainExactly
+                        listOf("mu-jf")
+                    harness.emailLinker.relinkAll().shouldBeRight() shouldBe 0
                 }
             }
         }

@@ -5,6 +5,7 @@ import app.hononeko.miru.adapter.ActiveStreamSnapshot
 import app.hononeko.miru.adapter.ArtworkData
 import app.hononeko.miru.adapter.LibraryItemsPage
 import app.hononeko.miru.adapter.LibrarySectionInfo
+import app.hononeko.miru.adapter.LibrarySectionType
 import app.hononeko.miru.adapter.MediaItemDetails
 import app.hononeko.miru.adapter.MediaServerAdapter
 import app.hononeko.miru.adapter.MediaServerEvent
@@ -47,6 +48,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.serialization.SerializationException
 import org.slf4j.LoggerFactory
+import java.util.concurrent.ConcurrentHashMap
 
 private const val DEFAULT_REQUEST_TIMEOUT_MS = 15_000L
 private const val DEFAULT_CONNECT_TIMEOUT_MS = 5_000L
@@ -95,6 +97,9 @@ class JellyfinMediaServerAdapter(
     private val deviceId: String = config.clientIdentifier?.trim()?.takeIf { it.isNotEmpty() } ?: DEFAULT_DEVICE_ID
     private val authHeaderValue: String = buildMediaBrowserAuthHeader(config.apiKey, deviceId, appVersion)
 
+    /** Each library's title item types, by section key, as of the last [fetchLibrarySections] */
+    private val sectionTitleTypes = ConcurrentHashMap<String, String>()
+
     override suspend fun checkHealth(): Either<MiruError, ServerIdentity> =
         executeJsonGet<JellyfinSystemInfoDto>(
             url = "$baseUrl/System/Info",
@@ -124,11 +129,55 @@ class JellyfinMediaServerAdapter(
         ).map(JellyfinMapper::mapUserLibraryAccess)
 
     override suspend fun fetchLibrarySections(): Either<MiruError, List<LibrarySectionInfo>> =
-        executeJsonGet<List<JellyfinVirtualFolderDto>>(
-            url = "$baseUrl/Library/VirtualFolders",
-            operation = "fetch library sections",
-            notFoundResource = "Jellyfin virtual folders",
-        ).map(JellyfinMapper::mapLibrarySections)
+        either {
+            val folders =
+                executeJsonGet<List<JellyfinVirtualFolderDto>>(
+                    url = "$baseUrl/Library/VirtualFolders",
+                    operation = "fetch library sections",
+                    notFoundResource = "Jellyfin virtual folders",
+                ).bind()
+            val collectionTypes = folders.associate { it.itemId?.trim().orEmpty() to it.collectionType }
+
+            JellyfinMapper.mapLibrarySections(folders).map { section ->
+                val collectionType = collectionTypes[section.sectionKey]
+                if (JellyfinMapper.isMixedCollection(collectionType)) {
+                    val (type, titleTypes) = classifyMixedLibrary(section.sectionKey)
+                    sectionTitleTypes[section.sectionKey] = titleTypes
+                    section.copy(type = type)
+                } else {
+                    sectionTitleTypes[section.sectionKey] = JellyfinMapper.titleItemTypes(collectionType)
+                    section
+                }
+            }
+        }
+
+    /**
+     * A mixed library holding only shows is counted like a TV library (series, seasons, episodes) and
+     * one holding only movies like a movie library, as Jellyfin counts them. One holding both counts
+     * its movies and series as titles.
+     */
+    private suspend fun classifyMixedLibrary(sectionKey: String): Pair<LibrarySectionType, String> {
+        val series = countItems(sectionKey, "Series")
+        val movies = countItems(sectionKey, "Movie")
+        if (series.isLeft() || movies.isLeft()) {
+            logger.warn("Could not inspect mixed Jellyfin library {}; counting its movies and series", sectionKey)
+            return LibrarySectionType.OTHER to MIXED_TITLE_ITEM_TYPES
+        }
+        val seriesCount = series.getOrNull() ?: 0
+        val movieCount = movies.getOrNull() ?: 0
+        return when {
+            seriesCount > 0 && movieCount == 0 -> LibrarySectionType.SHOW to "Series"
+            movieCount > 0 && seriesCount == 0 -> LibrarySectionType.MOVIE to "Movie"
+            else -> LibrarySectionType.OTHER to MIXED_TITLE_ITEM_TYPES
+        }
+    }
+
+    /** The item types to use for a library when no type is requested; see [JellyfinMapper.titleItemTypes] */
+    private suspend fun titleTypesFor(sectionKey: String): String {
+        sectionTitleTypes[sectionKey]?.let { return it }
+        fetchLibrarySections()
+        return sectionTitleTypes[sectionKey] ?: JellyfinMapper.GENERIC_TITLE_ITEM_TYPES
+    }
 
     override suspend fun fetchLibraryCount(
         sectionKey: String,
@@ -136,27 +185,26 @@ class JellyfinMediaServerAdapter(
     ): Either<MiruError, Int> =
         either {
             validateId(sectionKey, "sectionKey").bind()
-            val includeTypes = mapIncludeItemTypes(mediaTypeCode).bind()
-            val response =
-                executeJsonGet<JellyfinItemsQueryResponse>(
-                    url = "$baseUrl/Items",
-                    operation = "fetch library count",
-                    notFoundResource = "Library section",
-                    notFoundId = sectionKey,
-                ) {
-                    parameter("ParentId", sectionKey)
-                    parameter("Recursive", true)
-                    parameter("StartIndex", 0)
-                    parameter("Limit", 0)
-                    if (includeTypes != null) {
-                        parameter("IncludeItemTypes", includeTypes)
-                    } else {
-                        parameter("IsFolder", false)
-                    }
-                }.bind()
-
-            response.totalRecordCount ?: 0
+            val includeTypes = mapIncludeItemTypes(mediaTypeCode).bind() ?: titleTypesFor(sectionKey)
+            countItems(sectionKey, includeTypes).bind()
         }
+
+    private suspend fun countItems(
+        sectionKey: String,
+        includeTypes: String,
+    ): Either<MiruError, Int> =
+        executeJsonGet<JellyfinItemsQueryResponse>(
+            url = "$baseUrl/Items",
+            operation = "fetch library count",
+            notFoundResource = "Library section",
+            notFoundId = sectionKey,
+        ) {
+            parameter("ParentId", sectionKey)
+            parameter("Recursive", true)
+            parameter("StartIndex", 0)
+            parameter("Limit", 0)
+            parameter("IncludeItemTypes", includeTypes)
+        }.map { it.totalRecordCount ?: 0 }
 
     override suspend fun fetchLibraryItems(
         sectionKey: String,
@@ -178,7 +226,7 @@ class JellyfinMediaServerAdapter(
                     fieldErrors = mapOf("size" to "must be greater than 0"),
                 )
             }
-            val includeTypes = mapIncludeItemTypes(mediaTypeCode).bind()
+            val includeTypes = mapIncludeItemTypes(mediaTypeCode).bind() ?: titleTypesFor(sectionKey)
             val response =
                 executeJsonGet<JellyfinItemsQueryResponse>(
                     url = "$baseUrl/Items",
@@ -191,11 +239,7 @@ class JellyfinMediaServerAdapter(
                     parameter("StartIndex", start)
                     parameter("Limit", size)
                     parameter("Fields", ITEM_QUERY_FIELDS)
-                    if (includeTypes != null) {
-                        parameter("IncludeItemTypes", includeTypes)
-                    } else {
-                        parameter("IsFolder", false)
-                    }
+                    parameter("IncludeItemTypes", includeTypes)
                 }.bind()
 
             JellyfinMapper.mapLibraryItemsPage(
@@ -397,6 +441,7 @@ class JellyfinMediaServerAdapter(
     private fun mapIncludeItemTypes(mediaTypeCode: Int?): Either<MiruError.ValidationError, String?> =
         when (mediaTypeCode) {
             null -> null.right()
+            PLEX_TYPE_MOVIE -> "Movie".right()
             PLEX_TYPE_SHOW -> "Series".right()
             PLEX_TYPE_SEASON -> "Season".right()
             PLEX_TYPE_EPISODE -> "Episode".right()
@@ -636,6 +681,8 @@ class JellyfinMediaServerAdapter(
         private const val ASCII_DEL = 0x7F
         private const val MAX_TERMINATION_SESSION_ID_LENGTH = 256
         private const val MAX_TERMINATION_REASON_LENGTH = 500
+        private const val MIXED_TITLE_ITEM_TYPES = "Movie,Series"
+        private const val PLEX_TYPE_MOVIE = 1
         private const val PLEX_TYPE_SHOW = 2
         private const val PLEX_TYPE_SEASON = 3
         private const val PLEX_TYPE_EPISODE = 4

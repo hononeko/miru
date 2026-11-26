@@ -361,6 +361,107 @@ class JellyfinMediaServerAdapterTest :
             page.items[0].fileSizeBytes shouldBe 500_000_000L
         }
 
+        test("counts each library the way Jellyfin does, working out what a mixed library holds") {
+            // Item counts per library and type, shaped like a real server: libraries also hold folders
+            // (extras, samples) and Jellyfin returns every box set whatever the ParentId
+            val counts =
+                mapOf(
+                    "lib-movies" to mapOf("Movie" to 433),
+                    "lib-anime" to mapOf("Series" to 46, "Season" to 223, "Episode" to 3681),
+                    "lib-films" to mapOf("Movie" to 12),
+                    "lib-both" to mapOf("Movie" to 3, "Series" to 2),
+                    "lib-collections" to mapOf("BoxSet" to 66),
+                )
+            val seenTypes = mutableMapOf<String, MutableList<String?>>()
+            val (adapter, _) =
+                adapterWithMock { request ->
+                    when (request.url.encodedPath) {
+                        "/Library/VirtualFolders" ->
+                            respondJson(
+                                """
+                                [
+                                  { "ItemId": "lib-movies", "Name": "Movies", "CollectionType": "movies" },
+                                  { "ItemId": "lib-anime", "Name": "Anime" },
+                                  { "ItemId": "lib-films", "Name": "Films", "CollectionType": "mixed" },
+                                  { "ItemId": "lib-both", "Name": "Everything", "CollectionType": null },
+                                  { "ItemId": "lib-broken", "Name": "Broken" },
+                                  { "ItemId": "lib-collections", "Name": "Collections", "CollectionType": "boxsets" }
+                                ]
+                                """.trimIndent(),
+                            )
+
+                        "/Items" -> {
+                            val parent = request.url.parameters["ParentId"].orEmpty()
+                            val types = request.url.parameters["IncludeItemTypes"]
+                            request.url.parameters["IsFolder"] shouldBe null
+                            seenTypes.getOrPut(parent) { mutableListOf() } += types
+                            if (parent == "lib-broken") {
+                                respond("", status = HttpStatusCode.InternalServerError)
+                            } else {
+                                val byType = counts[parent].orEmpty()
+                                val total = types.orEmpty().split(',').sumOf { type -> byType[type] ?: 0 }
+                                respondJson("""{"TotalRecordCount":$total,"Items":[]}""")
+                            }
+                        }
+
+                        else -> error("Unexpected path ${request.url.encodedPath}")
+                    }
+                }
+
+            val sections = adapter.fetchLibrarySections().shouldBeRight()
+            sections.associate { it.sectionKey to it.type } shouldBe
+                mapOf(
+                    "lib-movies" to LibrarySectionType.MOVIE,
+                    "lib-anime" to LibrarySectionType.SHOW,
+                    "lib-films" to LibrarySectionType.MOVIE,
+                    "lib-both" to LibrarySectionType.OTHER,
+                    "lib-broken" to LibrarySectionType.OTHER,
+                    "lib-collections" to LibrarySectionType.OTHER,
+                )
+
+            // Without a type, each library counts its titles: movies, not every non-folder item
+            adapter.fetchLibraryCount("lib-movies").shouldBeRight() shouldBe 433
+            adapter.fetchLibraryCount("lib-films").shouldBeRight() shouldBe 12
+            adapter.fetchLibraryCount("lib-both").shouldBeRight() shouldBe 5
+            adapter.fetchLibraryCount("lib-collections").shouldBeRight() shouldBe 66
+            // A mixed library of shows is counted like a TV library
+            adapter.fetchLibraryCount("lib-anime", mediaTypeCode = 2).shouldBeRight() shouldBe 46
+            adapter.fetchLibraryCount("lib-anime", mediaTypeCode = 4).shouldBeRight() shouldBe 3681
+            adapter.fetchLibraryItems("lib-movies", start = 0, size = 50).shouldBeRight()
+
+            seenTypes["lib-movies"] shouldContainExactly listOf("Movie", "Movie")
+            seenTypes["lib-both"].orEmpty().last() shouldBe "Movie,Series"
+            seenTypes["lib-collections"] shouldContainExactly listOf("BoxSet")
+            // A mixed library is inspected once, when the sections are listed
+            seenTypes["lib-anime"] shouldContainExactly listOf("Series", "Movie", "Series", "Episode")
+        }
+
+        test("works out a library's titles on first use when its sections were not listed yet") {
+            var sectionCalls = 0
+            val seenTypes = mutableListOf<String?>()
+            val (adapter, _) =
+                adapterWithMock { request ->
+                    when (request.url.encodedPath) {
+                        "/Library/VirtualFolders" -> {
+                            sectionCalls++
+                            respondJson("""[{ "ItemId": "lib-movies", "Name": "Movies", "CollectionType": "movies" }]""")
+                        }
+
+                        "/Items" -> {
+                            seenTypes += request.url.parameters["IncludeItemTypes"]
+                            respondJson("""{"TotalRecordCount":433,"Items":[]}""")
+                        }
+
+                        else -> error("Unexpected path ${request.url.encodedPath}")
+                    }
+                }
+
+            adapter.fetchLibraryCount("lib-movies").shouldBeRight() shouldBe 433
+            adapter.fetchLibraryCount("lib-movies").shouldBeRight() shouldBe 433
+            sectionCalls shouldBe 1
+            seenTypes shouldContainExactly listOf("Movie", "Movie")
+        }
+
         test("fetchMediaDetails and fetchMediaSectionKey resolve season, series, and library ancestor") {
             val (adapter, _) =
                 adapterWithMock { request ->
@@ -636,12 +737,25 @@ class JellyfinMediaServerAdapterTest :
                     }
                 }
 
-            // Exercise every mediaTypeCode branch: 2, 3, 4, 8, 9, 10, 1 (positive default), null, and invalid 0
-            listOf(2, 3, 4, 8, 9, 10, 1, null).forEach { code ->
+            // Exercise every mediaTypeCode branch: 2, 3, 4, 8, 9, 10, 1, an unmapped positive code, null, and invalid 0.
+            // Without a type, an unknown library (its sections can't be listed here) counts generic titles,
+            // never "IsFolder=false", which Jellyfin answers with folders too
+            listOf(2, 3, 4, 8, 9, 10, 1, 12, null).forEach { code ->
                 adapter.fetchLibraryCount("lib-all", mediaTypeCode = code).shouldBeRight() shouldBe 7
             }
-            seenIncludeTypes shouldContainExactly listOf("Series", "Season", "Episode", "MusicArtist", "MusicAlbum", "Audio", null, null)
-            seenIsFolder shouldContainExactly listOf(null, null, null, null, null, null, "false", "false")
+            seenIncludeTypes shouldContainExactly
+                listOf(
+                    "Series",
+                    "Season",
+                    "Episode",
+                    "MusicArtist",
+                    "MusicAlbum",
+                    "Audio",
+                    "Movie",
+                    JellyfinMapper.GENERIC_TITLE_ITEM_TYPES,
+                    JellyfinMapper.GENERIC_TITLE_ITEM_TYPES,
+                )
+            seenIsFolder.filterNotNull() shouldHaveSize 0
             adapter.fetchLibraryCount("lib-all", mediaTypeCode = 0).shouldBeLeft().shouldBeInstanceOf<MiruError.ValidationError>()
 
             // Season details fetches parent series via parentId even when ancestors call fails

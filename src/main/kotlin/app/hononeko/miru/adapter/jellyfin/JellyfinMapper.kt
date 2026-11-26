@@ -300,6 +300,33 @@ object JellyfinMapper {
             else -> LibrarySectionType.OTHER
         }
 
+    /**
+     * True for a "Mixed movies and shows" library, which Jellyfin lists without a CollectionType.
+     * Its section type has to be worked out from what it contains.
+     */
+    internal fun isMixedCollection(raw: String?): Boolean = raw.isNullOrBlank() || raw.trim().equals("mixed", ignoreCase = true)
+
+    /**
+     * Jellyfin item types that are a library's titles: what Jellyfin itself counts for that library.
+     * Used when a library's items are requested without a specific type. Folders (extras, samples),
+     * seasons and episodes are never titles; box sets only in a collections library, because Jellyfin
+     * returns every box set for any library.
+     */
+    internal fun titleItemTypes(collectionType: String?): String =
+        when (collectionType?.trim()?.lowercase()) {
+            "movies" -> "Movie"
+            "tvshows" -> "Series"
+            "music" -> "MusicAlbum"
+            "musicvideos" -> "MusicVideo"
+            "homevideos", "photos" -> "Video,Photo"
+            "boxsets" -> "BoxSet"
+            "books" -> "Book,AudioBook"
+            else -> GENERIC_TITLE_ITEM_TYPES
+        }
+
+    /** Titles of a library whose content isn't known: everything a person would call a title */
+    internal const val GENERIC_TITLE_ITEM_TYPES = "Movie,Series,Video,MusicVideo,MusicAlbum,Photo,Book,AudioBook"
+
     internal fun ticksToMs(ticks: Long?): Long? =
         ticks?.takeIf { it >= 0L }?.let { it / TICKS_PER_MILLISECOND }
 

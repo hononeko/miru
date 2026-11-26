@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Page } from '@playwright/test';
+import type { MockJellyfinServer } from './mock-jellyfin';
 import type { MockOidcServer } from './mock-oidc';
 import type { MockPlexServer } from './mock-plex';
 
@@ -23,6 +24,7 @@ const ENCRYPTION_KEY = 'miru-e2e-encryption-key-0123456789abcdef';
 export interface MiruServerOptions {
 	mockPlex?: MockPlexServer;
 	connectStaticPlex?: boolean;
+	mockJellyfin?: MockJellyfinServer;
 	mockOidc?: MockOidcServer;
 	oidcDisplayName?: string;
 	bootstrapAdmin?: boolean;
@@ -38,6 +40,19 @@ export interface ApiUserSummary {
 	externalUserId: string;
 	isAdmin: boolean;
 	totalPlays: number;
+	serverId?: string;
+	serverName?: string | null;
+	serverType?: string | null;
+}
+
+export interface ApiServerSummary {
+	id: string;
+	name: string;
+	serverType: string;
+	configured: boolean;
+	reachable: boolean;
+	websocketEnabled: boolean;
+	websocketState: string;
 }
 
 export interface MiruServer {
@@ -52,6 +67,7 @@ export interface MiruServer {
 	): Promise<{ id: string; username: string; role: string }>;
 	apiImportTautulli(cookie: string, dbFilePath: string, dryRun?: boolean): Promise<Record<string, unknown>>;
 	apiGetUsers(cookie: string): Promise<ApiUserSummary[]>;
+	apiGetServers(cookie: string): Promise<ApiServerSummary[]>;
 	apiGetLibraries(cookie: string): Promise<Array<{ id: string; sectionKey: string; title: string }>>;
 	apiTriggerLibrarySync(cookie: string, deep?: boolean): Promise<Record<string, unknown>>;
 	waitForUsers(cookie: string, minCount: number, timeoutMs?: number): Promise<ApiUserSummary[]>;
@@ -133,6 +149,13 @@ export async function startMiruServer(options: MiruServerOptions = {}): Promise<
 			env.PLEX_URL = options.mockPlex.baseUrl;
 			env.PLEX_TOKEN = options.mockPlex.token;
 		}
+	}
+
+	if (options.mockJellyfin) {
+		env.JELLYFIN_URL = options.mockJellyfin.baseUrl;
+		env.JELLYFIN_API_KEY = options.mockJellyfin.apiKey;
+		env.JELLYFIN_POLL_INTERVAL_SECONDS = '5';
+		env.JELLYFIN_WEBSOCKET_ENABLED = 'true';
 	}
 
 	if (options.bootstrapAdmin !== false) {
@@ -234,6 +257,17 @@ export async function startMiruServer(options: MiruServerOptions = {}): Promise<
 		return data.users;
 	};
 
+	const apiGetServers = async (cookie: string): Promise<ApiServerSummary[]> => {
+		const res = await fetch(`${baseUrl}/api/v1/servers`, {
+			headers: { Cookie: cookie }
+		});
+		if (!res.ok) {
+			throw new Error(`Fetch servers failed: HTTP ${res.status}`);
+		}
+		const data = (await res.json()) as { servers: ApiServerSummary[] };
+		return data.servers;
+	};
+
 	const apiGetLibraries = async (cookie: string) => {
 		const res = await fetch(`${baseUrl}/api/v1/libraries`, {
 			headers: { Cookie: cookie }
@@ -303,6 +337,7 @@ export async function startMiruServer(options: MiruServerOptions = {}): Promise<
 		apiCreateAccount,
 		apiImportTautulli,
 		apiGetUsers,
+		apiGetServers,
 		apiGetLibraries,
 		apiTriggerLibrarySync,
 		waitForUsers,

@@ -34,6 +34,8 @@ Versions follow the rules shared by all hononeko repositories in [`hononeko/acti
 * `docs:` and `test:` give no release.
 * Every other type gives a **patch** release.
 
+Each release (`cd.yml`) also publishes the Helm chart to `oci://ghcr.io/hononeko/charts/miru` with its `version` and `appVersion` set to the release version. Leave `version: 0.0.0` and `appVersion: edge` in `charts/miru/Chart.yaml`; do not bump them by hand.
+
 ## 4. Repository Structure
 
 ```

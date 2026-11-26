@@ -66,7 +66,7 @@ Open <http://localhost:8080>, complete first-run admin setup, and connect Plex f
 
 ### Kubernetes & Configuration
 
-- **Kubernetes:** [`charts/miru/`](charts/miru/README.md) provides a Helm chart with `restricted` PSS defaults and optional Gateway API `HTTPRoute`, Ingress, `NetworkPolicy`, `ServiceMonitor`, and Grafana dashboard.
+- **Kubernetes:** `helm install miru oci://ghcr.io/hononeko/charts/miru` installs the [Helm chart](charts/miru/README.md), published with every release, with `restricted` PSS defaults and optional Gateway API `HTTPRoute`, Ingress, `NetworkPolicy`, `ServiceMonitor`, and Grafana dashboard.
 - **Configuration:** Every setting is documented with defaults and validation rules in [`docs/environment-variables.md`](docs/environment-variables.md).
 - **Real-time Plex sync:** Subscribes to Plex's WebSocket notification stream (`PLEX_WEBSOCKET_ENABLED=true`) with debounced updates, jittered reconnect backoff, and a fallback reconciler (`PLEX_POLL_INTERVAL_SECONDS=20`), pushing live updates to browsers over SSE.
 - **API & webhooks:** [`docs/compatibility.md`](docs/compatibility.md) lists what stays compatible between releases, and [`docs/webhooks.md`](docs/webhooks.md) describes the webhook payloads and signature.

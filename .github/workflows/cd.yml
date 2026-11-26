@@ -1,8 +1,9 @@
 name: Continuous Delivery & Release
 
 # Promotes the release candidate published by main.yml for this commit to the stable version: publishes its tested
-# layers as X.Y.Z and `latest`, creates the GitHub Release, and prunes old RCs. The image has a config of its own, as
-# the release candidate reports X.Y.Z-rc.N as its version.
+# layers as X.Y.Z and `latest`, publishes the Helm chart X.Y.Z (whose default image is X.Y.Z) to
+# oci://ghcr.io/<owner>/charts/miru, creates the GitHub Release with the packaged chart, and prunes old RCs. The image
+# has a config of its own, as the release candidate reports X.Y.Z-rc.N as its version.
 on:
   workflow_dispatch:
     inputs:
@@ -151,11 +152,54 @@ jobs:
           done
           echo "Tagged \`$DIGEST\` as \`$VERSION\` and \`latest\`" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Set up Helm
+        uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+        with:
+          version: "v4.3.2"
+
+      # The chart in the repository has placeholder versions; the release stamps both, so the chart's default image
+      # is the image promoted above.
+      - name: Package Helm chart
+        run: helm package charts/miru --version "$VERSION" --app-version "$VERSION" --destination "$RUNNER_TEMP/chart"
+
+      - name: Publish Helm chart
+        id: chart
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          chart="$RUNNER_TEMP/chart/miru-$VERSION.tgz"
+          repo="oci://$REGISTRY/$GITHUB_REPOSITORY_OWNER/charts"
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "Dry run: would push $chart to $repo"
+            echo "Dry run: would push the chart \`miru-$VERSION.tgz\` to \`$repo\`" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "$GH_TOKEN" | helm registry login "$REGISTRY" --username "$GITHUB_ACTOR" --password-stdin
+          helm push "$chart" "$repo" | tee "$RUNNER_TEMP/chart-push.txt"
+          digest=$(sed -n 's/^Digest: //p' "$RUNNER_TEMP/chart-push.txt")
+          if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::helm push did not report the digest of $repo/miru:$VERSION"
+            exit 1
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "Pushed the chart \`$repo/miru:$VERSION\` (\`$digest\`)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Attest Helm chart provenance
+        if: ${{ !inputs.dry_run }}
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/miru
+          subject-digest: ${{ steps.chart.outputs.digest }}
+          push-to-registry: true
+
       - name: Tag & create GitHub Release
         if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$VERSION_TAG" --target "$GITHUB_SHA" --title "$VERSION_TAG" --notes-file release-notes.md
+        run: |
+          gh release create "$VERSION_TAG" --target "$GITHUB_SHA" --title "$VERSION_TAG" --notes-file release-notes.md \
+            "$RUNNER_TEMP/chart/miru-$VERSION.tgz"
 
   prune:
     name: Prune Release Candidates

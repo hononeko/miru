@@ -13,6 +13,7 @@ import app.hononeko.miru.http.PlexOAuthPollResponse
 import app.hononeko.miru.http.PlexOAuthStartResponse
 import app.hononeko.miru.http.PlexSelectServerResponse
 import app.hononeko.miru.persistence.model.MediaServerRecord
+import app.hononeko.miru.persistence.model.findActiveStoredServer
 import app.hononeko.miru.persistence.repository.MediaServerRepository
 import arrow.core.Either
 import arrow.core.raise.either
@@ -55,16 +56,14 @@ class PlexOAuthService(
     }
 
     private val sessionsMutex = Mutex()
+    private val selectMutex = Mutex()
     private val sessions = linkedMapOf<Long, PinSession>()
 
     suspend fun getConnectionStatus(): Either<MiruError, PlexConnectionStatus> =
         either {
             val encryptionKeyConfigured = CredentialCrypto.isValidKey(plexConfig.encryptionKey)
             val allServers = mediaServerRepository.findAll().bind()
-            val storedServer =
-                allServers.firstOrNull { server ->
-                    server.serverType.equals("plex", ignoreCase = true) && !server.encryptedToken.isNullOrBlank()
-                }
+            val storedServer = allServers.findActiveStoredServer("plex")
 
             val source =
                 when {
@@ -315,49 +314,76 @@ class PlexOAuthService(
                     ?: authToken
             val encryptedToken = CredentialCrypto.encrypt(tokenToStore, encryptionKey).bind()
 
-            val nowMs = clock()
-            val existing = mediaServerRepository.findByMachineId(selectedServer.machineId).bind()
-            val savedRecord =
-                mediaServerRepository
-                    .upsert(
-                        MediaServerRecord(
-                            id = existing?.id ?: idGenerator(),
-                            name = selectedServer.name,
-                            serverType = "plex",
-                            machineId = selectedServer.machineId,
-                            baseUrl = normalizedUri,
-                            encryptedToken = encryptedToken,
-                            clientIdentifier = clientIdentifier,
-                            createdAtMs = existing?.createdAtMs ?: nowMs,
-                            updatedAtMs = nowMs,
-                        ),
-                    ).bind()
+            persistAndActivateSelection(
+                resolvedPinId = resolvedPinId,
+                selectedServer = selectedServer,
+                normalizedUri = normalizedUri,
+                encryptedToken = encryptedToken,
+                clientIdentifier = clientIdentifier,
+            ).bind()
+        }
 
-            sessionsMutex.withLock {
-                sessions.remove(resolvedPinId)
-            }
+    private suspend fun persistAndActivateSelection(
+        resolvedPinId: Long,
+        selectedServer: DiscoveredPlexServer,
+        normalizedUri: String,
+        encryptedToken: String,
+        clientIdentifier: String,
+    ): Either<MiruError, PlexSelectServerResponse> =
+        selectMutex.withLock {
+            either {
+                val nowMs = clock()
+                val existing = mediaServerRepository.findByMachineId(selectedServer.machineId).bind()
+                val savedRecord =
+                    mediaServerRepository
+                        .upsertExclusiveStoredCredentials(
+                            MediaServerRecord(
+                                id = existing?.id ?: idGenerator(),
+                                name = selectedServer.name,
+                                serverType = "plex",
+                                machineId = selectedServer.machineId,
+                                baseUrl = normalizedUri,
+                                encryptedToken = encryptedToken,
+                                clientIdentifier = clientIdentifier,
+                                createdAtMs = existing?.createdAtMs ?: nowMs,
+                                updatedAtMs = nowMs,
+                            ),
+                        ).bind()
 
-            if (plexConfig.isStaticConfigured) {
-                PlexSelectServerResponse(
-                    saved = true,
-                    hotReloaded = false,
-                    envOverrideActive = true,
-                    serverName = savedRecord.name,
-                    machineId = savedRecord.machineId,
-                    baseUrl = savedRecord.baseUrl,
-                    credentialSource = PlexCredentialSource.ENV_OVERRIDE,
-                )
-            } else {
-                val reloaded = runtimeManager.reloadFromStoredCredentials().bind()
-                PlexSelectServerResponse(
-                    saved = true,
-                    hotReloaded = reloaded,
-                    envOverrideActive = false,
-                    serverName = savedRecord.name,
-                    machineId = savedRecord.machineId,
-                    baseUrl = savedRecord.baseUrl,
-                    credentialSource = PlexCredentialSource.STORED_ENCRYPTED,
-                )
+                sessionsMutex.withLock {
+                    sessions.remove(resolvedPinId)
+                }
+
+                if (plexConfig.isStaticConfigured) {
+                    PlexSelectServerResponse(
+                        saved = true,
+                        hotReloaded = false,
+                        envOverrideActive = true,
+                        serverName = savedRecord.name,
+                        machineId = savedRecord.machineId,
+                        baseUrl = savedRecord.baseUrl,
+                        credentialSource = PlexCredentialSource.ENV_OVERRIDE,
+                    )
+                } else {
+                    val reloaded = runtimeManager.reloadFromStoredCredentials().bind()
+                    val activatedRecord =
+                        if (reloaded) {
+                            runtimeManager.currentMachineId()?.let { activeMachineId ->
+                                mediaServerRepository.findByMachineId(activeMachineId).bind()
+                            } ?: savedRecord
+                        } else {
+                            savedRecord
+                        }
+                    PlexSelectServerResponse(
+                        saved = true,
+                        hotReloaded = reloaded,
+                        envOverrideActive = false,
+                        serverName = activatedRecord.name,
+                        machineId = activatedRecord.machineId,
+                        baseUrl = activatedRecord.baseUrl,
+                        credentialSource = PlexCredentialSource.STORED_ENCRYPTED,
+                    )
+                }
             }
         }
 

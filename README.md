@@ -66,12 +66,12 @@ Open <http://localhost:8080>, complete first-run admin setup, and connect Plex f
 
 ### Kubernetes & Configuration
 
-- **Kubernetes:** [`docs/k8s/`](docs/k8s/README.md) provides `restricted` PSS Kustomize manifests with optional Gateway API route, Ingress, and `NetworkPolicy`.
+- **Kubernetes:** [`charts/miru/`](charts/miru/README.md) provides a Helm chart with `restricted` PSS defaults and optional Gateway API `HTTPRoute`, Ingress, `NetworkPolicy`, `ServiceMonitor`, and Grafana dashboard.
 - **Configuration:** Every setting is documented with defaults and validation rules in [`docs/environment-variables.md`](docs/environment-variables.md).
 - **Real-time Plex sync:** Subscribes to Plex's WebSocket notification stream (`PLEX_WEBSOCKET_ENABLED=true`) with debounced updates, jittered reconnect backoff, and a fallback reconciler (`PLEX_POLL_INTERVAL_SECONDS=20`), pushing live updates to browsers over SSE.
 - **API & webhooks:** [`docs/compatibility.md`](docs/compatibility.md) lists what stays compatible between releases, and [`docs/webhooks.md`](docs/webhooks.md) describes the webhook payloads and signature.
 - **Kometa & Tautulli API:** Kometa and similar tools can read from Miru instead of Tautulli, see [`docs/tautulli-api.md`](docs/tautulli-api.md).
-- **Prometheus & Grafana:** Set `METRICS_ENABLED=true` to expose Prometheus metrics at `GET /metrics` (default port `9090`); see [`docs/k8s/servicemonitor.yaml`](docs/k8s/servicemonitor.yaml) and [`docs/grafana/miru-dashboard.json`](docs/grafana/miru-dashboard.json).
+- **Prometheus & Grafana:** Set `METRICS_ENABLED=true` to expose Prometheus metrics at `GET /metrics` (default port `9090`); see [`charts/miru/templates/servicemonitor.yaml`](charts/miru/templates/servicemonitor.yaml) and [`docs/grafana/miru-dashboard.json`](docs/grafana/miru-dashboard.json).
 - **System endpoints:** `GET /healthz` (liveness), `GET /readyz` (readiness), `GET /metrics` (opt-in Prometheus metrics), `GET /api/v1/openapi.yaml` (OpenAPI 3.1 contract).
 
 ## Development

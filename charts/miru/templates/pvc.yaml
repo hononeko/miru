@@ -1,0 +1,29 @@
+{{- if and (include "miru.persistenceEnabled" .) (not .Values.persistence.existingClaim) -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "miru.fullname" . }}-data
+  labels:
+    {{- include "miru.labels" . | nindent 4 }}
+  {{- if or .Values.persistence.keep .Values.persistence.annotations }}
+  annotations:
+    {{- if .Values.persistence.keep }}
+    # Keep the playback history when the release is uninstalled.
+    helm.sh/resource-policy: keep
+    {{- end }}
+    {{- with .Values.persistence.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
+spec:
+  accessModes:
+    {{- range .Values.persistence.accessModes }}
+    - {{ . | quote }}
+    {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size | quote }}
+  {{- if .Values.persistence.storageClassName }}
+  storageClassName: {{ .Values.persistence.storageClassName | quote }}
+  {{- end }}
+{{- end }}

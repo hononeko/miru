@@ -1,0 +1,22 @@
+{{- /*
+The dedicated metrics port gets a ClusterIP Service of its own, so /metrics stays inside the cluster
+even when service.type is LoadBalancer or NodePort.
+*/ -}}
+{{- if include "miru.dedicatedMetricsPort" . -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "miru.metricsServiceName" . }}
+  labels:
+    {{- include "miru.labels" . | nindent 4 }}
+    app.kubernetes.io/component: metrics
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.service.metricsPort }}
+      targetPort: metrics
+      protocol: TCP
+      name: metrics
+  selector:
+    {{- include "miru.selectorLabels" . | nindent 4 }}
+{{- end }}

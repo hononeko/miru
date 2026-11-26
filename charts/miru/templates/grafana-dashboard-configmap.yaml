@@ -1,0 +1,21 @@
+{{- if and .Values.metrics.enabled .Values.metrics.grafanaDashboard.enabled -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "miru.fullname" . }}-grafana-dashboard
+  {{- with .Values.metrics.grafanaDashboard.namespace }}
+  namespace: {{ . }}
+  {{- end }}
+  labels:
+    {{- include "miru.labels" . | nindent 4 }}
+    {{- with .Values.metrics.grafanaDashboard.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.metrics.grafanaDashboard.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  miru-dashboard.json: |-
+    {{- .Files.Get "files/miru-dashboard.json" | nindent 4 }}
+{{- end }}

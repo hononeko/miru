@@ -43,10 +43,11 @@ Versions follow the rules shared by all hononeko repositories in [`hononeko/acti
 ├── .github/
 │   ├── codeql/codeql-config.yml  # CodeQL Actions security config
 │   └── workflows/                # PR, Main, Image, Version, CD & CodeQL CI
+├── charts/
+│   └── miru/                     # Helm chart for Kubernetes deployments
 ├── config/detekt/detekt.yml      # Detekt rules
 ├── docs/
 │   ├── screenshots/              # README screenshots
-│   ├── k8s/                      # Example Kustomize manifests (documentation only, not deployed)
 │   ├── docker-compose.yml        # Example Docker Compose setup (documentation only)
 │   └── environment-variables.md  # Reference for every configuration variable
 ├── gradle/libs.versions.toml     # Dependency version catalog

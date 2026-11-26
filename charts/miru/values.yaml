@@ -1,0 +1,295 @@
+# Default values for miru.
+# This is a YAML-formatted file.
+
+# -- 0 or 1. Each Miru pod connects to the media servers and records playback history on its own,
+# with no leader election, so a second pod would record every stream twice. The schema rejects values above 1.
+replicaCount: 1
+
+# -- Recreate lets the new pod attach the ReadWriteOnce SQLite volume after the old pod stops; the chart
+# refuses RollingUpdate with SQLite persistence. With PostgreSQL (database.engine=postgres), RollingUpdate keeps
+# the UI up during upgrades, but the old and new pod both track sessions for a few seconds, so a stream that
+# ends in that window can be recorded twice.
+strategy:
+  type: Recreate
+
+image:
+  repository: ghcr.io/hononeko/miru
+  pullPolicy: IfNotPresent
+  # -- Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # -- Specifies whether a ServiceAccount should be created.
+  create: true
+  # -- Automatically mount a ServiceAccount's API credentials.
+  automount: false
+  annotations: {}
+  # -- Name of the ServiceAccount to use; generated from fullname template if unset.
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+# -- Restricted Pod Security Standard defaults matching the Distroless nonroot container (UID/GID 10001).
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  seccompProfile:
+    type: RuntimeDefault
+  capabilities:
+    drop:
+      - ALL
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+livenessProbe:
+  enabled: true
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+readinessProbe:
+  enabled: true
+  httpGet:
+    path: /readyz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+service:
+  type: ClusterIP
+  port: 8080
+  # -- Port of the separate ClusterIP `<fullname>-metrics` Service, used when metrics.port differs from server.port.
+  metricsPort: 9090
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: miru.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: miru-tls
+  #    hosts:
+  #      - miru.example.com
+
+# -- Gateway API HTTPRoute (gateway.networking.k8s.io/v1).
+httpRoute:
+  enabled: false
+  annotations: {}
+  parentRefs:
+    - name: gateway
+      namespace: gateway-system
+  hostnames:
+    - miru.example.com
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+
+# -- NetworkPolicy limiting inbound ports and outbound traffic to DNS, media servers, HTTPS, and PostgreSQL.
+networkPolicy:
+  enabled: false
+  # -- Optional pod/namespace selectors for inbound web traffic; empty allows all sources on the http port.
+  ingressFrom: []
+  # -- Optional pod/namespace selectors for inbound metrics scraping; empty allows all sources on the metrics port.
+  metricsFrom: []
+  egress:
+    plex:
+      enabled: true
+      port: 32400
+    jellyfin:
+      # -- On by default, like Plex, so a Jellyfin server connected from the Admin UI is reachable. Set to false if you do not use Jellyfin.
+      enabled: true
+      port: 8096
+    https:
+      enabled: true
+      port: 443
+    postgres:
+      # -- Enabled automatically when database.engine is postgres/postgresql, or set explicitly to true.
+      enabled: false
+      port: 5432
+  extraIngress: []
+  extraEgress: []
+
+# -- Persistent storage for SQLite. Disabled automatically when database.engine is postgres/postgresql.
+persistence:
+  enabled: true
+  existingClaim: ""
+  storageClassName: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 1Gi
+  # -- Adds `helm.sh/resource-policy: keep`, so `helm uninstall` leaves the claim (and the playback history) in place.
+  # Reinstalling with the same release name and namespace picks it up again.
+  keep: true
+  annotations: {}
+
+# -- Name of a pre-existing Secret (External Secrets, Sealed Secrets, SOPS, etc.) containing Miru secret env vars:
+# AUTH_SESSION_SECRET, MIRU_ENCRYPTION_KEY, PLEX_TOKEN, JELLYFIN_API_KEY, DATABASE_PASSWORD, OIDC_CLIENT_SECRET and
+# MIRU_ADMIN_PASSWORD. When set, the chart creates no Secret and refuses to render if any of those values is also
+# set here. Settings that are not secret (database.postgres.url/user, auth.adminUsername) still come from these values.
+existingSecret: ""
+
+# -- Server configuration (MIRU_*).
+server:
+  host: "0.0.0.0"
+  port: 8080
+  corsAllowedOrigins: ""
+  trustProxyHeaders: false
+
+# -- Logging configuration (LOG_LEVEL, ROOT_LOG_LEVEL): TRACE, DEBUG, INFO, WARN or ERROR, in either case.
+logging:
+  level: INFO
+  rootLevel: INFO
+
+# -- Database configuration (sqlite or postgres).
+database:
+  engine: sqlite
+  sqlite:
+    path: /data/miru.db
+  postgres:
+    # -- JDBC URL, e.g. jdbc:postgresql://postgres.database.svc:5432/miru. Written to the ConfigMap, so keep the password out of it.
+    url: ""
+    user: ""
+    # -- PostgreSQL password. Prefer existingSecret; otherwise pass via --set or an external values file.
+    # password: ""
+    maxPoolSize: 10
+
+# -- Security keys.
+security:
+  # -- Encrypts Plex credentials & webhook secrets saved in the DB (at least 32 chars, e.g. `openssl rand -base64 48`).
+  # When empty on an upgrade, the value from the Secret the chart created earlier is kept: a new key cannot read
+  # the credentials saved with the old one.
+  encryptionKey: ""
+
+# -- Plex server configuration. Leave url & token unset to sign in via the Admin UI.
+plex:
+  url: ""
+  token: ""
+  pollIntervalSeconds: 20
+  websocketEnabled: true
+  clientIdentifier: ""
+  tvBaseUrl: ""
+
+# -- Jellyfin server configuration.
+jellyfin:
+  url: ""
+  apiKey: ""
+  pollIntervalSeconds: 20
+  websocketEnabled: true
+  clientIdentifier: ""
+
+# -- Playback history settings.
+session:
+  minPlayDurationSeconds: 120
+  resumeMergeWindowSeconds: 120
+  watchedThresholdPercent: 85
+
+# -- Read-only Tautulli compatibility API (/api/v2).
+tautulliCompat:
+  enabled: false
+
+# -- Prometheus metrics endpoint & monitoring resources.
+metrics:
+  enabled: false
+  host: "0.0.0.0"
+  port: 9090
+  serviceMonitor:
+    enabled: false
+    # -- Namespace for the ServiceMonitor, e.g. where Prometheus runs. The chart then adds a namespaceSelector for the release namespace.
+    namespace: ""
+    labels: {}
+    annotations: {}
+    interval: 30s
+    scrapeTimeout: 10s
+  grafanaDashboard:
+    enabled: false
+    namespace: ""
+    labels:
+      grafana_dashboard: "1"
+    annotations: {}
+
+# -- Automated stream guardrails.
+guardrails:
+  transcode4k:
+    mode: disabled
+    message: ""
+  pausedTimeout:
+    mode: disabled
+    minutes: 30
+    message: ""
+  concurrentStreams:
+    mode: disabled
+    max: 2
+    message: ""
+
+# -- Authentication & OIDC configuration.
+auth:
+  mode: local
+  # -- Signs session cookies (at least 32 chars, e.g. `openssl rand -base64 48`). Required unless auth.mode=none.
+  # When empty on an upgrade, the value from the Secret the chart created earlier is kept.
+  sessionSecret: ""
+  allowLocalLogin: true
+  # -- auto, true (always) or false (never).
+  cookieSecure: auto
+  # -- Optional bootstrap admin account created on startup if no admin exists yet. Written to the ConfigMap.
+  adminUsername: ""
+  # -- Bootstrap admin password. Prefer existingSecret; otherwise pass via --set or an external values file.
+  # adminPassword: ""
+  rateLimit:
+    enabled: true
+    windowSeconds: 60
+    loginMaxAttempts: 20
+    accountMaxFailures: 10
+    setupMaxAttempts: 10
+  oidc:
+    enabled: false
+    issuerUrl: ""
+    clientId: ""
+    clientSecret: ""
+    redirectUri: ""
+    displayName: SSO
+    scopes: openid,profile,email,groups
+    groupsClaim: groups
+    adminGroups: ""
+    userGroups: ""
+    autoLinkByEmail: true
+    postLogoutRedirectUri: ""
+
+# -- Additional environment variables appended to the Miru container.
+extraEnv: []
+
+# -- Additional envFrom entries (ConfigMap/Secret refs) appended to the Miru container.
+extraEnvFrom: []
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

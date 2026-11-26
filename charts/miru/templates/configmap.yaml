@@ -1,0 +1,101 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "miru.fullname" . }}-config
+  labels:
+    {{- include "miru.labels" . | nindent 4 }}
+data:
+  MIRU_HOST: {{ .Values.server.host | quote }}
+  MIRU_PORT: {{ .Values.server.port | quote }}
+  MIRU_TRUST_PROXY_HEADERS: {{ .Values.server.trustProxyHeaders | quote }}
+  {{- if .Values.server.corsAllowedOrigins }}
+  MIRU_CORS_ALLOWED_ORIGINS: {{ .Values.server.corsAllowedOrigins | quote }}
+  {{- end }}
+  LOG_LEVEL: {{ .Values.logging.level | quote }}
+  ROOT_LOG_LEVEL: {{ .Values.logging.rootLevel | quote }}
+  DB_ENGINE: {{ .Values.database.engine | quote }}
+  {{- if eq (lower .Values.database.engine) "sqlite" }}
+  SQLITE_PATH: {{ .Values.database.sqlite.path | quote }}
+  {{- else }}
+  {{- with .Values.database.postgres.url }}
+  DATABASE_URL: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.database.postgres.user }}
+  DATABASE_USER: {{ . | quote }}
+  {{- end }}
+  DATABASE_MAX_POOL_SIZE: {{ .Values.database.postgres.maxPoolSize | quote }}
+  {{- end }}
+  {{- if .Values.plex.url }}
+  PLEX_URL: {{ .Values.plex.url | quote }}
+  {{- end }}
+  PLEX_POLL_INTERVAL_SECONDS: {{ .Values.plex.pollIntervalSeconds | quote }}
+  PLEX_WEBSOCKET_ENABLED: {{ .Values.plex.websocketEnabled | quote }}
+  {{- if .Values.plex.clientIdentifier }}
+  PLEX_CLIENT_IDENTIFIER: {{ .Values.plex.clientIdentifier | quote }}
+  {{- end }}
+  {{- if .Values.plex.tvBaseUrl }}
+  PLEX_TV_BASE_URL: {{ .Values.plex.tvBaseUrl | quote }}
+  {{- end }}
+  {{- if .Values.jellyfin.url }}
+  JELLYFIN_URL: {{ .Values.jellyfin.url | quote }}
+  {{- end }}
+  JELLYFIN_POLL_INTERVAL_SECONDS: {{ .Values.jellyfin.pollIntervalSeconds | quote }}
+  JELLYFIN_WEBSOCKET_ENABLED: {{ .Values.jellyfin.websocketEnabled | quote }}
+  {{- if .Values.jellyfin.clientIdentifier }}
+  JELLYFIN_CLIENT_IDENTIFIER: {{ .Values.jellyfin.clientIdentifier | quote }}
+  {{- end }}
+  MIN_PLAY_DURATION_SECONDS: {{ .Values.session.minPlayDurationSeconds | quote }}
+  RESUME_MERGE_WINDOW_SECONDS: {{ .Values.session.resumeMergeWindowSeconds | quote }}
+  WATCHED_THRESHOLD_PERCENT: {{ .Values.session.watchedThresholdPercent | quote }}
+  ENABLE_TAUTULLI_COMPAT_API: {{ .Values.tautulliCompat.enabled | quote }}
+  METRICS_ENABLED: {{ .Values.metrics.enabled | quote }}
+  METRICS_HOST: {{ .Values.metrics.host | quote }}
+  METRICS_PORT: {{ .Values.metrics.port | quote }}
+  GUARDRAIL_4K_TRANSCODE_MODE: {{ .Values.guardrails.transcode4k.mode | quote }}
+  {{- if .Values.guardrails.transcode4k.message }}
+  GUARDRAIL_4K_TRANSCODE_MESSAGE: {{ .Values.guardrails.transcode4k.message | quote }}
+  {{- end }}
+  GUARDRAIL_PAUSED_TIMEOUT_MODE: {{ .Values.guardrails.pausedTimeout.mode | quote }}
+  GUARDRAIL_PAUSED_TIMEOUT_MINUTES: {{ .Values.guardrails.pausedTimeout.minutes | quote }}
+  {{- if .Values.guardrails.pausedTimeout.message }}
+  GUARDRAIL_PAUSED_TIMEOUT_MESSAGE: {{ .Values.guardrails.pausedTimeout.message | quote }}
+  {{- end }}
+  GUARDRAIL_CONCURRENT_STREAMS_MODE: {{ .Values.guardrails.concurrentStreams.mode | quote }}
+  GUARDRAIL_CONCURRENT_STREAMS_MAX: {{ .Values.guardrails.concurrentStreams.max | quote }}
+  {{- if .Values.guardrails.concurrentStreams.message }}
+  GUARDRAIL_CONCURRENT_STREAMS_MESSAGE: {{ .Values.guardrails.concurrentStreams.message | quote }}
+  {{- end }}
+  AUTH_MODE: {{ .Values.auth.mode | quote }}
+  AUTH_ALLOW_LOCAL_LOGIN: {{ .Values.auth.allowLocalLogin | quote }}
+  {{- with .Values.auth.adminUsername }}
+  MIRU_ADMIN_USERNAME: {{ . | quote }}
+  {{- end }}
+  AUTH_COOKIE_SECURE: {{ .Values.auth.cookieSecure | quote }}
+  AUTH_RATE_LIMIT_ENABLED: {{ .Values.auth.rateLimit.enabled | quote }}
+  AUTH_RATE_LIMIT_WINDOW_SECONDS: {{ .Values.auth.rateLimit.windowSeconds | quote }}
+  AUTH_RATE_LIMIT_LOGIN_MAX_ATTEMPTS: {{ .Values.auth.rateLimit.loginMaxAttempts | quote }}
+  AUTH_RATE_LIMIT_ACCOUNT_MAX_FAILURES: {{ .Values.auth.rateLimit.accountMaxFailures | quote }}
+  AUTH_RATE_LIMIT_SETUP_MAX_ATTEMPTS: {{ .Values.auth.rateLimit.setupMaxAttempts | quote }}
+  OIDC_ENABLED: {{ or .Values.auth.oidc.enabled (eq (lower .Values.auth.mode) "oidc") | quote }}
+  {{- if .Values.auth.oidc.issuerUrl }}
+  OIDC_ISSUER_URL: {{ .Values.auth.oidc.issuerUrl | quote }}
+  {{- end }}
+  {{- if .Values.auth.oidc.clientId }}
+  OIDC_CLIENT_ID: {{ .Values.auth.oidc.clientId | quote }}
+  {{- end }}
+  {{- if .Values.auth.oidc.redirectUri }}
+  OIDC_REDIRECT_URI: {{ .Values.auth.oidc.redirectUri | quote }}
+  {{- end }}
+  OIDC_DISPLAY_NAME: {{ .Values.auth.oidc.displayName | quote }}
+  OIDC_SCOPES: {{ .Values.auth.oidc.scopes | quote }}
+  OIDC_GROUPS_CLAIM: {{ .Values.auth.oidc.groupsClaim | quote }}
+  {{- if .Values.auth.oidc.adminGroups }}
+  OIDC_ADMIN_GROUPS: {{ .Values.auth.oidc.adminGroups | quote }}
+  {{- end }}
+  {{- if .Values.auth.oidc.userGroups }}
+  OIDC_USER_GROUPS: {{ .Values.auth.oidc.userGroups | quote }}
+  {{- end }}
+  OIDC_AUTO_LINK_BY_EMAIL: {{ .Values.auth.oidc.autoLinkByEmail | quote }}
+  {{- if .Values.auth.oidc.postLogoutRedirectUri }}
+  OIDC_POST_LOGOUT_REDIRECT_URI: {{ .Values.auth.oidc.postLogoutRedirectUri | quote }}
+  {{- end }}

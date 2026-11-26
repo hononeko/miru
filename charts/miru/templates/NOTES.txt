@@ -1,0 +1,30 @@
+1. Check that Miru is running:
+   kubectl -n {{ .Release.Namespace }} rollout status deployment/{{ include "miru.fullname" . }}
+
+2. Get the application URL:
+{{- if .Values.httpRoute.enabled }}
+{{- range .Values.httpRoute.hostnames }}
+   https://{{ . }}
+{{- end }}
+{{- else if .Values.ingress.enabled }}
+{{- range $host := .Values.ingress.hosts }}
+  {{- range .paths }}
+   http{{ if $.Values.ingress.tls }}s{{ end }}://{{ $host.host }}{{ .path }}
+  {{- end }}
+{{- end }}
+{{- else }}
+   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "miru.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+   Then open http://127.0.0.1:{{ .Values.service.port }}
+{{- end }}
+
+{{- if and .Values.metrics.enabled (include "miru.dedicatedMetricsPort" .) }}
+
+3. Prometheus metrics are served inside the cluster only, at:
+   http://{{ include "miru.metricsServiceName" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.metricsPort }}/metrics
+{{- end }}
+
+{{- if and (include "miru.persistenceEnabled" .) .Values.persistence.keep (not .Values.persistence.existingClaim) }}
+
+NOTE: `helm uninstall` keeps the {{ include "miru.fullname" . }}-data PersistentVolumeClaim and the playback history on it.
+Delete it with: kubectl -n {{ .Release.Namespace }} delete pvc {{ include "miru.fullname" . }}-data
+{{- end }}

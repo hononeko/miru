@@ -6,7 +6,7 @@ Miru validates every setting on startup. If any are invalid, it logs each proble
 
 A variable that is empty or contains only whitespace counts as unset. Apart from the logging and container image variables, each setting can also be given by its key in [`application.conf`](../src/main/resources/application.conf), for example `miru.server.port`; the environment variable takes precedence.
 
-For examples, see [`docker-compose.yml`](docker-compose.yml), the [Kubernetes manifests](k8s/README.md) and [`.env.example`](../.env.example) for local development.
+For examples, see [`docker-compose.yml`](docker-compose.yml), the [Helm chart](../charts/miru/README.md) and [`.env.example`](../.env.example) for local development.
 
 ## Server
 

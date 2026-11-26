@@ -1,0 +1,21 @@
+apiVersion: v2
+name: miru
+description: Lightweight, security-hardened media server telemetry, live stream monitor, playback history tracker, and library analytics engine for Plex and Jellyfin.
+type: application
+version: 0.1.0
+# The image tag used when image.tag is empty. 1.0.0 has no Jellyfin, metrics or Tautulli API support, so this is
+# the release that ships this chart.
+appVersion: "1.1.0"
+home: https://github.com/hononeko/miru
+sources:
+  - https://github.com/hononeko/miru
+keywords:
+  - miru
+  - plex
+  - jellyfin
+  - media
+  - telemetry
+  - monitoring
+maintainers:
+  - name: hononeko
+    url: https://github.com/hononeko

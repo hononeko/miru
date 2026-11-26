@@ -32,6 +32,7 @@
 		void authStore.init();
 		return () => {
 			streamsStore.disconnect();
+			serversStore.stopPolling();
 		};
 	});
 
@@ -63,8 +64,9 @@
 		if (preferencesStore.loadedAccountId !== accountKey) {
 			void preferencesStore.loadForAccount(accountKey);
 		}
-		if (!authStore.isUnlinkedUser && !serversStore.loaded) {
-			void serversStore.refresh();
+		if (!authStore.isUnlinkedUser) {
+			if (!serversStore.loaded) void serversStore.refresh();
+			serversStore.startPolling();
 		}
 
 		if (pathname === '/login' || pathname === '/setup') {

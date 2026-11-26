@@ -332,6 +332,7 @@ export async function startMockJellyfinServer(options: MockJellyfinOptions = {})
 	const terminatedSessions: TerminatedJellyfinSession[] = [];
 	const wsClients = new Set<WebSocket>();
 	const wsWaiters: Array<() => void> = [];
+	let stopped = false;
 	let sessionsStartCount = 0;
 	let keepAliveCount = 0;
 	let quickConnectEnabled = options.quickConnectEnabled ?? true;
@@ -821,6 +822,9 @@ export async function startMockJellyfinServer(options: MockJellyfinOptions = {})
 			});
 		},
 		async stop() {
+			// Safe to call twice: a test may stop the server to simulate an outage before afterAll does
+			if (stopped) return;
+			stopped = true;
 			for (const client of wsClients) {
 				client.terminate();
 			}

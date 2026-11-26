@@ -17,6 +17,8 @@
 	import MiruLogo from './MiruLogo.svelte';
 	import Badge from '$components/ui/Badge.svelte';
 	import ProxiedImage from '$components/miru/ProxiedImage.svelte';
+	import ServerStatusList from '$components/miru/ServerStatusList.svelte';
+	import ServerStatusPopover from '$components/miru/ServerStatusPopover.svelte';
 	import SignOutConfirmation from '$components/miru/SignOutConfirmation.svelte';
 	import UserPreferencesModal from '$components/miru/UserPreferencesModal.svelte';
 	import MediaDetailsModal from '$components/miru/MediaDetailsModal.svelte';
@@ -86,21 +88,17 @@
 		return 'OFFLINE';
 	});
 
-	const telemetryTargetLabel = $derived.by(() => {
-		if (serversStore.hasMultipleServers) {
-			const configured = serversStore.configuredServers;
-			const online = configured.filter((s) => s.reachable).length;
-			return `${online}/${configured.length} Servers`;
-		}
-		return streamsStore.serverName ?? 'Telemetry';
-	});
+	const telemetryTargetLabel = $derived(streamsStore.serverName ?? 'Telemetry');
 
-	const telemetryTargetTitle = $derived.by(() => {
-		if (serversStore.hasMultipleServers) {
-			return serversStore.servers.map((s) => `${s.name} (${s.serverType})`).join(', ');
-		}
-		return streamsStore.serverName ?? 'Telemetry';
-	});
+	const sseDotClass = $derived(
+		streamsStore.status === 'connected'
+			? 'bg-direct-play'
+			: streamsStore.status === 'offline'
+				? 'bg-danger'
+				: 'bg-warning animate-pulse'
+	);
+
+	const sseStatusLabel = $derived(streamsStore.status === 'connected' ? 'SSE' : streamsStore.status);
 
 	function handleSignOutOpenChange(open: boolean) {
 		if (!authStore.loggingOut) signOutOpen = open;
@@ -162,26 +160,40 @@
 		</div>
 
 		<div class="flex flex-col gap-2.5">
-			<div class="flex items-center justify-between gap-2 rounded-lg border border-border bg-canvas px-3 py-2">
-				<span class="flex min-w-0 items-center gap-2 font-heading text-[11px] font-semibold text-fg-primary">
-					<span
-						class={cn(
-							'h-2 w-2 shrink-0 rounded-full',
-							streamsStore.status === 'connected'
-								? 'bg-direct-play'
-								: streamsStore.status === 'offline'
-									? 'bg-danger'
-									: 'bg-warning animate-pulse'
-						)}
-					></span>
-					<span class="truncate" title={telemetryTargetTitle}>
-						{telemetryTargetLabel}
+			{#if serversStore.hasMultipleServers}
+				<div class="flex flex-col rounded-lg border border-border bg-canvas" data-testid="sidebar-server-status">
+					<div class="flex flex-col gap-2 px-3 pt-2 pb-2.5">
+						<p class="font-heading text-[10px] font-semibold tracking-wider text-fg-muted uppercase">
+							Media servers
+						</p>
+						<ServerStatusList servers={serversStore.configuredServers} stale={serversStore.stale} />
+					</div>
+					<div
+						class="flex items-center justify-between gap-2 border-t border-border px-3 py-2"
+						title="Miru's live connection to this browser"
+					>
+						<span class="flex min-w-0 items-center gap-2 font-heading text-[11px] font-semibold text-fg-primary">
+							<span class={cn('h-2 w-2 shrink-0 rounded-full', sseDotClass)}></span>
+							<span class="truncate">Live updates</span>
+						</span>
+						<span class="shrink-0 font-mono text-[10px] font-semibold uppercase text-fg-secondary">
+							{sseStatusLabel}
+						</span>
+					</div>
+				</div>
+			{:else}
+				<div class="flex items-center justify-between gap-2 rounded-lg border border-border bg-canvas px-3 py-2">
+					<span class="flex min-w-0 items-center gap-2 font-heading text-[11px] font-semibold text-fg-primary">
+						<span class={cn('h-2 w-2 shrink-0 rounded-full', sseDotClass)}></span>
+						<span class="truncate" title={telemetryTargetLabel}>
+							{telemetryTargetLabel}
+						</span>
 					</span>
-				</span>
-				<span class="shrink-0 font-mono text-[10px] font-semibold uppercase text-fg-secondary">
-					{streamsStore.status === 'connected' ? 'SSE' : streamsStore.status}
-				</span>
-			</div>
+					<span class="shrink-0 font-mono text-[10px] font-semibold uppercase text-fg-secondary">
+						{sseStatusLabel}
+					</span>
+				</div>
+			{/if}
 
 			<div class="flex items-center justify-between gap-1 rounded-lg border border-border bg-elevated px-2 py-1.5">
 				<button
@@ -337,11 +349,14 @@
 		<header
 			class="sticky top-0 z-30 flex items-center justify-between border-b border-border bg-surface/95 px-4 py-3 backdrop-blur-md md:hidden"
 		>
-			<a href="/" class="group flex items-center gap-2">
+			<a href="/" class="group flex shrink-0 items-center gap-2">
 				<MiruLogo size={26} />
 				<span class="font-display text-lg font-bold tracking-wide text-fg-primary">Miru</span>
 			</a>
-			<div class="flex items-center gap-2">
+			<div class="flex min-w-0 items-center gap-2">
+				{#if serversStore.hasMultipleServers}
+					<ServerStatusPopover servers={serversStore.configuredServers} stale={serversStore.stale} />
+				{/if}
 				<Badge tone={sseTone} dot pulse={streamsStore.status === 'connected'} mono>
 					{sseShortLabel}
 				</Badge>

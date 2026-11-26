@@ -270,4 +270,41 @@ test.describe.serial('Multi-server Plex + Jellyfin E2E (live SSE, artwork proxy,
 			await scopedCtx.close();
 		}
 	});
+
+	// Runs last: it stops the mock Jellyfin server to simulate an outage
+	test('shows per-server status in the sidebar and mobile header, and marks only the server that goes down as Offline', async ({
+		page
+	}) => {
+		test.setTimeout(120_000);
+		await loginViaUi(page, miru.baseUrl, E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
+
+		const sidebar = page.getByTestId('sidebar-server-status');
+		const plexRow = sidebar.locator('li').filter({ hasText: 'Miru Lab Plex' });
+		const jfRow = sidebar.locator('li').filter({ hasText: 'Studio Jellyfin' });
+		await expect(plexRow).toHaveAttribute('data-status', 'live');
+		await expect(jfRow).toHaveAttribute('data-status', 'live');
+		await expect(plexRow).toContainText('PLEX');
+		await expect(jfRow).toContainText('JELLYFIN');
+		await expect(sidebar).toContainText('Live updates');
+		await expect(page.getByText(/\d+\/\d+ Servers/)).toHaveCount(0);
+
+		await mockJellyfin.stop();
+
+		// Miru notices on its next Jellyfin poll; the page picks it up on its next status refresh (30 s)
+		await expect(jfRow).toHaveAttribute('data-status', 'offline', { timeout: 75_000 });
+		await expect(jfRow).toContainText('Offline');
+		await expect(plexRow).toHaveAttribute('data-status', 'live');
+		await expect(sidebar).toContainText('SSE');
+
+		await page.setViewportSize({ width: 375, height: 800 });
+		const mobileTrigger = page.getByRole('button', { name: /^Media server status:/ });
+		await expect(mobileTrigger).toHaveAttribute(
+			'aria-label',
+			'Media server status: Miru Lab Plex Live, Studio Jellyfin Offline'
+		);
+		await mobileTrigger.click();
+		const popoverList = page.getByRole('dialog').getByRole('list', { name: 'Media server status' });
+		await expect(popoverList.locator('li[data-status="offline"]')).toContainText('Studio Jellyfin');
+		await expect(popoverList.locator('li[data-status="live"]')).toContainText('Miru Lab Plex');
+	});
 });

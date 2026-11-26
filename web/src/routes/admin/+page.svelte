@@ -532,7 +532,7 @@
 			);
 			wizardStep = 'done';
 			void streamsStore.refresh();
-			await loadAll();
+			await Promise.all([serversStore.refresh(true), loadAll()]);
 		} catch (err) {
 			wizardError = err instanceof MiruApiError ? err.detail : 'Failed to save Plex server selection';
 			wizardStep = 'select';

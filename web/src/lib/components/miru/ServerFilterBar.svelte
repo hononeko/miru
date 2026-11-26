@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { serversStore } from '$stores/servers.svelte';
+	import { getServerStatus } from '$lib/serverStatus';
 	import { cn } from '$lib/utils';
 
 	type Props = {
@@ -32,9 +33,11 @@
 		</button>
 		{#each serversStore.servers as server (server.id)}
 			{@const active = selectedServerId === server.id}
+			{@const status = server.configured ? getServerStatus(server, { stale: serversStore.stale }) : null}
 			<button
 				type="button"
 				aria-pressed={active}
+				title={status ? `${server.name}: ${status.label}` : `${server.name}: not connected`}
 				onclick={() => onchange(server.id)}
 				class={cn(
 					'inline-flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 font-heading text-xs font-semibold transition-colors',
@@ -44,14 +47,9 @@
 				)}
 			>
 				<span
-					class={cn(
-						'h-1.5 w-1.5 rounded-full',
-						server.reachable
-							? 'bg-direct-play'
-							: server.configured
-								? 'bg-warning'
-								: 'bg-fg-muted'
-					)}
+					aria-hidden="true"
+					data-status={status?.kind ?? 'not-connected'}
+					class={cn('h-1.5 w-1.5 rounded-full', status?.dotClass ?? 'bg-fg-muted')}
 				></span>
 				<span class="font-mono text-[10px] uppercase opacity-80">{server.serverType}</span>
 				<span>{server.name}</span>

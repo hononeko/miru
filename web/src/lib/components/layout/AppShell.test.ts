@@ -1,8 +1,11 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { tick } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { goto } from '$app/navigation';
 import { api } from '$api/client';
+import type { MediaServerSummaryDto } from '$api/types';
 import { authStore } from '$stores/auth.svelte';
+import { serversStore } from '$stores/servers.svelte';
 import AppShell from './AppShell.svelte';
 
 vi.mock('$app/state', () => ({
@@ -119,6 +122,135 @@ describe('AppShell user avatars', () => {
 		await waitFor(() => {
 			expect(screen.getByText('Miru v1.0.0-rc1')).toBeTruthy();
 		});
+	});
+});
+
+describe('AppShell media server status', () => {
+	const plex: MediaServerSummaryDto = {
+		id: 'srv-plex',
+		name: 'Home Plex',
+		serverType: 'plex',
+		configured: true,
+		reachable: true,
+		websocketEnabled: true,
+		websocketState: 'CONNECTED'
+	};
+	const jellyfin: MediaServerSummaryDto = {
+		id: 'srv-jf',
+		name: 'Studio Jellyfin',
+		serverType: 'jellyfin',
+		configured: true,
+		reachable: false,
+		websocketEnabled: true,
+		websocketState: 'BACKOFF'
+	};
+	const unconfiguredPlex: MediaServerSummaryDto = {
+		id: 'srv-old-plex',
+		name: 'Old Plex',
+		serverType: 'plex',
+		configured: false,
+		reachable: false,
+		websocketEnabled: false,
+		websocketState: 'DISCONNECTED'
+	};
+
+	const sidebarStatus = () => screen.queryByTestId('sidebar-server-status');
+	const mobileTrigger = () => screen.queryByRole('button', { name: /^Media server status:/ });
+
+	beforeEach(() => {
+		// The shell asks /healthz for the version on mount; answer it without a network call
+		vi.spyOn(api, 'GET').mockResolvedValue({ data: undefined, response: new Response(null, { status: 503 }) } as never);
+		authStore.principal = {
+			accountId: 'acc-1',
+			username: 'sergiu',
+			role: 'ADMIN',
+			linkedMediaUserIds: [],
+			authSource: 'SESSION_COOKIE',
+			avatarUrl: null
+		};
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+		cleanup();
+		serversStore.reset();
+		authStore.principal = null;
+	});
+
+	function setServers(servers: MediaServerSummaryDto[]) {
+		serversStore.servers = servers;
+		serversStore.loaded = true;
+	}
+
+	it('lists each configured server with its own status, separate from the live updates connection', () => {
+		setServers([plex, jellyfin, unconfiguredPlex]);
+
+		render(AppShell);
+
+		const sidebar = sidebarStatus();
+		expect(sidebar).toBeTruthy();
+		const rows = Array.from(sidebar!.querySelectorAll('li'));
+		expect(rows.map((row) => row.getAttribute('data-server-id'))).toEqual(['srv-plex', 'srv-jf']);
+		expect(rows.map((row) => row.getAttribute('data-status'))).toEqual(['live', 'offline']);
+		expect(rows[0].textContent).toContain('Home Plex');
+		expect(rows[0].textContent).toContain('PLEX');
+		expect(rows[0].textContent).toContain('Live');
+		expect(rows[1].textContent).toContain('Studio Jellyfin');
+		expect(rows[1].textContent).toContain('JELLYFIN');
+		expect(rows[1].textContent).toContain('Offline');
+		expect(sidebar!.textContent).not.toContain('Old Plex');
+		expect(sidebar!.textContent).toContain('Live updates');
+		expect(screen.queryByText(/\d+\/\d+ Servers/)).toBeNull();
+	});
+
+	it('shows a compact per-server status in the mobile header that opens the full list', async () => {
+		setServers([plex, jellyfin]);
+
+		render(AppShell);
+
+		const trigger = mobileTrigger();
+		expect(trigger?.getAttribute('aria-label')).toBe('Media server status: Home Plex Live, Studio Jellyfin Offline');
+		expect(screen.getAllByRole('list', { name: 'Media server status' })).toHaveLength(1);
+
+		await fireEvent.click(trigger!);
+		await waitFor(() => expect(screen.getAllByRole('list', { name: 'Media server status' })).toHaveLength(2));
+	});
+
+	it('shows Unknown for every server when the last status refresh failed', () => {
+		setServers([plex, jellyfin]);
+		serversStore.stale = true;
+
+		render(AppShell);
+
+		const rows = Array.from(sidebarStatus()!.querySelectorAll('li'));
+		expect(rows.map((row) => row.getAttribute('data-status'))).toEqual(['unknown', 'unknown']);
+	});
+
+	it('keeps the single-server layout when only one server is configured', () => {
+		setServers([plex, unconfiguredPlex]);
+
+		render(AppShell);
+
+		expect(sidebarStatus()).toBeNull();
+		expect(mobileTrigger()).toBeNull();
+		expect(screen.queryByText('Live updates')).toBeNull();
+		expect(screen.getByText('Telemetry')).toBeTruthy();
+	});
+
+	it('switches to the per-server layout when a second server appears, and back when it goes', async () => {
+		setServers([plex]);
+		render(AppShell);
+		expect(sidebarStatus()).toBeNull();
+
+		serversStore.servers = [plex, jellyfin];
+		await tick();
+		expect(sidebarStatus()).toBeTruthy();
+		expect(mobileTrigger()).toBeTruthy();
+
+		serversStore.servers = [plex];
+		await tick();
+		expect(sidebarStatus()).toBeNull();
+		expect(mobileTrigger()).toBeNull();
 	});
 });
 

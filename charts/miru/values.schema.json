@@ -4,8 +4,10 @@
   "type": "object",
   "properties": {
     "replicaCount": {
+      "description": "0 or 1: Miru has no leader election, so a second pod would record every stream twice.",
       "type": "integer",
-      "minimum": 0
+      "minimum": 0,
+      "maximum": 1
     },
     "strategy": {
       "type": "object",
@@ -254,6 +256,7 @@
           }
         },
         "size": { "type": "string", "minLength": 1 },
+        "keep": { "type": "boolean" },
         "annotations": { "type": "object" }
       }
     },
@@ -274,11 +277,11 @@
       "properties": {
         "level": {
           "type": "string",
-          "enum": ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"]
+          "enum": ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "trace", "debug", "info", "warn", "error"]
         },
         "rootLevel": {
           "type": "string",
-          "enum": ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"]
+          "enum": ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "trace", "debug", "info", "warn", "error"]
         }
       }
     },
@@ -413,8 +416,8 @@
         "sessionSecret": { "type": "string" },
         "allowLocalLogin": { "type": "boolean" },
         "cookieSecure": {
-          "type": "string",
-          "enum": ["auto", "true", "false", "always", "never"]
+          "type": ["string", "boolean"],
+          "enum": ["auto", "true", "false", "always", "never", true, false]
         },
         "adminUsername": { "type": "string" },
         "adminPassword": { "type": ["string", "null"] },

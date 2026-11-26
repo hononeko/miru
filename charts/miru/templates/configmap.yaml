@@ -17,6 +17,12 @@ data:
   {{- if eq (lower .Values.database.engine) "sqlite" }}
   SQLITE_PATH: {{ .Values.database.sqlite.path | quote }}
   {{- else }}
+  {{- with .Values.database.postgres.url }}
+  DATABASE_URL: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.database.postgres.user }}
+  DATABASE_USER: {{ . | quote }}
+  {{- end }}
   DATABASE_MAX_POOL_SIZE: {{ .Values.database.postgres.maxPoolSize | quote }}
   {{- end }}
   {{- if .Values.plex.url }}
@@ -61,6 +67,9 @@ data:
   {{- end }}
   AUTH_MODE: {{ .Values.auth.mode | quote }}
   AUTH_ALLOW_LOCAL_LOGIN: {{ .Values.auth.allowLocalLogin | quote }}
+  {{- with .Values.auth.adminUsername }}
+  MIRU_ADMIN_USERNAME: {{ . | quote }}
+  {{- end }}
   AUTH_COOKIE_SECURE: {{ .Values.auth.cookieSecure | quote }}
   AUTH_RATE_LIMIT_ENABLED: {{ .Values.auth.rateLimit.enabled | quote }}
   AUTH_RATE_LIMIT_WINDOW_SECONDS: {{ .Values.auth.rateLimit.windowSeconds | quote }}

@@ -16,9 +16,18 @@ metadata:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
+  {{- if .Values.metrics.serviceMonitor.namespace }}
+  # The ServiceMonitor lives outside the release namespace, so point it back at the Miru Service.
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "miru.selectorLabels" . | nindent 6 }}
+      {{- if include "miru.dedicatedMetricsPort" . }}
+      app.kubernetes.io/component: metrics
+      {{- end }}
   endpoints:
     - port: {{ include "miru.metricsPortName" . }}
       path: /metrics

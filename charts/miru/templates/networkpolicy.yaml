@@ -45,7 +45,7 @@ spec:
         - port: {{ .Values.networkPolicy.egress.plex.port }}
           protocol: TCP
     {{- end }}
-    {{- if or .Values.networkPolicy.egress.jellyfin.enabled (not (empty .Values.jellyfin.url)) }}
+    {{- if .Values.networkPolicy.egress.jellyfin.enabled }}
     # Jellyfin Media Server
     - ports:
         - port: {{ .Values.networkPolicy.egress.jellyfin.port }}

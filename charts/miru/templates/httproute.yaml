@@ -19,22 +19,12 @@ spec:
     {{- toYaml . | nindent 4 }}
   {{- end }}
   rules:
+    {{- /* Each rule is passed through as given (matches, filters, timeouts, ...); only backendRefs gets a default. */}}
     {{- range .Values.httpRoute.rules }}
-    - backendRefs:
-        {{- if .backendRefs }}
-        {{- toYaml .backendRefs | nindent 8 }}
-        {{- else }}
-        - name: {{ $fullName }}
-          port: {{ $svcPort }}
-          weight: 1
-        {{- end }}
-      {{- with .matches }}
-      matches:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .filters }}
-      filters:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+    {{- $rule := deepCopy . }}
+    {{- if not $rule.backendRefs }}
+    {{- $_ := set $rule "backendRefs" (list (dict "name" $fullName "port" $svcPort "weight" 1)) }}
+    {{- end }}
+    - {{ toYaml $rule | indent 6 | trim }}
     {{- end }}
 {{- end }}

@@ -32,49 +32,60 @@ jobs:
       - name: Lint and validate Helm chart
         run: |
           set -euo pipefail
+          # HTTPRoute and ServiceMonitor schemas from datreeio/CRDs-catalog, pinned to a commit (2026-11-11).
+          crds='https://raw.githubusercontent.com/datreeio/CRDs-catalog/89c736bdde38b5fecd0f8436ec5f3aa3679a3b86/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
           kubeconform() {
             docker run --rm -i \
               ghcr.io/yannh/kubeconform:v0.8.0@sha256:faffaf43f95aa6425306e1ab8d6fcad72acb9049158f38e574c085ea1ec0f64e \
-              -strict -ignore-missing-schemas -summary -
+              -strict -summary -schema-location default -schema-location "$crds" -
           }
-          helm lint charts/miru --strict
-          helm template miru charts/miru | kubeconform
+          check() {
+            helm lint charts/miru --strict "$@"
+            helm template miru charts/miru --namespace miru "$@" | kubeconform
+          }
+          expect_failure() {
+            if helm template miru charts/miru "$@" > /dev/null 2>&1; then
+              echo "::error::helm template should have failed with: $*"
+              exit 1
+            fi
+          }
+          secret=(--set auth.sessionSecret=ci-session-secret-0123456789abcdefghij)
 
-          helm lint charts/miru --strict \
+          check "${secret[@]}"
+          check --set auth.mode=none
+
+          check \
             --set database.engine=postgres \
+            --set database.postgres.url=jdbc:postgresql://postgres:5432/miru \
+            --set database.postgres.user=miru \
             --set strategy.type=RollingUpdate \
             --set existingSecret=miru-secrets
-          helm template miru charts/miru \
-            --set database.engine=postgres \
-            --set strategy.type=RollingUpdate \
-            --set existingSecret=miru-secrets | kubeconform
 
-          helm lint charts/miru --strict \
+          check "${secret[@]}" \
             --set ingress.enabled=true \
-            --set httpRoute.enabled=true
-          helm template miru charts/miru \
-            --set ingress.enabled=true \
-            --set httpRoute.enabled=true | kubeconform
+            --set httpRoute.enabled=true \
+            --set 'httpRoute.rules[0].timeouts.request=0s'
 
-          helm lint charts/miru --strict \
+          check "${secret[@]}" \
             --set networkPolicy.enabled=true \
             --set metrics.enabled=true \
             --set database.engine=postgres \
             --set jellyfin.url=http://jellyfin:8096
-          helm template miru charts/miru \
-            --set networkPolicy.enabled=true \
-            --set metrics.enabled=true \
-            --set database.engine=postgres \
-            --set jellyfin.url=http://jellyfin:8096 | kubeconform
 
-          helm lint charts/miru --strict \
+          check "${secret[@]}" \
+            --set service.type=LoadBalancer \
             --set metrics.enabled=true \
             --set metrics.serviceMonitor.enabled=true \
+            --set metrics.serviceMonitor.namespace=monitoring \
             --set metrics.grafanaDashboard.enabled=true
-          helm template miru charts/miru \
-            --set metrics.enabled=true \
-            --set metrics.serviceMonitor.enabled=true \
-            --set metrics.grafanaDashboard.enabled=true | kubeconform
+
+          # Settings that would deploy a pod that cannot start or that would damage its data.
+          expect_failure
+          expect_failure --set auth.sessionSecret=too-short
+          expect_failure "${secret[@]}" --set security.encryptionKey=too-short
+          expect_failure --set existingSecret=miru-secrets --set plex.token=token
+          expect_failure "${secret[@]}" --set strategy.type=RollingUpdate
+          expect_failure "${secret[@]}" --set replicaCount=2
 
   detekt:
     name: Detekt

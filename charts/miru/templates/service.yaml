@@ -15,11 +15,5 @@ spec:
       targetPort: http
       protocol: TCP
       name: http
-    {{- if include "miru.dedicatedMetricsPort" . }}
-    - port: {{ .Values.service.metricsPort }}
-      targetPort: metrics
-      protocol: TCP
-      name: metrics
-    {{- end }}
   selector:
     {{- include "miru.selectorLabels" . | nindent 4 }}

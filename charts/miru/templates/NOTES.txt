@@ -17,15 +17,14 @@
    Then open http://127.0.0.1:{{ .Values.service.port }}
 {{- end }}
 
-{{- if and (not .Values.existingSecret) (ne (lower .Values.auth.mode) "none") (lt (len .Values.auth.sessionSecret) 32) }}
+{{- if and .Values.metrics.enabled (include "miru.dedicatedMetricsPort" .) }}
 
-WARNING: auth.sessionSecret is unset or shorter than 32 characters.
-Miru requires AUTH_SESSION_SECRET (>= 32 characters) when auth.mode != "none".
-Set --set auth.sessionSecret="$(openssl rand -base64 48)" or provide existingSecret.
+3. Prometheus metrics are served inside the cluster only, at:
+   http://{{ include "miru.metricsServiceName" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.metricsPort }}/metrics
 {{- end }}
 
-{{- if and (eq (lower .Values.database.engine) "sqlite") (gt (int .Values.replicaCount) 1) }}
+{{- if and (include "miru.persistenceEnabled" .) .Values.persistence.keep (not .Values.persistence.existingClaim) }}
 
-WARNING: replicaCount is {{ .Values.replicaCount }} with database.engine=sqlite.
-Miru stores live session state in memory and SQLite does not support multi-pod writes; set replicaCount=1 or switch to PostgreSQL.
+NOTE: `helm uninstall` keeps the {{ include "miru.fullname" . }}-data PersistentVolumeClaim and the playback history on it.
+Delete it with: kubectl -n {{ .Release.Namespace }} delete pvc {{ include "miru.fullname" . }}-data
 {{- end }}

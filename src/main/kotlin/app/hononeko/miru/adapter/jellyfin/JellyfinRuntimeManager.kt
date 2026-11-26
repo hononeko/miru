@@ -11,6 +11,7 @@ import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.http.PlexCredentialSource
 import app.hononeko.miru.persistence.DatabaseHandle
 import app.hononeko.miru.persistence.model.MediaServerRecord
+import app.hononeko.miru.persistence.model.findActiveStoredServer
 import app.hononeko.miru.persistence.repository.ExposedActiveSessionRepository
 import app.hononeko.miru.persistence.repository.ExposedMediaServerRepository
 import app.hononeko.miru.persistence.repository.ExposedPlaybackHistoryRepository
@@ -128,6 +129,7 @@ class JellyfinRuntimeManager(
 
     private var activePipeline: ActivePipeline? = null
     private var startupJob: Job? = null
+    private var postReloadSyncJob: Job? = null
 
     override val serverIdProvider: suspend () -> Either<MiruError, String> = {
         cachedServerId?.right()
@@ -163,6 +165,8 @@ class JellyfinRuntimeManager(
     fun currentCredentialSource(): PlexCredentialSource = activeCredentialSource
 
     override fun websocketEnabled(): Boolean = jellyfinConfig.websocketEnabled
+
+    override fun isEnvConfigured(): Boolean = jellyfinConfig.isConfigured
 
     override fun connectionState(): ConnectionState =
         activePipeline?.listener?.connectionState?.value ?: ConnectionState.Disconnected
@@ -235,30 +239,61 @@ class JellyfinRuntimeManager(
         }
     }
 
+    override suspend fun disconnect(serverId: String?): Either<MiruError, Int> {
+        val pendingStartup = startupJob
+        startupJob = null
+        pendingStartup?.cancelAndJoin()
+
+        val pendingSync = postReloadSyncJob
+        postReloadSyncJob = null
+        pendingSync?.cancelAndJoin()
+
+        return reloadMutex.withLock {
+            either {
+                stopActivePipelineLocked()
+                val targetServerId = serverId ?: cachedServerId
+                val closedSessions =
+                    if (!targetServerId.isNullOrBlank()) {
+                        sessionEngine.closeAllSessionsForServer(targetServerId).bind().size
+                    } else {
+                        0
+                    }
+                clearActiveStateLocked()
+                jellyfinRuntimeLogger.info("Disconnected Jellyfin runtime {} closedSessions={}", targetServerId ?: "none", closedSessions)
+                closedSessions
+            }
+        }
+    }
+
     override suspend fun stop() {
         val pendingStartup = startupJob
         startupJob = null
         pendingStartup?.cancelAndJoin()
 
+        val pendingSync = postReloadSyncJob
+        postReloadSyncJob = null
+        pendingSync?.cancelAndJoin()
+
         reloadMutex.withLock {
             stopActivePipelineLocked()
-            adapter.setDelegate(null)
-            activeBaseUrl = null
-            activeMachineId = null
-            cachedServerId = null
-            latestReconcileHealth = null
-            activeCredentialSource = PlexCredentialSource.NOT_CONFIGURED
+            clearActiveStateLocked()
         }
         managerScope.cancel()
+    }
+
+    private fun clearActiveStateLocked() {
+        adapter.setDelegate(null)
+        activeBaseUrl = null
+        activeMachineId = null
+        cachedServerId = null
+        latestReconcileHealth = null
+        activeCredentialSource = PlexCredentialSource.NOT_CONFIGURED
     }
 
     private suspend fun loadAndActivateStoredLocked(triggerSync: Boolean): Either<MiruError, Boolean> =
         either {
             val servers = mediaServerRepository.findAll().bind()
-            val stored =
-                servers.firstOrNull { server ->
-                    server.serverType.equals(serverType, ignoreCase = true) && !server.encryptedToken.isNullOrBlank()
-                }
+            val stored = servers.findActiveStoredServer(serverType)
             if (stored == null) {
                 jellyfinRuntimeLogger.debug("Jellyfin is not configured; Jellyfin runtime remains dormant")
                 return@either false
@@ -397,15 +432,17 @@ class JellyfinRuntimeManager(
 
         if (triggerSync) {
             onReloadLibrarySync?.let { syncCallback ->
-                managerScope.launch(CoroutineName("jellyfin-post-reload-sync")) {
-                    try {
-                        syncCallback()
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        jellyfinRuntimeLogger.warn("Post-reload Jellyfin library sync failed: {}", e.message)
+                postReloadSyncJob?.cancel()
+                postReloadSyncJob =
+                    managerScope.launch(CoroutineName("jellyfin-post-reload-sync")) {
+                        try {
+                            syncCallback()
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            jellyfinRuntimeLogger.warn("Post-reload Jellyfin library sync failed: {}", e.message)
+                        }
                     }
-                }
             }
         }
     }

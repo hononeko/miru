@@ -1757,6 +1757,112 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /api/v1/admin/servers/{id}/disconnect:
+    post:
+      tags: [Admin, Servers]
+      operationId: disconnectAdminServer
+      summary: Disconnect a UI-configured media server while preserving its playback history, users, and libraries (admin only)
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Server disconnected cleanly while preserving historical data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DisconnectServerResponse'
+        '400':
+          description: Invalid server ID
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Media server not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Server is env-managed or already disconnected
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/admin/servers/{id}:
+    delete:
+      tags: [Admin, Servers]
+      operationId: removeAdminServer
+      summary: Permanently delete a disconnected media server and its cascaded data (admin only)
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Disconnected server and its cascaded data removed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RemoveServerResponse'
+        '400':
+          description: Invalid server ID
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Media server not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Server is env-managed or still connected
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
   /api/v1/media/{ratingKey}:
     get:
       tags: [Media]
@@ -5779,9 +5885,23 @@ components:
           items:
             $ref: '#/components/schemas/MediaServerSummaryDto'
 
+    ServerDataSummaryDto:
+      type: object
+      required: [plays, users, libraries]
+      properties:
+        plays:
+          type: integer
+          format: int64
+        users:
+          type: integer
+          format: int64
+        libraries:
+          type: integer
+          format: int64
+
     AdminServerStatusDto:
       type: object
-      required: [name, serverType, configured, credentialSource, reachable, websocketEnabled, websocketState]
+      required: [name, serverType, configured, credentialSource, reachable, websocketEnabled, websocketState, canDisconnect, canRemove]
       properties:
         id:
           type: string
@@ -5813,6 +5933,14 @@ components:
           type: integer
           format: int64
           nullable: true
+        canDisconnect:
+          type: boolean
+        canRemove:
+          type: boolean
+        dataSummary:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ServerDataSummaryDto'
 
     AdminServersResponse:
       type: object
@@ -5822,6 +5950,49 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AdminServerStatusDto'
+
+    DisconnectServerResponse:
+      type: object
+      required: [serverId, serverName, serverType, disconnected, closedSessions, credentialRevoked]
+      properties:
+        serverId:
+          type: string
+        serverName:
+          type: string
+        serverType:
+          type: string
+        disconnected:
+          type: boolean
+        closedSessions:
+          type: integer
+          format: int32
+        credentialRevoked:
+          type: boolean
+        revocationNotice:
+          type: string
+          nullable: true
+
+    RemoveServerResponse:
+      type: object
+      required: [serverId, serverName, serverType, removed, deletedPlays, deletedUsers, deletedLibraries]
+      properties:
+        serverId:
+          type: string
+        serverName:
+          type: string
+        serverType:
+          type: string
+        removed:
+          type: boolean
+        deletedPlays:
+          type: integer
+          format: int64
+        deletedUsers:
+          type: integer
+          format: int64
+        deletedLibraries:
+          type: integer
+          format: int64
 
     MediaDetailsResponse:
       type: object

@@ -90,6 +90,9 @@ describe('ServersStore', () => {
 		expect(store.servers).toHaveLength(2);
 		expect(store.configuredServers.map((s) => s.id)).toEqual(['srv-plex']);
 		expect(store.hasMultipleServers).toBe(false);
+		expect(store.isDisconnected('srv-old-plex')).toBe(true);
+		expect(store.isDisconnected('srv-plex')).toBe(false);
+		expect(store.isDisconnected('missing')).toBe(false);
 	});
 
 	it('keeps the last list but marks it stale when a refresh fails, and clears that on the next success', async () => {

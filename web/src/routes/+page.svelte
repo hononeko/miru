@@ -164,6 +164,12 @@
 	}
 
 	$effect(() => {
+		if (selectedServerId && serversStore.loaded && !serversStore.byId(selectedServerId)) {
+			selectedServerId = null;
+		}
+	});
+
+	$effect(() => {
 		void authStore.isUnlinkedUser;
 		void loadOverview(range, analyticsMetric, selectedServerId);
 	});

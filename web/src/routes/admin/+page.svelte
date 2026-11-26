@@ -16,13 +16,17 @@
 		Server,
 		ShieldAlert,
 		SlidersHorizontal,
-		Upload
+		Trash2,
+		Unplug,
+		Upload,
+		X
 	} from '@lucide/svelte';
 	import { api, MiruApiError, unwrap } from '$api/client';
 	import type {
 		AccountResponse,
 		AdminServerStatusDto,
 		ApiKeyResponse,
+		DisconnectServerResponse,
 		GuardrailMode,
 		GuardrailRuleDto,
 		GuardrailRuleType,
@@ -36,6 +40,7 @@
 		PlexSelectServerResponse,
 		ProblemDetails,
 		ReadinessResponse,
+		RemoveServerResponse,
 		TautulliImportResponse,
 		TerminationAuditAction,
 		TerminationAuditEntryDto,
@@ -81,6 +86,16 @@
 	let plexStatus = $state<PlexConnectionStatus | null>(null);
 	let jellyfinStatus = $state<JellyfinConnectionStatus | null>(null);
 	let adminServers = $state<AdminServerStatusDto[]>([]);
+	let serverNotice = $state<string | null>(null);
+	let disconnectTarget = $state<AdminServerStatusDto | null>(null);
+	let disconnectOpen = $state(false);
+	let disconnectSubmitting = $state(false);
+	let disconnectError = $state<string | null>(null);
+	let removeTarget = $state<AdminServerStatusDto | null>(null);
+	let removeOpen = $state(false);
+	let removeConfirmName = $state('');
+	let removeSubmitting = $state(false);
+	let removeError = $state<string | null>(null);
 	let guardrails = $state<GuardrailRuleDto[]>([]);
 	let auditEntries = $state<TerminationAuditEntryDto[]>([]);
 	let auditTotalCount = $state(0);
@@ -733,6 +748,103 @@
 		return { tone: 'neutral', label: `WS ${st}` };
 	}
 
+	function serverConnectionBadge(server: AdminServerStatusDto): {
+		tone: 'direct-play' | 'warning' | 'neutral';
+		label: string;
+	} {
+		if (server.reachable) return { tone: 'direct-play', label: 'CONNECTED' };
+		if (server.configured) return { tone: 'warning', label: 'UNREACHABLE' };
+		if (server.id !== null && server.id !== undefined) return { tone: 'neutral', label: 'DISCONNECTED' };
+		return { tone: 'neutral', label: 'NOT CONFIGURED' };
+	}
+
+	function isEnvManagedServer(server: AdminServerStatusDto): boolean {
+		if (server.credentialSource === 'ENV_OVERRIDE') return true;
+		if (server.serverType === 'plex' && plexStatus?.credentialSource === 'ENV_OVERRIDE') return true;
+		if (server.serverType === 'jellyfin' && jellyfinStatus?.credentialSource === 'ENV_OVERRIDE') return true;
+		return false;
+	}
+
+	function hasAnotherConfiguredServerOfType(server: AdminServerStatusDto): boolean {
+		return adminServers.some(
+			(other) => other.configured && other.serverType === server.serverType && other.id !== server.id
+		);
+	}
+
+	function openDisconnectSheet(srv: AdminServerStatusDto) {
+		disconnectTarget = srv;
+		disconnectError = null;
+		disconnectOpen = true;
+	}
+
+	async function handleConfirmDisconnect() {
+		const target = disconnectTarget;
+		const serverId = target?.id;
+		if (!target || !serverId || disconnectSubmitting) return;
+		disconnectSubmitting = true;
+		disconnectError = null;
+		try {
+			const res: DisconnectServerResponse = unwrap(
+				await api.POST('/api/v1/admin/servers/{id}/disconnect', {
+					params: { path: { id: serverId } }
+				})
+			);
+			const closedText =
+				res.closedSessions > 0
+					? ` Closed ${res.closedSessions} active stream${res.closedSessions === 1 ? '' : 's'} into history.`
+					: '';
+			const noticeText = res.revocationNotice ? ` ${res.revocationNotice}` : '';
+			serverNotice = `Disconnected '${res.serverName}'. Playback history, users, and libraries are kept.${closedText}${noticeText}`;
+			disconnectOpen = false;
+			disconnectTarget = null;
+			await Promise.all([serversStore.refresh(true), streamsStore.refresh(), loadAll()]);
+		} catch (err) {
+			disconnectError = err instanceof MiruApiError ? err.detail : 'Failed to disconnect server';
+		} finally {
+			disconnectSubmitting = false;
+		}
+	}
+
+	function openRemoveSheet(srv: AdminServerStatusDto) {
+		removeTarget = srv;
+		removeConfirmName = '';
+		removeError = null;
+		removeOpen = true;
+	}
+
+	const canConfirmRemove = $derived(
+		removeTarget !== null && removeConfirmName.trim() === removeTarget.name
+	);
+
+	async function handleConfirmRemove(e: SubmitEvent) {
+		e.preventDefault();
+		const target = removeTarget;
+		const serverId = target?.id;
+		if (!target || !serverId || removeSubmitting || removeConfirmName.trim() !== target.name) return;
+		removeSubmitting = true;
+		removeError = null;
+		try {
+			const res: RemoveServerResponse = unwrap(
+				await api.DELETE('/api/v1/admin/servers/{id}', {
+					params: { path: { id: serverId } }
+				})
+			);
+			serverNotice =
+				`Removed '${res.serverName}' and deleted ` +
+				`${res.deletedPlays.toLocaleString()} plays, ` +
+				`${res.deletedUsers.toLocaleString()} users, and ` +
+				`${res.deletedLibraries.toLocaleString()} libraries.`;
+			removeOpen = false;
+			removeTarget = null;
+			removeConfirmName = '';
+			await Promise.all([serversStore.refresh(true), streamsStore.refresh(), loadAll()]);
+		} catch (err) {
+			removeError = err instanceof MiruApiError ? err.detail : 'Failed to remove server';
+		} finally {
+			removeSubmitting = false;
+		}
+	}
+
 	async function handleCreateAccount(e: SubmitEvent) {
 		e.preventDefault();
 		error = null;
@@ -1108,6 +1220,23 @@
 			{/if}
 		</div>
 
+		{#if serverNotice}
+			<div
+				role="status"
+				class="flex items-start justify-between gap-3 rounded-xl border border-direct-play/50 bg-direct-play-soft px-3.5 py-2.5 text-xs text-direct-play"
+			>
+				<p class="leading-relaxed">{serverNotice}</p>
+				<button
+					type="button"
+					aria-label="Dismiss server notice"
+					onclick={() => (serverNotice = null)}
+					class="shrink-0 cursor-pointer rounded p-0.5 text-direct-play/80 hover:text-direct-play"
+				>
+					<X class="h-3.5 w-3.5" />
+				</button>
+			</div>
+		{/if}
+
 		{#if adminServers.length > 0}
 			{#if plexStatus?.credentialSource === 'ENV_OVERRIDE'}
 				<div class="flex items-start gap-2.5 rounded-xl border border-cyan/40 bg-cyan-soft/50 px-3.5 py-2.5 text-xs text-fg-secondary">
@@ -1148,6 +1277,9 @@
 			<div class="flex flex-col gap-2.5">
 				{#each adminServers as srv (srv.id ?? `${srv.serverType}:${srv.name}`)}
 					{@const wsBadge = websocketReadinessBadge(srv)}
+					{@const connBadge = serverConnectionBadge(srv)}
+					{@const envManaged = isEnvManagedServer(srv)}
+					{@const secondaryHistorical = !srv.configured && srv.id !== null && hasAnotherConfiguredServerOfType(srv)}
 					<div class="flex flex-col gap-3 rounded-xl border border-border bg-elevated p-3.5 sm:flex-row sm:items-center sm:justify-between">
 						<div class="min-w-0 flex-1">
 							<div class="flex flex-wrap items-center gap-1.5">
@@ -1157,12 +1289,8 @@
 								<Badge tone={srv.serverType === 'jellyfin' ? 'cyan' : 'primary'} mono>
 									{srv.serverType.toUpperCase()}
 								</Badge>
-								<Badge
-									tone={srv.reachable ? 'direct-play' : srv.configured ? 'warning' : 'neutral'}
-									dot
-									mono
-								>
-									{srv.reachable ? 'CONNECTED' : srv.configured ? 'UNREACHABLE' : 'NOT CONFIGURED'}
+								<Badge tone={connBadge.tone} dot mono>
+									{connBadge.label}
 								</Badge>
 								<Badge tone={wsBadge.tone} mono>{wsBadge.label}</Badge>
 								<Badge
@@ -1189,33 +1317,50 @@
 								<p class="mt-1 text-[11px] text-fg-secondary">{srv.statusMessage}</p>
 							{/if}
 						</div>
-						{#if srv.serverType === 'plex'}
-							<div class="flex shrink-0 items-center gap-2">
+						<div class="flex shrink-0 flex-wrap items-center gap-2">
+							{#if envManaged}
+								<Badge tone="cyan" mono>ENV MANAGED</Badge>
+							{/if}
+							{#if srv.serverType === 'plex' && !secondaryHistorical}
 								<Button variant="primary" size="md" onclick={startPlexOAuthWizard}>
 									<Link2 class="h-3.5 w-3.5" />
 									{srv.configured ? 'Reconnect Plex' : 'Connect with Plex'}
 								</Button>
-							</div>
-						{:else if srv.serverType === 'jellyfin'}
-							<div class="flex shrink-0 items-center gap-2">
-								{#if srv.credentialSource === 'ENV_OVERRIDE' || jellyfinStatus?.credentialSource === 'ENV_OVERRIDE'}
-									<Badge tone="cyan" mono>ENV MANAGED</Badge>
-								{:else}
-									<Button
-										variant="cyan"
-										size="md"
-										disabled={jellyfinStatus !== null && !jellyfinStatus.encryptionKeyConfigured}
-										title={jellyfinStatus && !jellyfinStatus.encryptionKeyConfigured
-											? 'MIRU_ENCRYPTION_KEY must be configured (>= 32 characters)'
-											: undefined}
-										onclick={openJellyfinWizard}
-									>
-										<Link2 class="h-3.5 w-3.5" />
-										{srv.configured ? 'Reconnect Jellyfin' : 'Connect Jellyfin'}
-									</Button>
-								{/if}
-							</div>
-						{/if}
+							{:else if srv.serverType === 'jellyfin' && !envManaged && !secondaryHistorical}
+								<Button
+									variant="cyan"
+									size="md"
+									disabled={jellyfinStatus !== null && !jellyfinStatus.encryptionKeyConfigured}
+									title={jellyfinStatus && !jellyfinStatus.encryptionKeyConfigured
+										? 'MIRU_ENCRYPTION_KEY must be configured (>= 32 characters)'
+										: undefined}
+									onclick={openJellyfinWizard}
+								>
+									<Link2 class="h-3.5 w-3.5" />
+									{srv.configured ? 'Reconnect Jellyfin' : 'Connect Jellyfin'}
+								</Button>
+							{/if}
+							{#if !envManaged && srv.canDisconnect && srv.id}
+								<Button
+									variant="outline"
+									size="md"
+									onclick={() => openDisconnectSheet(srv)}
+								>
+									<Unplug class="h-3.5 w-3.5" />
+									Disconnect
+								</Button>
+							{/if}
+							{#if !envManaged && srv.canRemove && srv.id}
+								<Button
+									variant="destructive"
+									size="md"
+									onclick={() => openRemoveSheet(srv)}
+								>
+									<Trash2 class="h-3.5 w-3.5" />
+									Remove
+								</Button>
+							{/if}
+						</div>
 					</div>
 				{/each}
 			</div>
@@ -2648,6 +2793,134 @@
 			<Button type="submit" variant="primary" size="lg" disabled={manageSubmitting} class="mt-2 w-full">
 				{manageSubmitting ? 'Saving…' : 'Save Account Changes'}
 			</Button>
+		</form>
+	{/if}
+</Sheet>
+
+<!-- Disconnect Server Confirmation Sheet -->
+<Sheet
+	bind:open={disconnectOpen}
+	onOpenChange={(v) => {
+		if (disconnectSubmitting) return;
+		disconnectOpen = v;
+		if (!v) disconnectError = null;
+	}}
+	title={`Disconnect · ${disconnectTarget?.name ?? ''}`}
+	description="Stop live monitoring while keeping playback history, users, and libraries"
+>
+	{#if disconnectTarget}
+		<div class="flex flex-col gap-3.5 text-xs text-fg-secondary">
+			{#if disconnectError}
+				<div role="alert" class="rounded-lg border border-danger/50 bg-danger-soft px-3 py-2 text-xs text-danger">
+					{disconnectError}
+				</div>
+			{/if}
+
+			<div class="rounded-xl border border-border bg-elevated p-3.5 leading-relaxed">
+				<p class="font-heading font-semibold text-fg-primary">What happens when you disconnect:</p>
+				<ul class="mt-2 list-disc space-y-1 pl-4">
+					<li>Miru stops WebSocket updates, polling, library/user sync, and guardrails for this server immediately.</li>
+					<li>Any active streams close into playback history if they meet the minimum play duration.</li>
+					<li>
+						<strong>Playback history, users, and libraries are kept</strong> and remain visible as disconnected. Reconnecting this server later continues its history.
+					</li>
+					<li>
+						{#if disconnectTarget.serverType === 'jellyfin'}
+							Miru will also revoke its API key on Jellyfin (or show manual cleanup instructions if unreachable).
+						{:else}
+							Stored credentials are deleted from Miru; to revoke Plex authorization, remove Miru under Settings → Authorized Devices in Plex.
+						{/if}
+					</li>
+				</ul>
+			</div>
+
+			<div class="flex items-center justify-end gap-2 pt-1">
+				<Button
+					variant="ghost"
+					size="md"
+					disabled={disconnectSubmitting}
+					onclick={() => (disconnectOpen = false)}
+				>
+					Cancel
+				</Button>
+				<Button
+					variant="primary"
+					size="md"
+					disabled={disconnectSubmitting}
+					onclick={handleConfirmDisconnect}
+				>
+					<Unplug class="h-3.5 w-3.5" />
+					{disconnectSubmitting ? 'Disconnecting…' : 'Disconnect Server'}
+				</Button>
+			</div>
+		</div>
+	{/if}
+</Sheet>
+
+<!-- Remove Disconnected Server Confirmation Sheet -->
+<Sheet
+	bind:open={removeOpen}
+	onOpenChange={(v) => {
+		if (removeSubmitting) return;
+		removeOpen = v;
+		if (!v) {
+			removeError = null;
+			removeConfirmName = '';
+		}
+	}}
+	title={`Remove Server & Data · ${removeTarget?.name ?? ''}`}
+	description="Permanently delete this disconnected server and all of its stored history"
+>
+	{#if removeTarget}
+		{@const summary = removeTarget.dataSummary}
+		<form onsubmit={handleConfirmRemove} class="flex flex-col gap-3.5 text-xs text-fg-secondary">
+			{#if removeError}
+				<div role="alert" class="rounded-lg border border-danger/50 bg-danger-soft px-3 py-2 text-xs text-danger">
+					{removeError}
+				</div>
+			{/if}
+
+			<div class="rounded-xl border border-danger/40 bg-danger-soft/50 p-3.5 leading-relaxed">
+				<p class="font-heading font-semibold text-danger">This permanently deletes all data for {removeTarget.name}:</p>
+				<ul class="mt-2 list-disc space-y-1 pl-4 text-fg-primary">
+					<li><strong>{(summary?.plays ?? 0).toLocaleString()}</strong> playback history plays</li>
+					<li><strong>{(summary?.users ?? 0).toLocaleString()}</strong> synced media users &amp; account links</li>
+					<li><strong>{(summary?.libraries ?? 0).toLocaleString()}</strong> library sections, snapshots, and cached items</li>
+				</ul>
+			</div>
+
+			<label class="flex flex-col gap-1.5">
+				<span class="font-heading text-xs font-semibold text-fg-primary">
+					Type <code class="rounded bg-elevated px-1.5 py-0.5 font-mono text-danger">{removeTarget.name}</code> to confirm
+				</span>
+				<input
+					type="text"
+					autocomplete="off"
+					placeholder={removeTarget.name}
+					bind:value={removeConfirmName}
+					class="rounded-lg border border-input-border bg-canvas px-3 py-2 text-sm text-fg-primary focus:border-danger focus:outline-none focus:ring-2 focus:ring-danger"
+				/>
+			</label>
+
+			<div class="flex items-center justify-end gap-2 pt-1">
+				<Button
+					variant="ghost"
+					size="md"
+					disabled={removeSubmitting}
+					onclick={() => (removeOpen = false)}
+				>
+					Cancel
+				</Button>
+				<Button
+					type="submit"
+					variant="destructive"
+					size="md"
+					disabled={!canConfirmRemove || removeSubmitting}
+				>
+					<Trash2 class="h-3.5 w-3.5" />
+					{removeSubmitting ? 'Removing…' : 'Remove Server & Data'}
+				</Button>
+			</div>
 		</form>
 	{/if}
 </Sheet>

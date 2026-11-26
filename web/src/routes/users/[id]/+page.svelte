@@ -222,7 +222,7 @@
 						{#if detail.user.isAdmin}
 							<Badge tone="primary">ADMIN</Badge>
 						{/if}
-						{#if serversStore.hasMultipleServers}
+						{#if serversStore.hasMultipleServers || serversStore.isDisconnected(detail.user.serverId)}
 							<ServerBadge
 								serverId={detail.user.serverId}
 								serverType={detail.user.serverType}

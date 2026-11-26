@@ -221,7 +221,15 @@
 	});
 
 	$effect(() => {
-		// Re-run whenever query inputs change
+		$effect(() => {
+		if (selectedServerId && serversStore.loaded && !serversStore.byId(selectedServerId)) {
+			selectedServerId = null;
+			userId = '';
+			pageNum = 1;
+		}
+	});
+
+	// Re-run whenever query inputs change
 		void authStore.isUnlinkedUser;
 		void q;
 		void selectedServerId;
@@ -465,7 +473,7 @@
 									</button>
 									<div class="flex flex-wrap items-center gap-1.5">
 										<p class="truncate text-[11px] text-fg-muted">{titles.secondary}</p>
-										{#if serversStore.hasMultipleServers}
+										{#if serversStore.hasMultipleServers || serversStore.isDisconnected(item.serverId)}
 											<ServerBadge
 												serverId={item.serverId}
 												serverType={item.serverType}
@@ -539,7 +547,7 @@
 							<p class="truncate text-[11px] text-fg-secondary">
 								{titles.secondary} · {item.displayName || item.username || item.userId}
 							</p>
-							{#if serversStore.hasMultipleServers}
+							{#if serversStore.hasMultipleServers || serversStore.isDisconnected(item.serverId)}
 								<div class="mt-1">
 									<ServerBadge
 										serverId={item.serverId}

@@ -46,6 +46,13 @@
 		void loadUsers(selectedServerId);
 	});
 
+	$effect(() => {
+		if (selectedServerId && serversStore.loaded && !serversStore.byId(selectedServerId)) {
+			selectedServerId = null;
+			void loadUsers(null);
+		}
+	});
+
 	const filteredUsers = $derived.by(() => {
 		const q = query.trim().toLowerCase();
 		if (!q) return users;
@@ -146,7 +153,7 @@
 							{#if user.isStreaming}
 								<Badge tone="direct-play" dot pulse>LIVE · {user.activeStreamCount}</Badge>
 							{/if}
-							{#if serversStore.hasMultipleServers}
+							{#if serversStore.hasMultipleServers || serversStore.isDisconnected(user.serverId)}
 								<ServerBadge
 									serverId={user.serverId}
 									serverType={user.serverType}

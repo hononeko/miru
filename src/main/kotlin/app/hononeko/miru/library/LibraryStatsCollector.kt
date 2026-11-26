@@ -660,7 +660,11 @@ class LibraryStatsCollector(
         try {
             block().fold(
                 ifLeft = { error ->
-                    logger.warn("Library {} failed: {}", label, error.message)
+                    if (error is MiruError.UpstreamUnavailable && error.message.contains("not configured", ignoreCase = true)) {
+                        logger.debug("Library {} skipped: {}", label, error.message)
+                    } else {
+                        logger.warn("Library {} failed: {}", label, error.message)
+                    }
                 },
                 ifRight = { summary ->
                     logger.debug(
@@ -685,7 +689,11 @@ class LibraryStatsCollector(
         try {
             block().fold(
                 ifLeft = { error ->
-                    logger.warn("Library {} failed: {}", label, error.message)
+                    if (error is MiruError.UpstreamUnavailable && error.message.contains("not configured", ignoreCase = true)) {
+                        logger.debug("Library {} skipped: {}", label, error.message)
+                    } else {
+                        logger.warn("Library {} failed: {}", label, error.message)
+                    }
                 },
                 ifRight = { count ->
                     logger.debug("Library {} completed {}", label, kv("users", count))

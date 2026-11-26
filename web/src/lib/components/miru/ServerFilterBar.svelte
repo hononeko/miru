@@ -12,7 +12,7 @@
 	let { selectedServerId, onchange, class: className = '' }: Props = $props();
 </script>
 
-{#if serversStore.hasMultipleServers}
+{#if serversStore.servers.length > 1}
 	<div
 		role="group"
 		aria-label="Filter by media server"
@@ -53,6 +53,9 @@
 				></span>
 				<span class="font-mono text-[10px] uppercase opacity-80">{server.serverType}</span>
 				<span>{server.name}</span>
+				{#if !server.configured}
+					<span class="font-normal text-fg-muted">(Disconnected)</span>
+				{/if}
 			</button>
 		{/each}
 	</div>

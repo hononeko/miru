@@ -130,7 +130,7 @@
 		const params = new URLSearchParams();
 		params.set('q', data.series?.title ?? data.title);
 		const sid = data.serverId?.trim();
-		if (sid && serversStore.hasMultipleServers) {
+		if (sid && (serversStore.servers.length > 1 || serversStore.isDisconnected(sid))) {
 			params.set('serverId', sid);
 		}
 		return `/history?${params.toString()}`;
@@ -280,7 +280,7 @@
 					<div class="flex min-w-0 flex-1 flex-col gap-2">
 						<div class="flex flex-wrap items-center gap-1.5">
 							<Badge tone="primary" mono>{data.mediaType.replace('_', ' ').toUpperCase()}</Badge>
-							{#if serversStore.hasMultipleServers}
+							{#if serversStore.hasMultipleServers || serversStore.isDisconnected(data.serverId)}
 								<ServerBadge
 									serverId={data.serverId}
 									serverType={data.serverType}

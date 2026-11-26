@@ -39,6 +39,8 @@ import app.hononeko.miru.persistence.model.UserLibraryAccessRecord
 import app.hononeko.miru.persistence.model.UserPlaybackSummary
 import app.hononeko.miru.persistence.model.UserPreferencesRecord
 import app.hononeko.miru.persistence.model.UserRecord
+import app.hononeko.miru.persistence.model.findActiveStoredServer
+import app.hononeko.miru.persistence.repository.ServerDataCounts
 import app.hononeko.miru.persistence.model.WebhookDeliveryFilter
 import app.hononeko.miru.persistence.model.WebhookDeliveryRecord
 import app.hononeko.miru.persistence.model.WebhookDeliveryStatus
@@ -145,6 +147,7 @@ fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
         mediaPlayTests { ctx }
         staleMediaTests { ctx }
         cascadeTests { ctx }
+        disconnectAndRemoveCascadeTests { ctx }
         authAccountTests { ctx }
         authAccountRoleModeTests { ctx }
         authAccountLifecycleTests { ctx }
@@ -1606,6 +1609,168 @@ private fun FunSpecRootScope.cascadeTests(ctxProvider: () -> ContractContext) {
             ctx.library.findSectionsByServer(server.id).shouldBeRight() shouldHaveSize 0
             ctx.library.findSnapshots(server.id, "sec-1").shouldBeRight() shouldHaveSize 0
             ctx.library.findRecentlyAdded(server.id).shouldBeRight() shouldHaveSize 0
+        }
+    }
+}
+
+private data class DisconnectCascadeFixtureIds(
+    val targetServerId: String,
+    val survivorServerId: String,
+    val survivorUserId: String,
+    val accountId: String,
+)
+
+private suspend fun seedDisconnectCascadeFixtures(ctx: ContractContext): DisconnectCascadeFixtureIds {
+    val target =
+        sampleServer(id = "srv-target", name = "Target JF", machineId = "m-target")
+            .copy(serverType = "jellyfin", encryptedToken = "v1:iv.secret", clientIdentifier = "dev-target", updatedAtMs = 100L)
+    val survivor =
+        sampleServer(id = "srv-keep", name = "Keep Plex", machineId = "m-keep")
+            .copy(serverType = "plex", encryptedToken = "v1:iv.keep", clientIdentifier = "dev-keep", updatedAtMs = 200L)
+    ctx.servers.upsert(target).shouldBeRight()
+    ctx.servers.upsert(survivor).shouldBeRight()
+
+    val targetUser = sampleUser(id = "u-target", serverId = target.id, externalUserId = "ext-t", username = "target_user")
+    val survivorUser = sampleUser(id = "u-keep", serverId = survivor.id, externalUserId = "ext-k", username = "keep_user")
+    ctx.users.upsert(targetUser).shouldBeRight()
+    ctx.users.upsert(survivorUser).shouldBeRight()
+
+    val acc =
+        AuthAccountRecord(
+            id = "acc-link",
+            username = "viewer",
+            usernameNormalized = "viewer",
+            passwordHash = "hash",
+            role = "USER",
+            createdAtMs = 1_000L,
+            updatedAtMs = 1_000L,
+        )
+    ctx.authAccounts.insert(acc).shouldBeRight()
+    ctx.authAccounts.replaceLinkedMediaUserIds(acc.id, setOf(targetUser.id, survivorUser.id), 1_000L).shouldBeRight()
+
+    ctx.sessions.upsert(sampleSession(serverId = target.id, sessionKey = "st-1", ratingKey = "rt-1", userId = targetUser.id))
+        .shouldBeRight()
+    ctx.sessions.upsert(sampleSession(serverId = survivor.id, sessionKey = "sk-1", ratingKey = "rk-1", userId = survivorUser.id))
+        .shouldBeRight()
+
+    ctx.history.insert(sampleHistory(id = "ht-1", serverId = target.id, userId = targetUser.id, ratingKey = "rt-1")).shouldBeRight()
+    ctx.history.insert(sampleHistory(id = "ht-2", serverId = target.id, userId = targetUser.id, ratingKey = "rt-2")).shouldBeRight()
+    ctx.history.insert(sampleHistory(id = "hk-1", serverId = survivor.id, userId = survivorUser.id, ratingKey = "rk-1")).shouldBeRight()
+
+    ctx.library.upsertSection(
+        LibrarySectionRecord(serverId = target.id, sectionKey = "lib-t1", title = "JF Movies", sectionType = "movie", updatedAtMs = 1_000L),
+    ).shouldBeRight()
+    ctx.library.upsertSection(
+        LibrarySectionRecord(
+            serverId = survivor.id,
+            sectionKey = "lib-k1",
+            title = "Plex Movies",
+            sectionType = "movie",
+            updatedAtMs = 1_000L,
+        ),
+    ).shouldBeRight()
+    ctx.library.insertSnapshot(sampleSnapshot(id = "snt-1", serverId = target.id, sectionKey = "lib-t1", capturedAtMs = 1_000L))
+        .shouldBeRight()
+    ctx.library.upsertMediaItems(
+        listOf(
+            MediaItemCacheRecord(
+                serverId = target.id,
+                ratingKey = "rt-1",
+                sectionKey = "lib-t1",
+                mediaType = "movie",
+                title = "Target Film",
+                addedAtMs = 1_000L,
+                updatedAtMs = 1_000L,
+            ),
+        ),
+    ).shouldBeRight()
+    ctx.library.replaceUserLibraryAccess(
+        target.id,
+        listOf(UserLibraryAccessRecord(serverId = target.id, externalUserId = "ext-t", allLibraries = true, updatedAtMs = 1_000L)),
+    ).shouldBeRight()
+    ctx.library.replaceUserLibraryAccess(
+        survivor.id,
+        listOf(UserLibraryAccessRecord(serverId = survivor.id, externalUserId = "ext-k", allLibraries = true, updatedAtMs = 1_000L)),
+    ).shouldBeRight()
+
+    ctx.guardrails.upsert(
+        GuardrailRuleRecord(
+            ruleType = GuardrailRuleType.PAUSED_TIMEOUT,
+            mode = GuardrailMode.WARN,
+            thresholdInt = 15,
+            message = "Paused",
+            updatedAtMs = 1_000L,
+            updatedBy = "admin",
+        ),
+    ).shouldBeRight()
+    ctx.terminationAudit.insert(
+        StreamTerminationAuditRecord(
+            id = "aud-keep",
+            createdAtMs = 1_000L,
+            serverId = target.id,
+            sessionId = "st-1",
+            sessionKey = "st-1",
+            source = TerminationAuditSource.MANUAL,
+            action = TerminationAuditAction.TERMINATED,
+            ruleType = null,
+            actorAccountId = acc.id,
+            actorName = "admin",
+            targetUserId = targetUser.id,
+            targetUsername = "target_user",
+            mediaRatingKey = "rt-1",
+            mediaTitle = "Target Film",
+            streamDecision = "direct_play",
+            videoResolution = "1080p",
+            reason = "Test",
+            errorDetail = null,
+        ),
+    ).shouldBeRight()
+
+    return DisconnectCascadeFixtureIds(target.id, survivor.id, survivorUser.id, acc.id)
+}
+
+private fun FunSpecRootScope.disconnectAndRemoveCascadeTests(ctxProvider: () -> ContractContext) {
+    context("Disconnect credential clearing and isolated cascade removal") {
+        test("clearCredentials preserves row and history while deleting a disconnected server cascades only that server") {
+            val ctx = ctxProvider()
+            val ids = seedDisconnectCascadeFixtures(ctx)
+            val targetId = ids.targetServerId
+            val survivorId = ids.survivorServerId
+
+            // 1. Disconnecting (clearCredentials) keeps server row + data counts, drops active token
+            val cleared = ctx.servers.clearCredentials(targetId, updatedAtMs = 500L).shouldBeRight().shouldNotBeNull()
+            cleared.encryptedToken.shouldBeNull()
+            cleared.updatedAtMs shouldBe 500L
+            ctx.servers.findAll().shouldBeRight().findActiveStoredServer("jellyfin").shouldBeNull()
+            ctx.servers.countServerData(targetId).shouldBeRight() shouldBe ServerDataCounts(plays = 2L, users = 1L, libraries = 1L)
+            ctx.servers.countAllServerData().shouldBeRight() shouldBe
+                mapOf(
+                    targetId to ServerDataCounts(plays = 2L, users = 1L, libraries = 1L),
+                    survivorId to ServerDataCounts(plays = 1L, users = 1L, libraries = 1L),
+                )
+
+            // 2. Removing the target server deletes all of target's data across child tables, leaving survivor & global tables intact
+            ctx.servers.delete(targetId).shouldBeRight() shouldBe true
+            ctx.servers.findById(targetId).shouldBeRight().shouldBeNull()
+            ctx.users.findByServer(targetId).shouldBeRight().shouldBeEmpty()
+            ctx.sessions.findByServer(targetId).shouldBeRight().shouldBeEmpty()
+            ctx.history.query(HistoryFilter(serverId = targetId)).shouldBeRight().totalCount shouldBe 0L
+            ctx.library.findSectionsByServer(targetId).shouldBeRight().shouldBeEmpty()
+            ctx.library.findSnapshots(targetId, "lib-t1").shouldBeRight().shouldBeEmpty()
+            ctx.library.findRecentlyAdded(targetId).shouldBeRight().shouldBeEmpty()
+            ctx.library.findUserLibraryAccessByServer(targetId).shouldBeRight().shouldBeEmpty()
+
+            ctx.authAccounts.findLinkedMediaUserIds(ids.accountId).shouldBeRight() shouldContainExactly listOf(ids.survivorUserId)
+
+            ctx.servers.findById(survivorId).shouldBeRight().shouldNotBeNull()
+            ctx.users.findByServer(survivorId).shouldBeRight() shouldHaveSize 1
+            ctx.sessions.findByServer(survivorId).shouldBeRight() shouldHaveSize 1
+            ctx.history.query(HistoryFilter(serverId = survivorId)).shouldBeRight().totalCount shouldBe 1L
+            ctx.library.findSectionsByServer(survivorId).shouldBeRight() shouldHaveSize 1
+            ctx.library.findUserLibraryAccessByServer(survivorId).shouldBeRight() shouldHaveSize 1
+
+            ctx.guardrails.findByRuleType(GuardrailRuleType.PAUSED_TIMEOUT).shouldBeRight().shouldNotBeNull()
+            ctx.terminationAudit.query(TerminationAuditFilter()).shouldBeRight().totalCount shouldBe 1L
         }
     }
 }

@@ -100,7 +100,7 @@
 				<Badge tone={detail.isWatched ? 'direct-play' : 'neutral'} dot>
 					{detail.isWatched ? `Watched · ${Math.round(pct)}%` : `${Math.round(pct)}%`}
 				</Badge>
-				{#if serversStore.hasMultipleServers}
+				{#if serversStore.hasMultipleServers || serversStore.isDisconnected(detail.serverId)}
 					<ServerBadge
 						serverId={detail.serverId}
 						serverType={detail.serverType}

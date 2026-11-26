@@ -252,6 +252,7 @@ class PlexRuntimeManager(
 
     private var activePipeline: ActivePipeline? = null
     private var startupJob: Job? = null
+    private var postReloadSyncJob: Job? = null
 
     override val serverIdProvider: suspend () -> Either<MiruError, String> = {
         cachedServerId?.right()
@@ -287,6 +288,8 @@ class PlexRuntimeManager(
     override fun isConfigured(): Boolean = adapter.currentDelegate() != null
 
     override fun websocketEnabled(): Boolean = plexConfig.websocketEnabled
+
+    override fun isEnvConfigured(): Boolean = plexConfig.isStaticConfigured
 
     override fun connectionState(): ConnectionState =
         activePipeline?.listener?.connectionState?.value ?: ConnectionState.Disconnected
@@ -359,21 +362,56 @@ class PlexRuntimeManager(
         }
     }
 
+    override suspend fun disconnect(serverId: String?): Either<MiruError, Int> {
+        val pendingStartup = startupJob
+        startupJob = null
+        pendingStartup?.cancelAndJoin()
+
+        val pendingSync = postReloadSyncJob
+        postReloadSyncJob = null
+        pendingSync?.cancelAndJoin()
+
+        return reloadMutex.withLock {
+            either {
+                stopActivePipelineLocked()
+                val targetServerId = serverId ?: cachedServerId
+                val closedSessions =
+                    if (!targetServerId.isNullOrBlank()) {
+                        sessionEngine.closeAllSessionsForServer(targetServerId).bind().size
+                    } else {
+                        0
+                    }
+                clearActiveStateLocked()
+                runtimeLogger.info("Disconnected Plex runtime {} closedSessions={}", targetServerId ?: "none", closedSessions)
+                closedSessions
+            }
+        }
+    }
+
     override suspend fun stop() {
         val pendingStartup = startupJob
         startupJob = null
         pendingStartup?.cancelAndJoin()
 
+        val pendingSync = postReloadSyncJob
+        postReloadSyncJob = null
+        pendingSync?.cancelAndJoin()
+
         reloadMutex.withLock {
             stopActivePipelineLocked()
-            adapter.setDelegate(null)
-            activeBaseUrl = null
-            activeMachineId = null
-            cachedServerId = null
-            latestReconcileHealth = null
-            activeCredentialSource = PlexCredentialSource.NOT_CONFIGURED
+            clearActiveStateLocked()
         }
         managerScope.cancel()
+    }
+
+    private fun clearActiveStateLocked() {
+        adapter.setDelegate(null)
+        activeBaseUrl = null
+        activeMachineId = null
+        cachedServerId = null
+        latestReconcileHealth = null
+        activeCredentialSource = PlexCredentialSource.NOT_CONFIGURED
+        _websocketConnected.value = false
     }
 
     private suspend fun loadAndActivateStoredLocked(triggerSync: Boolean): Either<MiruError, Boolean> =
@@ -484,15 +522,17 @@ class PlexRuntimeManager(
 
         if (triggerSync) {
             onReloadLibrarySync?.let { syncCallback ->
-                managerScope.launch(CoroutineName("plex-post-reload-sync")) {
-                    try {
-                        syncCallback()
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        runtimeLogger.warn("Post-reload library sync failed: {}", e.message)
+                postReloadSyncJob?.cancel()
+                postReloadSyncJob =
+                    managerScope.launch(CoroutineName("plex-post-reload-sync")) {
+                        try {
+                            syncCallback()
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            runtimeLogger.warn("Post-reload library sync failed: {}", e.message)
+                        }
                     }
-                }
             }
         }
     }

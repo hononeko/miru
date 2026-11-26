@@ -169,7 +169,8 @@ database:
   postgres:
     url: ""
     user: ""
-    password: ""
+    # -- PostgreSQL password. Prefer existingSecret; otherwise pass via --set or an external values file.
+    # password: ""
     maxPoolSize: 10
 
 # -- Security keys.
@@ -246,7 +247,8 @@ auth:
   cookieSecure: auto
   # -- Optional bootstrap admin account created on startup if no admin exists yet.
   adminUsername: ""
-  adminPassword: ""
+  # -- Bootstrap admin password. Prefer existingSecret; otherwise pass via --set or an external values file.
+  # adminPassword: ""
   rateLimit:
     enabled: true
     windowSeconds: 60

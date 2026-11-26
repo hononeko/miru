@@ -300,7 +300,7 @@
           "properties": {
             "url": { "type": "string" },
             "user": { "type": "string" },
-            "password": { "type": "string" },
+            "password": { "type": ["string", "null"] },
             "maxPoolSize": { "type": "integer", "minimum": 1 }
           }
         }
@@ -417,7 +417,7 @@
           "enum": ["auto", "true", "false", "always", "never"]
         },
         "adminUsername": { "type": "string" },
-        "adminPassword": { "type": "string" },
+        "adminPassword": { "type": ["string", "null"] },
         "rateLimit": {
           "type": "object",
           "properties": {

@@ -44,8 +44,10 @@
 		UserSummaryDto
 	} from '$api/types';
 	import Badge from '$components/ui/Badge.svelte';
-	import Button from '$components/ui/Button.svelte';
+	import Button, { buttonVariants } from '$components/ui/Button.svelte';
 	import Sheet from '$components/ui/Sheet.svelte';
+	import { copyTextWhenReady } from '$lib/clipboard';
+	import { jellyfinQuickConnectUrl } from '$lib/jellyfin';
 	import DeleteAccountButton from '$components/miru/DeleteAccountButton.svelte';
 	import ServerBadge from '$components/miru/ServerBadge.svelte';
 	import WebhooksPanel from '$components/miru/WebhooksPanel.svelte';
@@ -222,6 +224,8 @@
 	let jellyfinExpiresAtMs = $state<number>(0);
 	let jellyfinNowTickMs = $state<number>(Date.now());
 	let jellyfinConnectResult = $state<JellyfinQuickConnectPollResponse | null>(null);
+	/** Link to Jellyfin's Quick Connect page with the code filled in; null if the URL can't be built */
+	let jellyfinQuickConnectHref = $state<string | null>(null);
 
 	let jellyfinPollTimerId: ReturnType<typeof setInterval> | null = null;
 	let jellyfinCountdownTimerId: ReturnType<typeof setInterval> | null = null;
@@ -580,6 +584,7 @@
 		jellyfinServerName = '';
 		jellyfinServerVersion = null;
 		jellyfinConnectResult = null;
+		jellyfinQuickConnectHref = null;
 		jellyfinWizardStep = 'url';
 		jellyfinWizardOpen = true;
 	}
@@ -596,6 +601,17 @@
 		jellyfinWizardError = null;
 		jellyfinCodeCopied = false;
 		jellyfinConnectResult = null;
+		jellyfinQuickConnectHref = null;
+
+		// Start the copy now, while the click on Connect still counts as a user action; it
+		// completes once the code arrives
+		let codeReady!: (code: string) => void;
+		let codeFailed!: (reason: unknown) => void;
+		const pendingCode = new Promise<string>((resolve, reject) => {
+			codeReady = resolve;
+			codeFailed = reject;
+		});
+		const copied = copyTextWhenReady(pendingCode);
 
 		try {
 			const started = unwrap(
@@ -603,13 +619,19 @@
 					body: { baseUrl: url }
 				})
 			);
+			codeReady(started.code);
 			jellyfinAttemptId = started.attemptId;
 			jellyfinCode = started.code;
 			jellyfinServerName = started.serverName;
 			jellyfinServerVersion = started.serverVersion ?? null;
 			jellyfinExpiresAtMs = started.expiresAtMs;
 			jellyfinNowTickMs = Date.now();
+			jellyfinQuickConnectHref = jellyfinQuickConnectUrl(url, started.code);
 			jellyfinWizardStep = 'waiting';
+
+			void copied.then((ok) => {
+				if (ok && jellyfinCode === started.code) jellyfinCodeCopied = true;
+			});
 
 			jellyfinCountdownTimerId = setInterval(() => {
 				jellyfinNowTickMs = Date.now();
@@ -624,6 +646,7 @@
 				void pollJellyfinOnce();
 			}, 1500);
 		} catch (err) {
+			codeFailed(err);
 			if (err instanceof MiruApiError) {
 				jellyfinWizardError =
 					err.status === 502 && err.detail === "Upstream provider 'jellyfin' is currently unavailable"
@@ -2077,8 +2100,27 @@
 					</Button>
 				</div>
 
+				{#if jellyfinQuickConnectHref}
+					<div class="flex flex-col gap-1">
+						<a
+							href={jellyfinQuickConnectHref}
+							target="_blank"
+							rel="noopener noreferrer"
+							class={buttonVariants({ variant: 'cyan', size: 'md', class: 'w-full' })}
+						>
+							<ExternalLink class="h-3.5 w-3.5" />
+							Open Jellyfin Quick Connect
+						</a>
+						<p class="truncate text-center font-mono text-[10px] text-fg-muted" title={jellyfinUrlInput.trim()}>
+							{jellyfinUrlInput.trim()}
+						</p>
+					</div>
+				{/if}
+
 				<p class="text-xs text-fg-secondary">
-					In Jellyfin, signed in as an administrator, open your profile → Quick Connect and enter this code.
+					Approve the code in Jellyfin while signed in as an administrator. The Quick Connect page usually has the
+					code filled in; if not, paste it{jellyfinCodeCopied ? ' from your clipboard' : ''}. You can also open your
+					profile → Quick Connect in Jellyfin yourself.
 				</p>
 			</div>
 			<Button variant="ghost" size="md" onclick={() => handleJellyfinWizardOpenChange(false)} class="w-full">

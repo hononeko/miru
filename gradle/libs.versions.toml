@@ -18,7 +18,7 @@ shadow = "9.6.1"
 detekt = "2.0.0-alpha.6"
 kover = "0.9.11"
 bcprov = "1.87"
-micrometer = "1.16.9"
+micrometer = "1.17.2"
 
 [libraries]
 # Kotlin, Coroutines & Serialization

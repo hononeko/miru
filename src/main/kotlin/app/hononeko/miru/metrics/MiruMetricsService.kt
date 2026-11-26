@@ -424,7 +424,7 @@ class MiruMetricsService(
             serverNameByIdProvider(normalizedId)
                 ?.trim()
                 ?.takeIf { it.isNotEmpty() }
-                ?: normalizedId
+                ?: return normalizedId
         serverNameCache[normalizedId] = resolved
         return resolved
     }

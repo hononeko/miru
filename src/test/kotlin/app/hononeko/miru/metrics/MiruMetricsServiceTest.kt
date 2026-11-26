@@ -1,5 +1,8 @@
 package app.hononeko.miru.metrics
 
+import app.hononeko.miru.MiruJson
+import app.hononeko.miru.adapter.ActiveStreamSnapshot
+import app.hononeko.miru.adapter.ArtworkData
 import app.hononeko.miru.adapter.LibraryItemsPage
 import app.hononeko.miru.adapter.LibrarySectionInfo
 import app.hononeko.miru.adapter.LibrarySectionType
@@ -8,10 +11,7 @@ import app.hononeko.miru.adapter.MediaServerAdapter
 import app.hononeko.miru.adapter.MediaType
 import app.hononeko.miru.adapter.MediaUser
 import app.hononeko.miru.adapter.MediaUserLibraryAccess
-import app.hononeko.miru.adapter.PlaybackState
 import app.hononeko.miru.adapter.ServerIdentity
-import app.hononeko.miru.adapter.ArtworkData
-import app.hononeko.miru.adapter.ActiveStreamSnapshot
 import app.hononeko.miru.config.DatabaseConfig
 import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.library.LibraryStatsCollector
@@ -35,6 +35,7 @@ import arrow.core.left
 import arrow.core.right
 import io.kotest.assertions.arrow.core.shouldBeRight
 import io.kotest.core.spec.style.FunSpec
+import io.kotest.matchers.collections.shouldBeIn
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.string.shouldNotContain
@@ -45,6 +46,10 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.yield
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import java.io.File
 import java.nio.file.Files
 
 class MiruMetricsServiceTest :
@@ -494,6 +499,81 @@ class MiruMetricsServiceTest :
                 metricsScope.cancel()
                 handle.close()
                 dir.toFile().deleteRecursively()
+            }
+        }
+
+        test("does not cache transient null server name lookups and later resolves the real server name") {
+            var resolvedName: String? = null
+            val service =
+                MiruMetricsService(
+                    serverNameByIdProvider = { id -> if (id == "srv-uuid-1") resolvedName else null },
+                )
+            try {
+                val firstSession = sessionRecord(sessionKey = "s-1", ratingKey = "rk-1").copy(serverId = "srv-uuid-1")
+                service.handleSessionEvent(SessionEvent.SessionStarted("srv-uuid-1", firstSession.key, 1_000L, firstSession))
+                service.scrape() shouldContain """server="srv-uuid-1""""
+
+                // Now DB/upsert succeeds and returns the friendly name; next event must resolve instead of sticking on UUID
+                resolvedName = "Living Room Plex"
+                service.handleSessionEvent(
+                    SessionEvent.SessionUpdated(
+                        serverId = "srv-uuid-1",
+                        key = firstSession.key,
+                        timestampMs = 2_000L,
+                        session = firstSession,
+                        previousState = "playing",
+                        previousStreamDecision = "direct_play",
+                        streamDecisionChanged = false,
+                    ),
+                )
+                val resolvedOut = service.scrape()
+                resolvedOut shouldContain """server="Living Room Plex""""
+                resolvedOut shouldNotContain """server="srv-uuid-1""""
+            } finally {
+                service.close()
+            }
+        }
+
+        test("Grafana dashboard JSON matches K8s ConfigMap and references only metrics exposed by MiruMetricsService") {
+            val dashboardFile = File("docs/grafana/miru-dashboard.json")
+            val configMapFile = File("docs/k8s/grafana-dashboard.yaml")
+            val rawDashboard = dashboardFile.readText()
+            val dashboardJson = MiruJson.parseToJsonElement(rawDashboard).jsonObject
+
+            val yamlLines = configMapFile.readLines()
+            val markerIdx = yamlLines.indexOfFirst { it.trim() == "miru-dashboard.json: |" }
+            (markerIdx >= 0) shouldBe true
+            val embeddedJsonText =
+                yamlLines
+                    .drop(markerIdx + 1)
+                    .map { line -> if (line.startsWith("    ")) line.drop(4) else line }
+                    .joinToString("\n")
+            val embeddedJson = MiruJson.parseToJsonElement(embeddedJsonText).jsonObject
+            embeddedJson shouldBe dashboardJson
+
+            val templatingList = dashboardJson.getValue("templating").jsonObject.getValue("list").jsonArray
+            val varsByName = templatingList.associateBy { it.jsonObject.getValue("name").jsonPrimitive.content }
+            varsByName.getValue("server").jsonObject.getValue("allValue").jsonPrimitive.content shouldBe ".*"
+            varsByName.getValue("gpu_node").jsonObject.getValue("allValue").jsonPrimitive.content shouldBe ".*"
+
+            val exposedMetricNames =
+                setOf(
+                    MiruMetricsService.METRIC_ACTIVE_STREAMS,
+                    MiruMetricsService.METRIC_ACTIVE_BANDWIDTH_KBPS,
+                    MiruMetricsService.METRIC_LIBRARY_ITEMS,
+                    MiruMetricsService.METRIC_LIBRARY_SIZE_BYTES,
+                    MiruMetricsService.METRIC_PLAYS_COMPLETED_TOTAL,
+                    MiruMetricsService.METRIC_WEBSOCKET_CONNECTED,
+                    MiruMetricsService.METRIC_WEBSOCKET_RECONNECTS_TOTAL,
+                )
+            val referencedMiruMetrics =
+                Regex("""\bmiru_[a-z0-9_]+\b""")
+                    .findAll(rawDashboard)
+                    .map { it.value }
+                    .toSet()
+            referencedMiruMetrics.isNotEmpty() shouldBe true
+            referencedMiruMetrics.forEach { metric ->
+                metric shouldBeIn exposedMetricNames
             }
         }
     })

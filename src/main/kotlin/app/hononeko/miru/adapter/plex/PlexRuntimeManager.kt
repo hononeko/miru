@@ -521,8 +521,11 @@ class PlexRuntimeManager(
     private suspend fun stopActivePipelineLocked() {
         val current = activePipeline
         activePipeline = null
-        _websocketConnected.value = false
-        current?.stopAndClose()
+        try {
+            current?.stopAndClose()
+        } finally {
+            _websocketConnected.value = false
+        }
     }
 
     private suspend fun resolveCurrentServerId(): Either<MiruError, String> {

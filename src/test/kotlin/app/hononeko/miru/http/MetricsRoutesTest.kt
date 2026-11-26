@@ -32,6 +32,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.net.ServerSocket
 import java.nio.file.Files
@@ -141,7 +142,7 @@ class MetricsRoutesTest :
                         libraryStatsCollector = syncServices.libraryStatsCollector,
                     ).shouldNotBeNull()
                 sharedPortRuntime.dedicatedServer.shouldBeNull()
-                sharedPortRuntime.scope.let { }
+                sharedPortRuntime.scope.cancel()
                 sharedPortRuntime.service.close()
 
                 val dedicatedRuntime =

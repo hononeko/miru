@@ -1,0 +1,17 @@
+# Prometheus Operator ServiceMonitor for kube-prometheus-stack.
+# Requires METRICS_ENABLED: "true" in miru-config (see configmap.yaml).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: miru
+  labels:
+    app: miru
+spec:
+  selector:
+    matchLabels:
+      app: miru
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s

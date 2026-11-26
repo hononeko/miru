@@ -11,10 +11,12 @@ These files are documentation. Nothing deploys them from this repository: copy t
 | `configmap.yaml` | `miru-config`: database, Plex and authentication settings |
 | `pvc.yaml` | `miru-data`: a 1 GiB volume for the SQLite database |
 | `deployment.yaml` | The Miru pod |
-| `service.yaml` | The `miru` ClusterIP service on port 8080 |
+| `service.yaml` | The `miru` ClusterIP service on ports 8080 (`http`) and 9090 (`metrics`) |
 | `httproute.yaml` | Optional Gateway API route |
 | `ingress.yaml` | Optional Ingress |
 | `network-policy.yaml` | Optional NetworkPolicy |
+| `servicemonitor.yaml` | Optional `kube-prometheus-stack` `ServiceMonitor` scraping `/metrics` on port `metrics` |
+| `grafana-dashboard.yaml` | Optional Grafana sidecar `ConfigMap` (`grafana_dashboard: "1"`) |
 
 ## Quick start
 
@@ -63,6 +65,12 @@ Miru connects to Plex in one of two ways:
 ## Single sign-on
 
 Set `AUTH_MODE: "oidc"` in `configmap.yaml` (or `OIDC_ENABLED: "true"` to offer SSO alongside local logins), fill in the `OIDC_*` settings, and add `OIDC_CLIENT_SECRET` to `secret.yaml` if your provider issues one. Register `https://<your-host>/api/v1/auth/oidc/callback` as the redirect URI with your provider.
+
+## Prometheus & Grafana
+
+1. Set `METRICS_ENABLED: "true"` in `configmap.yaml`. By default Miru serves `/metrics` on dedicated internal port `9090` (`METRICS_PORT`) so public Ingress/HTTPRoute traffic on port `8080` never exposes metrics.
+2. Uncomment `servicemonitor.yaml` and `grafana-dashboard.yaml` in `kustomization.yaml` (requires `kube-prometheus-stack` CRDs and the Grafana dashboard sidecar).
+3. The starter dashboard (also importable directly from [`../grafana/miru-dashboard.json`](../grafana/miru-dashboard.json)) correlates Plex hardware/software transcodes (`miru_active_streams`) with Intel GPU engine utilization (`intel_gpu_engine_busy`, e.g., from an Intel GPU Prometheus exporter).
 
 ## Notes
 

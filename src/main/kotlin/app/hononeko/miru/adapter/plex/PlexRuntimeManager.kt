@@ -47,8 +47,11 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -201,6 +204,16 @@ class PlexRuntimeManager(
             onBufferOverflow = BufferOverflow.DROP_OLDEST,
         )
     val reconcileHealth: SharedFlow<ReconcileHealthSignal> = _reconcileHealth.asSharedFlow()
+
+    private val _websocketConnected = MutableStateFlow(false)
+    val websocketConnected: StateFlow<Boolean> = _websocketConnected.asStateFlow()
+
+    private val _websocketReconnected =
+        MutableSharedFlow<Unit>(
+            extraBufferCapacity = WS_RECONNECT_BUFFER_CAPACITY,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
+    val websocketReconnected: SharedFlow<Unit> = _websocketReconnected.asSharedFlow()
 
     private val reloadMutex = Mutex()
     private val serverIdMutex = Mutex()
@@ -409,11 +422,24 @@ class PlexRuntimeManager(
         val forwarderJob =
             listener?.let { activeListener ->
                 pipelineScope.launch(CoroutineName("plex-event-forwarder")) {
+                    launch(CoroutineName("plex-ws-state-forwarder")) {
+                        activeListener.connectionState.collect { state ->
+                            _websocketConnected.value = (state == ConnectionState.Connected)
+                        }
+                    }
+                    launch(CoroutineName("plex-ws-reconnect-forwarder")) {
+                        activeListener.reconnected.collect {
+                            _websocketReconnected.tryEmit(Unit)
+                        }
+                    }
                     activeListener.events.collect { event ->
                         adapter.emitEvent(event)
                     }
                 }
             }
+        if (listener == null) {
+            _websocketConnected.value = false
+        }
         val concreteAdapter =
             PlexMediaServerAdapter(
                 config = runtimePlexConfig,
@@ -495,6 +521,7 @@ class PlexRuntimeManager(
     private suspend fun stopActivePipelineLocked() {
         val current = activePipeline
         activePipeline = null
+        _websocketConnected.value = false
         current?.stopAndClose()
     }
 
@@ -533,5 +560,6 @@ class PlexRuntimeManager(
 
     private companion object {
         const val RECONCILE_HEALTH_BUFFER_CAPACITY = 64
+        const val WS_RECONNECT_BUFFER_CAPACITY = 16
     }
 }

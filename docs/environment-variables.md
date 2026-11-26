@@ -68,6 +68,14 @@ Miru connects to Plex in one of two ways:
 | --- | --- | --- |
 | `ENABLE_TAUTULLI_COMPAT_API` | `false` | `true` answers the part of Tautulli's API that Kometa uses at `/api/v2`. See [Tautulli API](tautulli-api.md). |
 
+## Prometheus metrics
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `METRICS_ENABLED` | `false` | `true` exposes Miru telemetry in Prometheus text format (`0.0.4`) at `GET /metrics`. Disabled by default so unauthenticated metrics are not exposed unless opted in. |
+| `METRICS_HOST` | `0.0.0.0` | Address the dedicated metrics listener binds to when `METRICS_PORT` differs from `MIRU_PORT`. |
+| `METRICS_PORT` | `9090` | Port for `/metrics`, from 1 to 65535. When different from `MIRU_PORT`, Miru starts a dedicated internal Netty listener serving only `GET /metrics`; when equal to `MIRU_PORT`, `/metrics` is mounted on the main HTTP server. |
+
 ## Stream Guardrails
 
 Automated stream guardrails default to `disabled`. Setting a rule's mode to `warn` runs it in dry-run mode (recording structured warnings and audit log entries without terminating Plex sessions), while `enforce` automatically terminates matching Plex streams and sends the configured message to the viewer. Rules can also be adjusted at runtime from the Admin Console.

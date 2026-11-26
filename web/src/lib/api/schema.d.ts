@@ -58,6 +58,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Prometheus telemetry metrics
+         * @description Exposes bounded-cardinality Miru telemetry in Prometheus text exposition format (`text/plain; version=0.0.4`). Mounted on the main server only when `METRICS_ENABLED=true` and `METRICS_PORT` equals `MIRU_PORT`; otherwise served on the dedicated `METRICS_HOST:METRICS_PORT` listener or disabled.
+         */
+        get: operations["getMetrics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/providers": {
         parameters: {
             query?: never;
@@ -2263,6 +2283,33 @@ export interface operations {
                 content: {
                     "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
+            };
+        };
+    };
+    getMetrics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Prometheus exposition format payload */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            /** @description Metrics endpoint is disabled or served on the dedicated metrics port */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

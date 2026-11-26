@@ -23,9 +23,13 @@ import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.launch
@@ -83,6 +87,13 @@ class LibraryStatsCollector(
     private var job: Job? = null
     private var pendingAllSections = false
     private val pendingSectionKeys = linkedSetOf<String>()
+
+    private val _syncEvents =
+        MutableSharedFlow<LibrarySyncSummary>(
+            extraBufferCapacity = SYNC_EVENT_BUFFER_CAPACITY,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
+    val syncEvents: SharedFlow<LibrarySyncSummary> = _syncEvents.asSharedFlow()
 
     override fun start() {
         synchronized(lifecycleLock) {
@@ -242,21 +253,26 @@ class LibraryStatsCollector(
                 )
             }
 
+            val summary =
+                LibrarySyncSummary(
+                    mode = LibrarySyncMode.FAST,
+                    syncedSections = syncedSections,
+                    failedSections = failedSections,
+                    totalItemsSynced = 0,
+                    snapshotsCreated = 0,
+                    prunedItems = 0,
+                    syncedAtMs = nowMs,
+                )
             if (firstError != null) {
+                if (syncedSections > 0) {
+                    _syncEvents.tryEmit(summary)
+                }
                 raise(firstError)
             }
 
             syncLibraryAccessBestEffort(serverId)
-
-            LibrarySyncSummary(
-                mode = LibrarySyncMode.FAST,
-                syncedSections = syncedSections,
-                failedSections = failedSections,
-                totalItemsSynced = 0,
-                snapshotsCreated = 0,
-                prunedItems = 0,
-                syncedAtMs = nowMs,
-            )
+            _syncEvents.tryEmit(summary)
+            summary
         }
 
     private suspend fun syncDeepLocked(sectionKeyFilter: String?): Either<MiruError, LibrarySyncSummary> =
@@ -292,21 +308,26 @@ class LibraryStatsCollector(
                 )
             }
 
+            val summary =
+                LibrarySyncSummary(
+                    mode = LibrarySyncMode.DEEP,
+                    syncedSections = syncedSections,
+                    failedSections = failedSections,
+                    totalItemsSynced = totalItemsSynced,
+                    snapshotsCreated = snapshotsCreated,
+                    prunedItems = prunedItems,
+                    syncedAtMs = nowMs,
+                )
             if (firstError != null) {
+                if (syncedSections > 0) {
+                    _syncEvents.tryEmit(summary)
+                }
                 raise(firstError)
             }
 
             syncLibraryAccessBestEffort(serverId)
-
-            LibrarySyncSummary(
-                mode = LibrarySyncMode.DEEP,
-                syncedSections = syncedSections,
-                failedSections = failedSections,
-                totalItemsSynced = totalItemsSynced,
-                snapshotsCreated = snapshotsCreated,
-                prunedItems = prunedItems,
-                syncedAtMs = nowMs,
-            )
+            _syncEvents.tryEmit(summary)
+            summary
         }
 
     private suspend fun syncSectionDeep(
@@ -684,6 +705,7 @@ class LibraryStatsCollector(
         val DEFAULT_TIMELINE_DEBOUNCE_WINDOW: Duration = 10.seconds
         val DEFAULT_TIMELINE_MAX_WAIT: Duration = 60.seconds
 
+        private const val SYNC_EVENT_BUFFER_CAPACITY = 16
         private const val MILLIS_PER_SECOND = 1_000L
         private const val PLEX_TYPE_SHOW = 2
         private const val PLEX_TYPE_SEASON = 3

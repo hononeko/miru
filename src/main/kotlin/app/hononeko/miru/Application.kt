@@ -21,12 +21,14 @@ import app.hononeko.miru.health.ReadinessService
 import app.hononeko.miru.http.adminImportRoutes
 import app.hononeko.miru.http.artworkRoutes
 import app.hononeko.miru.http.authRoutes
+import app.hononeko.miru.http.createDedicatedMetricsServer
 import app.hononeko.miru.http.healthRoutes
 import app.hononeko.miru.http.historyStatsRoutes
 import app.hononeko.miru.http.installRequestLogging
 import app.hononeko.miru.http.installSecurityHeaders
 import app.hononeko.miru.http.libraryRoutes
 import app.hononeko.miru.http.mediaDetailsRoutes
+import app.hononeko.miru.http.metricsRoutes
 import app.hononeko.miru.http.openApiRoutes
 import app.hononeko.miru.http.plexOAuthRoutes
 import app.hononeko.miru.http.resolveWebContentSecurityPolicy
@@ -39,6 +41,7 @@ import app.hononeko.miru.http.webhookRoutes
 import app.hononeko.miru.importer.TautulliCli
 import app.hononeko.miru.importer.TautulliImporterService
 import app.hononeko.miru.library.LibraryStatsCollector
+import app.hononeko.miru.metrics.MiruMetricsService
 import app.hononeko.miru.persistence.DatabaseFactory
 import app.hononeko.miru.persistence.DatabaseHandle
 import app.hononeko.miru.persistence.DatabaseReadinessCheck
@@ -82,8 +85,10 @@ import io.ktor.server.application.ApplicationStopped
 import io.ktor.server.application.ApplicationStopping
 import io.ktor.server.application.install
 import io.ktor.server.config.ApplicationConfig
+import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
+import io.ktor.server.netty.NettyApplicationEngine
 import io.ktor.server.plugins.BadRequestException
 import io.ktor.server.plugins.compression.Compression
 import io.ktor.server.plugins.compression.condition
@@ -116,6 +121,8 @@ private val logger = LoggerFactory.getLogger("app.hononeko.miru.Application")
 private val REALTIME_SHUTDOWN_TIMEOUT = 5.seconds
 private val DEFAULT_SSE_KEEPALIVE_INTERVAL = 15.seconds
 private const val COMPRESSION_MIN_SIZE_BYTES = 1024L
+private const val METRICS_SERVER_STOP_GRACE_MS = 500L
+private const val METRICS_SERVER_STOP_TIMEOUT_MS = 2_000L
 
 val MiruJson: Json =
     Json {
@@ -198,38 +205,119 @@ private fun runServer() {
             }
         }
     val readinessChecks = listOf(NamedReadinessCheck("database", DatabaseReadinessCheck(databaseHandle)))
+    val metricsRuntime =
+        createMetricsRuntime(
+            appConfig = appConfig,
+            plexRuntimeManager = plexRuntimeManager,
+            libraryRepository = libraryRepository,
+            mediaServerRepository = mediaServerRepository,
+            libraryStatsCollector = syncServices.libraryStatsCollector,
+        )
 
     val server =
-        embeddedServer(factory = Netty, port = appConfig.server.port, host = appConfig.server.host) {
-            registerLifecycleHandlers(syncServices, databaseHandle, plexOAuthHttpClient, webhookBundle.httpClient, oidcClient)
-            miruModule(
-                config = appConfig,
-                readinessChecks = readinessChecks,
-                appVersion = appVersion,
-                realtime = plexRuntimeManager,
-                authService = authService,
-                oidcAuthService = oidcAuthService,
-                artworkProxyService = artworkProxyService,
-                streamsAndUsersService = streamsAndUsersService,
-                streamControlService = streamControlService,
-                webhookService = webhookBundle.service,
-                sessionEvents = plexRuntimeManager.sessionEngine.sessionEvents,
-                historyAndStatsService = historyAndStatsService,
-                libraryQueryService = libraryQueryService,
-                librarySyncTrigger = syncServices.libraryStatsCollector,
-                mediaDetailsService = mediaDetailsService,
-                tautulliImporterService = tautulliImporterService,
-                tautulliCompatService = tautulliCompatService,
-                plexOAuthService = plexOAuthService,
-            )
-        }
+        buildMainServer(
+            appConfig = appConfig,
+            appVersion = appVersion,
+            readinessChecks = readinessChecks,
+            databaseHandle = databaseHandle,
+            plexRuntimeManager = plexRuntimeManager,
+            authService = authService,
+            oidcAuthService = oidcAuthService,
+            artworkProxyService = artworkProxyService,
+            streamsAndUsersService = streamsAndUsersService,
+            streamControlService = streamControlService,
+            webhookBundle = webhookBundle,
+            historyAndStatsService = historyAndStatsService,
+            libraryQueryService = libraryQueryService,
+            mediaDetailsService = mediaDetailsService,
+            tautulliImporterService = tautulliImporterService,
+            tautulliCompatService = tautulliCompatService,
+            plexOAuthService = plexOAuthService,
+            syncServices = syncServices,
+            metricsRuntime = metricsRuntime,
+            plexOAuthHttpClient = plexOAuthHttpClient,
+            oidcClient = oidcClient,
+        )
     try {
+        metricsRuntime?.dedicatedServer?.let { dedicatedMetricsServer ->
+            logger.info(
+                "Starting Prometheus metrics listener on {}:{}",
+                appConfig.metrics.host,
+                appConfig.metrics.port,
+            )
+            dedicatedMetricsServer.start(wait = false)
+        }
         server.start(wait = true)
     } catch (e: Throwable) {
-        cleanupOnStartupFailure(syncServices, plexRuntimeManager, databaseHandle, plexOAuthHttpClient, webhookBundle.httpClient, oidcClient)
+        cleanupOnStartupFailure(
+            syncServices = syncServices,
+            plexRuntimeManager = plexRuntimeManager,
+            databaseHandle = databaseHandle,
+            metricsRuntime = metricsRuntime,
+            plexOAuthHttpClient,
+            webhookBundle.httpClient,
+            oidcClient,
+        )
         throw e
     }
 }
+
+@Suppress("LongParameterList")
+private fun buildMainServer(
+    appConfig: AppConfig,
+    appVersion: String,
+    readinessChecks: List<NamedReadinessCheck>,
+    databaseHandle: DatabaseHandle,
+    plexRuntimeManager: PlexRuntimeManager,
+    authService: AuthService,
+    oidcAuthService: OidcAuthService?,
+    artworkProxyService: ArtworkProxyService,
+    streamsAndUsersService: StreamsAndUsersService,
+    streamControlService: StreamControlService,
+    webhookBundle: WebhookServicesBundle,
+    historyAndStatsService: HistoryAndStatsService,
+    libraryQueryService: LibraryQueryService,
+    mediaDetailsService: MediaDetailsService,
+    tautulliImporterService: TautulliImporterService,
+    tautulliCompatService: TautulliCompatService,
+    plexOAuthService: PlexOAuthService,
+    syncServices: SyncServices,
+    metricsRuntime: MetricsRuntime?,
+    plexOAuthHttpClient: LazyCloseableHttpClient,
+    oidcClient: OidcClient?,
+): EmbeddedServer<NettyApplicationEngine, NettyApplicationEngine.Configuration> =
+    embeddedServer(factory = Netty, port = appConfig.server.port, host = appConfig.server.host) {
+        registerLifecycleHandlers(
+            syncServices = syncServices,
+            databaseHandle = databaseHandle,
+            metricsRuntime = metricsRuntime,
+            plexOAuthHttpClient,
+            webhookBundle.httpClient,
+            oidcClient,
+        )
+        miruModule(
+            config = appConfig,
+            readinessChecks = readinessChecks,
+            appVersion = appVersion,
+            realtime = plexRuntimeManager,
+            authService = authService,
+            oidcAuthService = oidcAuthService,
+            artworkProxyService = artworkProxyService,
+            streamsAndUsersService = streamsAndUsersService,
+            streamControlService = streamControlService,
+            webhookService = webhookBundle.service,
+            sessionEvents = plexRuntimeManager.sessionEngine.sessionEvents,
+            sseKeepaliveInterval = DEFAULT_SSE_KEEPALIVE_INTERVAL,
+            historyAndStatsService = historyAndStatsService,
+            libraryQueryService = libraryQueryService,
+            librarySyncTrigger = syncServices.libraryStatsCollector,
+            mediaDetailsService = mediaDetailsService,
+            tautulliImporterService = tautulliImporterService,
+            tautulliCompatService = tautulliCompatService,
+            plexOAuthService = plexOAuthService,
+            metricsService = metricsRuntime?.service,
+        )
+    }
 
 private fun createPlexOAuthService(
     appConfig: AppConfig,
@@ -458,9 +546,65 @@ internal fun createSyncServices(
     )
 }
 
+internal data class MetricsRuntime(
+    val scope: CoroutineScope,
+    val service: MiruMetricsService,
+    val dedicatedServer: EmbeddedServer<NettyApplicationEngine, NettyApplicationEngine.Configuration>? = null,
+)
+
+internal fun createMetricsRuntime(
+    appConfig: AppConfig,
+    plexRuntimeManager: PlexRuntimeManager,
+    libraryRepository: app.hononeko.miru.persistence.repository.LibraryRepository,
+    mediaServerRepository: app.hononeko.miru.persistence.repository.MediaServerRepository,
+    libraryStatsCollector: LibraryStatsCollector,
+): MetricsRuntime? {
+    if (!appConfig.metrics.enabled) return null
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("miru-metrics"))
+    val service =
+        MiruMetricsService(
+            sessionEvents = plexRuntimeManager.sessionEngine.sessionEvents,
+            activeSessionsProvider = { plexRuntimeManager.sessionEngine.currentSessions() },
+            librarySectionsProvider = { libraryRepository.findAllSections() },
+            librarySyncEvents = libraryStatsCollector.syncEvents,
+            websocketConnected = plexRuntimeManager.websocketConnected,
+            websocketReconnected = plexRuntimeManager.websocketReconnected,
+            serverNameByIdProvider = { serverId ->
+                mediaServerRepository.findById(serverId).getOrNull()?.name
+            },
+            activeWebsocketServerLabelProvider = { plexRuntimeManager.currentServerName() },
+            scope = scope,
+        )
+    val dedicatedServer =
+        if (appConfig.metrics.port != appConfig.server.port) {
+            createDedicatedMetricsServer(
+                host = appConfig.metrics.host,
+                port = appConfig.metrics.port,
+                metricsService = service,
+            )
+        } else {
+            null
+        }
+    return MetricsRuntime(scope = scope, service = service, dedicatedServer = dedicatedServer)
+}
+
 internal fun Application.registerLifecycleHandlers(
     syncServices: SyncServices,
     databaseHandle: DatabaseHandle,
+    vararg clients: AutoCloseable?,
+) {
+    registerLifecycleHandlers(
+        syncServices = syncServices,
+        databaseHandle = databaseHandle,
+        metricsRuntime = null,
+        clients = clients,
+    )
+}
+
+internal fun Application.registerLifecycleHandlers(
+    syncServices: SyncServices,
+    databaseHandle: DatabaseHandle,
+    metricsRuntime: MetricsRuntime?,
     vararg clients: AutoCloseable?,
 ) {
     monitor.subscribe(ApplicationStarted) {
@@ -471,6 +615,7 @@ internal fun Application.registerLifecycleHandlers(
         syncServices.webhookDispatcher?.start()
         syncServices.webhookRunner?.start()
         syncServices.sessionCleanupService?.start()
+        metricsRuntime?.service?.start()
     }
     monitor.subscribe(ApplicationStopping) {
         logger.info("Stopping library stats collector, Plex user sync, webhooks, and session cleanup")
@@ -495,12 +640,21 @@ internal fun Application.registerLifecycleHandlers(
                 withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { cleanup.stop() }
                     ?: logger.warn("Auth session cleanup service did not stop within {}", REALTIME_SHUTDOWN_TIMEOUT)
             }
+            metricsRuntime?.service?.let { service ->
+                withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { service.stop() }
+                    ?: logger.warn("Metrics service did not stop within {}", REALTIME_SHUTDOWN_TIMEOUT)
+            }
         }
         syncServices.libraryCollectorScope.cancel()
         syncServices.userSyncScope.cancel()
         syncServices.guardrailScope?.cancel()
         syncServices.webhookScope?.cancel()
         syncServices.sessionCleanupScope?.cancel()
+        metricsRuntime?.scope?.cancel()
+        metricsRuntime?.dedicatedServer?.let { metricsServer ->
+            runCatching { metricsServer.stop(METRICS_SERVER_STOP_GRACE_MS, METRICS_SERVER_STOP_TIMEOUT_MS) }
+                .onFailure { err -> logger.warn("Failed to stop Prometheus metrics listener on shutdown: {}", err.message) }
+        }
     }
     monitor.subscribe(ApplicationStopped) {
         logger.info("Closing external HTTP clients and database handle")
@@ -509,6 +663,10 @@ internal fun Application.registerLifecycleHandlers(
                 runCatching { client.close() }
                     .onFailure { err -> logger.warn("Failed to close HTTP client on shutdown: {}", err.message) }
             }
+        }
+        metricsRuntime?.service?.let { service ->
+            runCatching { service.close() }
+                .onFailure { err -> logger.warn("Failed to close metrics registry on shutdown: {}", err.message) }
         }
         runCatching { databaseHandle.close() }
             .onFailure { err -> logger.warn("Failed to close database handle on shutdown: {}", err.message) }
@@ -519,6 +677,22 @@ internal fun cleanupOnStartupFailure(
     syncServices: SyncServices,
     plexRuntimeManager: PlexRuntimeManager,
     databaseHandle: DatabaseHandle,
+    vararg clients: AutoCloseable?,
+) {
+    cleanupOnStartupFailure(
+        syncServices = syncServices,
+        plexRuntimeManager = plexRuntimeManager,
+        databaseHandle = databaseHandle,
+        metricsRuntime = null,
+        clients = clients,
+    )
+}
+
+internal fun cleanupOnStartupFailure(
+    syncServices: SyncServices,
+    plexRuntimeManager: PlexRuntimeManager,
+    databaseHandle: DatabaseHandle,
+    metricsRuntime: MetricsRuntime?,
     vararg clients: AutoCloseable?,
 ) {
     runBlocking {
@@ -536,6 +710,9 @@ internal fun cleanupOnStartupFailure(
         syncServices.sessionCleanupService?.let { cleanup ->
             withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { cleanup.stop() }
         }
+        metricsRuntime?.service?.let { service ->
+            withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { service.stop() }
+        }
         withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { plexRuntimeManager.stop() }
     }
     syncServices.libraryCollectorScope.cancel()
@@ -543,6 +720,15 @@ internal fun cleanupOnStartupFailure(
     syncServices.guardrailScope?.cancel()
     syncServices.webhookScope?.cancel()
     syncServices.sessionCleanupScope?.cancel()
+    metricsRuntime?.scope?.cancel()
+    metricsRuntime?.dedicatedServer?.let { metricsServer ->
+        runCatching { metricsServer.stop(METRICS_SERVER_STOP_GRACE_MS, METRICS_SERVER_STOP_TIMEOUT_MS) }
+            .onFailure { err -> logger.warn("Failed to stop Prometheus metrics listener after failure: {}", err.message) }
+    }
+    metricsRuntime?.service?.let { service ->
+        runCatching { service.close() }
+            .onFailure { err -> logger.warn("Failed to close metrics registry after failure: {}", err.message) }
+    }
     clients.forEach { client ->
         if (client != null) {
             runCatching { client.close() }
@@ -659,6 +845,7 @@ fun Application.miruModule(
     tautulliCompatService: TautulliCompatService? = null,
     plexOAuthService: PlexOAuthService? = null,
     authRateLimiter: AuthRateLimiter = AuthRateLimiter(config.auth.rateLimit),
+    metricsService: MiruMetricsService? = null,
 ) {
     if (realtime != null) {
         monitor.subscribe(ApplicationStarted) {
@@ -778,6 +965,9 @@ fun Application.miruModule(
                     appVersion = appVersion,
                 )
             }
+        }
+        if (metricsService != null && config.metrics.enabled && config.metrics.port == config.server.port) {
+            metricsRoutes(metricsService)
         }
         staticWebRoutes(config.server.staticWebDir)
     }

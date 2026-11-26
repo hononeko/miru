@@ -37,12 +37,23 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
+import io.ktor.server.application.install
+import io.ktor.server.engine.embeddedServer
+import io.ktor.server.netty.Netty
+import io.ktor.server.routing.routing
+import io.ktor.server.websocket.WebSockets
+import io.ktor.server.websocket.webSocket
+import io.ktor.websocket.CloseReason
+import io.ktor.websocket.close
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import java.nio.file.Files
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 private const val TEST_ENC_KEY = "runtime-manager-test-encryption-key-32c"
 
@@ -276,6 +287,61 @@ class PlexRuntimeManagerTest :
 
                 handle.close()
             } finally {
+                tempDir.toFile().deleteRecursively()
+            }
+        }
+
+        test("PlexRuntimeManager forwards websocketConnected and websocketReconnected across reconnect and hot-reload") {
+            val tempDir = Files.createTempDirectory("miru-runtime-ws-test-")
+            val connections = AtomicInteger(0)
+            val wsServer =
+                embeddedServer(Netty, host = "127.0.0.1", port = 0) {
+                    install(WebSockets)
+                    routing {
+                        webSocket("/:/websockets/notifications") {
+                            val attempt = connections.incrementAndGet()
+                            if (attempt == 1) {
+                                // Drop first connection immediately to trigger reconnect
+                                close(CloseReason(CloseReason.Codes.GOING_AWAY, "restart"))
+                            } else {
+                                do {
+                                    val result = incoming.receiveCatching()
+                                } while (result.isSuccess)
+                            }
+                        }
+                    }
+                }.start(wait = false)
+            val dbPath = tempDir.resolve("ws.db").toString()
+            val handle = DatabaseFactory.createAndMigrate(DatabaseConfig.Sqlite(dbPath)).shouldBeRight()
+            try {
+                val port = wsServer.engine.resolvedConnectors().first().port
+                val manager =
+                    PlexRuntimeManager(
+                        plexConfig = PlexConfig(websocketEnabled = true, encryptionKey = TEST_ENC_KEY),
+                        databaseHandle = handle,
+                        mediaServerRepository = ExposedMediaServerRepository(handle),
+                    )
+                manager.websocketConnected.value shouldBe false
+
+                val reconnected = async { manager.websocketReconnected.first() }
+                manager.reload(baseUrl = "http://127.0.0.1:$port", token = "ws-tok", machineId = "mach-ws")
+
+                withTimeout(10_000) {
+                    reconnected.await()
+                    manager.websocketConnected.first { it } shouldBe true
+                }
+
+                // Hot-reload cleanly resets and re-establishes websocketConnected without leaking old pipeline
+                manager.reload(baseUrl = "http://127.0.0.1:$port", token = "ws-tok-2", machineId = "mach-ws")
+                withTimeout(5_000) {
+                    manager.websocketConnected.first { it } shouldBe true
+                }
+
+                manager.stop()
+                manager.websocketConnected.value shouldBe false
+            } finally {
+                handle.close()
+                wsServer.stop(0, 1_000)
                 tempDir.toFile().deleteRecursively()
             }
         }

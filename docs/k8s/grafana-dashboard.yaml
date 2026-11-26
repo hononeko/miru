@@ -953,6 +953,7 @@ data:
             "type": "datasource"
           },
           {
+            "allValue": ".*",
             "current": {},
             "datasource": {
               "type": "prometheus",
@@ -974,6 +975,7 @@ data:
             "type": "query"
           },
           {
+            "allValue": ".*",
             "current": {},
             "datasource": {
               "type": "prometheus",

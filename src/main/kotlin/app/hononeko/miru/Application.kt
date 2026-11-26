@@ -206,54 +206,53 @@ private fun runServer() {
         }
     val readinessChecks = listOf(NamedReadinessCheck("database", DatabaseReadinessCheck(databaseHandle)))
     val metricsRuntime =
-        createMetricsRuntime(
-            appConfig = appConfig,
-            plexRuntimeManager = plexRuntimeManager,
-            libraryRepository = libraryRepository,
-            mediaServerRepository = mediaServerRepository,
-            libraryStatsCollector = syncServices.libraryStatsCollector,
-        )
+        createMetricsRuntime(appConfig, plexRuntimeManager, libraryRepository, mediaServerRepository, syncServices.libraryStatsCollector)
 
     val server =
-        buildMainServer(
-            appConfig = appConfig,
-            appVersion = appVersion,
-            readinessChecks = readinessChecks,
-            databaseHandle = databaseHandle,
-            plexRuntimeManager = plexRuntimeManager,
-            authService = authService,
-            oidcAuthService = oidcAuthService,
-            artworkProxyService = artworkProxyService,
-            streamsAndUsersService = streamsAndUsersService,
-            streamControlService = streamControlService,
-            webhookBundle = webhookBundle,
-            historyAndStatsService = historyAndStatsService,
-            libraryQueryService = libraryQueryService,
-            mediaDetailsService = mediaDetailsService,
-            tautulliImporterService = tautulliImporterService,
-            tautulliCompatService = tautulliCompatService,
-            plexOAuthService = plexOAuthService,
-            syncServices = syncServices,
-            metricsRuntime = metricsRuntime,
-            plexOAuthHttpClient = plexOAuthHttpClient,
-            oidcClient = oidcClient,
-        )
+        embeddedServer(factory = Netty, port = appConfig.server.port, host = appConfig.server.host) {
+            registerLifecycleHandlers(
+                syncServices,
+                databaseHandle,
+                metricsRuntime,
+                plexOAuthHttpClient,
+                webhookBundle.httpClient,
+                oidcClient,
+            )
+            miruModule(
+                config = appConfig,
+                readinessChecks = readinessChecks,
+                appVersion = appVersion,
+                realtime = plexRuntimeManager,
+                authService = authService,
+                oidcAuthService = oidcAuthService,
+                artworkProxyService = artworkProxyService,
+                streamsAndUsersService = streamsAndUsersService,
+                streamControlService = streamControlService,
+                webhookService = webhookBundle.service,
+                sessionEvents = plexRuntimeManager.sessionEngine.sessionEvents,
+                sseKeepaliveInterval = DEFAULT_SSE_KEEPALIVE_INTERVAL,
+                historyAndStatsService = historyAndStatsService,
+                libraryQueryService = libraryQueryService,
+                librarySyncTrigger = syncServices.libraryStatsCollector,
+                mediaDetailsService = mediaDetailsService,
+                tautulliImporterService = tautulliImporterService,
+                tautulliCompatService = tautulliCompatService,
+                plexOAuthService = plexOAuthService,
+                metricsService = metricsRuntime?.service,
+            )
+        }
     try {
         metricsRuntime?.dedicatedServer?.let { dedicatedMetricsServer ->
-            logger.info(
-                "Starting Prometheus metrics listener on {}:{}",
-                appConfig.metrics.host,
-                appConfig.metrics.port,
-            )
+            logger.info("Starting Prometheus metrics listener on {}:{}", appConfig.metrics.host, appConfig.metrics.port)
             dedicatedMetricsServer.start(wait = false)
         }
         server.start(wait = true)
     } catch (e: Throwable) {
         cleanupOnStartupFailure(
-            syncServices = syncServices,
-            plexRuntimeManager = plexRuntimeManager,
-            databaseHandle = databaseHandle,
-            metricsRuntime = metricsRuntime,
+            syncServices,
+            plexRuntimeManager,
+            databaseHandle,
+            metricsRuntime,
             plexOAuthHttpClient,
             webhookBundle.httpClient,
             oidcClient,
@@ -261,63 +260,6 @@ private fun runServer() {
         throw e
     }
 }
-
-@Suppress("LongParameterList")
-private fun buildMainServer(
-    appConfig: AppConfig,
-    appVersion: String,
-    readinessChecks: List<NamedReadinessCheck>,
-    databaseHandle: DatabaseHandle,
-    plexRuntimeManager: PlexRuntimeManager,
-    authService: AuthService,
-    oidcAuthService: OidcAuthService?,
-    artworkProxyService: ArtworkProxyService,
-    streamsAndUsersService: StreamsAndUsersService,
-    streamControlService: StreamControlService,
-    webhookBundle: WebhookServicesBundle,
-    historyAndStatsService: HistoryAndStatsService,
-    libraryQueryService: LibraryQueryService,
-    mediaDetailsService: MediaDetailsService,
-    tautulliImporterService: TautulliImporterService,
-    tautulliCompatService: TautulliCompatService,
-    plexOAuthService: PlexOAuthService,
-    syncServices: SyncServices,
-    metricsRuntime: MetricsRuntime?,
-    plexOAuthHttpClient: LazyCloseableHttpClient,
-    oidcClient: OidcClient?,
-): EmbeddedServer<NettyApplicationEngine, NettyApplicationEngine.Configuration> =
-    embeddedServer(factory = Netty, port = appConfig.server.port, host = appConfig.server.host) {
-        registerLifecycleHandlers(
-            syncServices = syncServices,
-            databaseHandle = databaseHandle,
-            metricsRuntime = metricsRuntime,
-            plexOAuthHttpClient,
-            webhookBundle.httpClient,
-            oidcClient,
-        )
-        miruModule(
-            config = appConfig,
-            readinessChecks = readinessChecks,
-            appVersion = appVersion,
-            realtime = plexRuntimeManager,
-            authService = authService,
-            oidcAuthService = oidcAuthService,
-            artworkProxyService = artworkProxyService,
-            streamsAndUsersService = streamsAndUsersService,
-            streamControlService = streamControlService,
-            webhookService = webhookBundle.service,
-            sessionEvents = plexRuntimeManager.sessionEngine.sessionEvents,
-            sseKeepaliveInterval = DEFAULT_SSE_KEEPALIVE_INTERVAL,
-            historyAndStatsService = historyAndStatsService,
-            libraryQueryService = libraryQueryService,
-            librarySyncTrigger = syncServices.libraryStatsCollector,
-            mediaDetailsService = mediaDetailsService,
-            tautulliImporterService = tautulliImporterService,
-            tautulliCompatService = tautulliCompatService,
-            plexOAuthService = plexOAuthService,
-            metricsService = metricsRuntime?.service,
-        )
-    }
 
 private fun createPlexOAuthService(
     appConfig: AppConfig,

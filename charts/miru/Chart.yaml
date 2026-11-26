@@ -1,0 +1,19 @@
+apiVersion: v2
+name: miru
+description: Lightweight, security-hardened media server telemetry, live stream monitor, playback history tracker, and library analytics engine for Plex and Jellyfin.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+home: https://github.com/hononeko/miru
+sources:
+  - https://github.com/hononeko/miru
+keywords:
+  - miru
+  - plex
+  - jellyfin
+  - media
+  - telemetry
+  - monitoring
+maintainers:
+  - name: hononeko
+    url: https://github.com/hononeko

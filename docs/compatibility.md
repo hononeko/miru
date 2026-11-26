@@ -30,7 +30,7 @@ Clients therefore need to:
 - The database schema
 - Log messages, and the `title` and `detail` texts of errors
 - The session and sign-in cookies
-- The example deployments in [`docker-compose.yml`](docker-compose.yml) and [`k8s`](k8s/README.md)
+- The example deployments in [`docker-compose.yml`](docker-compose.yml) and the [Helm chart](../charts/miru/README.md)
 
 ## Conventions
 

@@ -1,7 +1,7 @@
 name: Validate
 
 # Reusable workflow for building, linting, and verifying the codebase.
-# Runs static repo linters (actions, Dockerfile, Kubernetes), type-resolved Detekt, and unit tests
+# Runs static repo linters (actions, Dockerfile, Helm chart), type-resolved Detekt, and unit tests
 # + Kover verification & changed-line coverage (80% minimum on PR source changes) in parallel jobs.
 on:
   workflow_call:
@@ -24,8 +24,57 @@ jobs:
       - name: Lint Dockerfile
         uses: hononeko/actions/lint-docker@v1
 
-      - name: Lint Kubernetes manifests
-        uses: hononeko/actions/lint-k8s@v1
+      - name: Set up Helm
+        uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+        with:
+          version: "v4.3.2"
+
+      - name: Lint and validate Helm chart
+        run: |
+          set -euo pipefail
+          kubeconform() {
+            docker run --rm -i \
+              ghcr.io/yannh/kubeconform:v0.8.0@sha256:faffaf43f95aa6425306e1ab8d6fcad72acb9049158f38e574c085ea1ec0f64e \
+              -strict -ignore-missing-schemas -summary -
+          }
+          helm lint charts/miru --strict
+          helm template miru charts/miru | kubeconform
+
+          helm lint charts/miru --strict \
+            --set database.engine=postgres \
+            --set strategy.type=RollingUpdate \
+            --set existingSecret=miru-secrets
+          helm template miru charts/miru \
+            --set database.engine=postgres \
+            --set strategy.type=RollingUpdate \
+            --set existingSecret=miru-secrets | kubeconform
+
+          helm lint charts/miru --strict \
+            --set ingress.enabled=true \
+            --set httpRoute.enabled=true
+          helm template miru charts/miru \
+            --set ingress.enabled=true \
+            --set httpRoute.enabled=true | kubeconform
+
+          helm lint charts/miru --strict \
+            --set networkPolicy.enabled=true \
+            --set metrics.enabled=true \
+            --set database.engine=postgres \
+            --set jellyfin.url=http://jellyfin:8096
+          helm template miru charts/miru \
+            --set networkPolicy.enabled=true \
+            --set metrics.enabled=true \
+            --set database.engine=postgres \
+            --set jellyfin.url=http://jellyfin:8096 | kubeconform
+
+          helm lint charts/miru --strict \
+            --set metrics.enabled=true \
+            --set metrics.serviceMonitor.enabled=true \
+            --set metrics.grafanaDashboard.enabled=true
+          helm template miru charts/miru \
+            --set metrics.enabled=true \
+            --set metrics.serviceMonitor.enabled=true \
+            --set metrics.grafanaDashboard.enabled=true | kubeconform
 
   detekt:
     name: Detekt

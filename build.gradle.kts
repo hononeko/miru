@@ -83,9 +83,9 @@ tasks.withType<Test>().configureEach {
 tasks.named<Test>("test") {
     // Checked against the payloads by WebhookEventEvaluatorTest
     inputs.file("docs/webhooks.md").withPathSensitivity(PathSensitivity.RELATIVE)
-    // Checked for JSON/YAML parity and valid miru_* metrics by MiruMetricsServiceTest
+    // Checked for JSON parity and valid miru_* metrics by MiruMetricsServiceTest
     inputs.file("docs/grafana/miru-dashboard.json").withPathSensitivity(PathSensitivity.RELATIVE)
-    inputs.file("docs/k8s/grafana-dashboard.yaml").withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.file("charts/miru/files/miru-dashboard.json").withPathSensitivity(PathSensitivity.RELATIVE)
     filter {
         excludeTestsMatching("*IntegrationTest")
         excludeTestsMatching("*IT")

@@ -534,22 +534,13 @@ class MiruMetricsServiceTest :
             }
         }
 
-        test("Grafana dashboard JSON matches K8s ConfigMap and references only metrics exposed by MiruMetricsService") {
+        test("Grafana dashboard JSON matches Helm chart copy and references only metrics exposed by MiruMetricsService") {
             val dashboardFile = File("docs/grafana/miru-dashboard.json")
-            val configMapFile = File("docs/k8s/grafana-dashboard.yaml")
+            val chartDashboardFile = File("charts/miru/files/miru-dashboard.json")
             val rawDashboard = dashboardFile.readText()
             val dashboardJson = MiruJson.parseToJsonElement(rawDashboard).jsonObject
-
-            val yamlLines = configMapFile.readLines()
-            val markerIdx = yamlLines.indexOfFirst { it.trim() == "miru-dashboard.json: |" }
-            (markerIdx >= 0) shouldBe true
-            val embeddedJsonText =
-                yamlLines
-                    .drop(markerIdx + 1)
-                    .map { line -> if (line.startsWith("    ")) line.drop(4) else line }
-                    .joinToString("\n")
-            val embeddedJson = MiruJson.parseToJsonElement(embeddedJsonText).jsonObject
-            embeddedJson shouldBe dashboardJson
+            val chartDashboardJson = MiruJson.parseToJsonElement(chartDashboardFile.readText()).jsonObject
+            chartDashboardJson shouldBe dashboardJson
 
             val templatingList = dashboardJson.getValue("templating").jsonObject.getValue("list").jsonArray
             val varsByName = templatingList.associateBy { it.jsonObject.getValue("name").jsonPrimitive.content }

@@ -97,6 +97,11 @@ private class MockJellyfinQuickConnectState(
 
     /** Keys created through POST /Auth/Keys, listed by GET /Auth/Keys until deleted */
     val createdKeys = mutableListOf<String>()
+    val createKeyCalls = AtomicInteger(0)
+    var failListKeys: Boolean = false
+
+    /** Another client creates a "Miru" key at the same moment as Miru's own */
+    var concurrentMiruKey: String? = null
 }
 
 private class QuickConnectTestHarness(
@@ -235,13 +240,17 @@ private fun io.ktor.client.engine.mock.MockRequestHandleScope.handleMockAuthKeys
         HttpMethod.Post -> {
             req.headers[HttpHeaders.Authorization].orEmpty() shouldContain """Token="$RAW_TEMP_ACCESS_TOKEN""""
             req.url.parameters["app"] shouldBe "Miru"
+            state.createKeyCalls.incrementAndGet()
             if (state.failCreateKey) {
                 respond("Server error", HttpStatusCode.InternalServerError)
             } else {
+                state.concurrentMiruKey?.let { state.createdKeys += it }
                 if (!state.omitCreatedKeyInList) state.createdKeys += state.issuedApiKey
                 respond("", HttpStatusCode.NoContent)
             }
         }
+
+        HttpMethod.Get if state.failListKeys -> respond("Server error", HttpStatusCode.InternalServerError)
 
         HttpMethod.Get -> {
             req.headers[HttpHeaders.Authorization].orEmpty() shouldContain """Token="$RAW_TEMP_ACCESS_TOKEN""""
@@ -807,6 +816,67 @@ class JellyfinQuickConnectRoutesTest :
                     missingKeyPoll.status shouldBe JellyfinQuickConnectStatus.FAILED
                     state.logoutCalls.get() shouldBe 2
                     harness.serverRepo.findAll().shouldBeRight() shouldHaveSize 0
+                    state.omitCreatedKeyInList = false
+
+                    // Listing the keys fails before Miru asks for one -> FAILED, no key created, temp logout
+                    state.failListKeys = true
+                    val createCallsBefore = state.createKeyCalls.get()
+                    val listFailStart =
+                        MiruJson.decodeFromString<JellyfinQuickConnectStartResponse>(
+                            client
+                                .post("/api/v1/admin/jellyfin/quick-connect") {
+                                    header("X-Api-Key", adminKey)
+                                    contentType(ContentType.Application.Json)
+                                    setBody("""{"baseUrl":"$MOCK_JF_URL"}""")
+                                }.bodyAsText(),
+                        )
+                    val listFailPoll =
+                        MiruJson.decodeFromString<JellyfinQuickConnectPollResponse>(
+                            client.get("/api/v1/admin/jellyfin/quick-connect/${listFailStart.attemptId}") {
+                                header("X-Api-Key", adminKey)
+                            }.bodyAsText(),
+                        )
+                    listFailPoll.status shouldBe JellyfinQuickConnectStatus.FAILED
+                    listFailPoll.message.shouldNotBeNull() shouldContain "list the API keys"
+                    state.createKeyCalls.get() shouldBe createCallsBefore
+                    state.logoutCalls.get() shouldBe 3
+                    harness.serverRepo.findAll().shouldBeRight() shouldHaveSize 0
+                }
+            }
+        }
+
+        test("uses the newest new Miru key when another Miru key appears at the same moment") {
+            val state =
+                MockJellyfinQuickConnectState(authenticated = true, includeOlderMiruKey = true).apply {
+                    concurrentMiruKey = "concurrent-miru-key"
+                }
+            createQuickConnectHarness(state = state).use { harness ->
+                val (adminKey, _) = seedAdminAndUserKeys(harness)
+                testApplication {
+                    setupQcApp(harness)
+
+                    val started =
+                        MiruJson.decodeFromString<JellyfinQuickConnectStartResponse>(
+                            client
+                                .post("/api/v1/admin/jellyfin/quick-connect") {
+                                    header("X-Api-Key", adminKey)
+                                    contentType(ContentType.Application.Json)
+                                    setBody("""{"baseUrl":"$MOCK_JF_URL"}""")
+                                }.bodyAsText(),
+                        )
+                    val poll =
+                        MiruJson.decodeFromString<JellyfinQuickConnectPollResponse>(
+                            client.get("/api/v1/admin/jellyfin/quick-connect/${started.attemptId}") {
+                                header("X-Api-Key", adminKey)
+                            }.bodyAsText(),
+                        )
+                    poll.status shouldBe JellyfinQuickConnectStatus.AUTHORIZED
+
+                    // Both keys are new; Jellyfin dates Miru's own key later, so it wins
+                    val saved = harness.serverRepo.findByMachineId("jf-mach-1").shouldBeRight().shouldNotBeNull()
+                    CredentialCrypto.decrypt(saved.encryptedToken.shouldNotBeNull(), JF_TEST_ENCRYPTION_KEY).shouldBeRight() shouldBe
+                        RAW_NEW_API_KEY
+                    state.logoutCalls.get() shouldBe 1
                 }
             }
         }

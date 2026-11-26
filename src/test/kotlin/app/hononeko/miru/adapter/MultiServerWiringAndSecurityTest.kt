@@ -548,7 +548,13 @@ class MultiServerWiringAndSecurityTest :
                 val adminCookie = authService.login("admin", "AdminPass-123!").shouldBeRight().signedToken
                 testApplication {
                     application {
-                        registerLifecycleHandlers(wiring.syncServices, handle, wiring.plexOAuthHttpClient, wiring.webhookBundle.httpClient)
+                        registerLifecycleHandlers(
+                            wiring.syncServices,
+                            handle,
+                            wiring.plexOAuthHttpClient,
+                            wiring.jellyfinQuickConnectHttpClient,
+                            wiring.webhookBundle.httpClient,
+                        )
                         miruModule(
                             config = appConfig,
                             appVersion = "test-1.0",
@@ -570,6 +576,7 @@ class MultiServerWiringAndSecurityTest :
                             mediaDetailsService = wiring.mediaDetailsService,
                             tautulliCompatService = wiring.tautulliCompatService,
                             plexOAuthService = wiring.plexOAuthService,
+                            jellyfinQuickConnectService = wiring.jellyfinQuickConnectService,
                             mediaServerRegistry = wiring.mediaServerRegistry,
                         )
                     }
@@ -587,6 +594,7 @@ class MultiServerWiringAndSecurityTest :
                     wiring.mediaServerRegistry,
                     handle,
                     wiring.plexOAuthHttpClient,
+                    wiring.jellyfinQuickConnectHttpClient,
                     wiring.webhookBundle.httpClient,
                 )
                 dir.toFile().deleteRecursively()

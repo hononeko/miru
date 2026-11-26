@@ -27,6 +27,8 @@
 		GuardrailRuleDto,
 		GuardrailRuleType,
 		HealthResponse,
+		JellyfinConnectionStatus,
+		JellyfinQuickConnectPollResponse,
 		MiruRole,
 		PlexConnectionOptionDto,
 		PlexConnectionStatus,
@@ -66,6 +68,7 @@
 	} from '$lib/utils';
 
 	type WizardStep = 'starting' | 'waiting' | 'expired' | 'discovering' | 'select' | 'saving' | 'done';
+	type JellyfinWizardStep = 'url' | 'starting' | 'waiting' | 'expired' | 'error' | 'done';
 
 	let accounts = $state<AccountResponse[]>([]);
 	let emailLinkingEnabled = $state(false);
@@ -74,6 +77,7 @@
 	let health = $state<HealthResponse | null>(null);
 	let readiness = $state<ReadinessResponse | null>(null);
 	let plexStatus = $state<PlexConnectionStatus | null>(null);
+	let jellyfinStatus = $state<JellyfinConnectionStatus | null>(null);
 	let adminServers = $state<AdminServerStatusDto[]>([]);
 	let guardrails = $state<GuardrailRuleDto[]>([]);
 	let auditEntries = $state<TerminationAuditEntryDto[]>([]);
@@ -205,21 +209,51 @@
 		}
 	}
 
+	// Jellyfin Quick Connect Wizard Sheet
+	let jellyfinWizardOpen = $state(false);
+	let jellyfinWizardStep = $state<JellyfinWizardStep>('url');
+	let jellyfinUrlInput = $state('');
+	let jellyfinWizardError = $state<string | null>(null);
+	let jellyfinAttemptId = $state<string | null>(null);
+	let jellyfinCode = $state('');
+	let jellyfinCodeCopied = $state(false);
+	let jellyfinServerName = $state('');
+	let jellyfinServerVersion = $state<string | null>(null);
+	let jellyfinExpiresAtMs = $state<number>(0);
+	let jellyfinNowTickMs = $state<number>(Date.now());
+	let jellyfinConnectResult = $state<JellyfinQuickConnectPollResponse | null>(null);
+
+	let jellyfinPollTimerId: ReturnType<typeof setInterval> | null = null;
+	let jellyfinCountdownTimerId: ReturnType<typeof setInterval> | null = null;
+
+	function stopJellyfinTimers() {
+		if (jellyfinPollTimerId !== null) {
+			clearInterval(jellyfinPollTimerId);
+			jellyfinPollTimerId = null;
+		}
+		if (jellyfinCountdownTimerId !== null) {
+			clearInterval(jellyfinCountdownTimerId);
+			jellyfinCountdownTimerId = null;
+		}
+	}
+
 	onDestroy(() => {
 		stopOAuthTimers();
+		stopJellyfinTimers();
 	});
 	async function loadAll() {
 		loading = true;
 		error = null;
 		guardrailError = null;
 		try {
-			const [accRes, keyRes, usrRes, healthRes, readyRes, plexRes, srvRes, guardrailsRes, auditRes] = await Promise.all([
+			const [accRes, keyRes, usrRes, healthRes, readyRes, plexRes, jellyfinRes, srvRes, guardrailsRes, auditRes] = await Promise.all([
 				api.GET('/api/v1/admin/accounts'),
 				api.GET('/api/v1/admin/api-keys'),
 				api.GET('/api/v1/users'),
 				api.GET('/healthz'),
 				api.GET('/readyz'),
 				api.GET('/api/v1/admin/plex/status'),
+				api.GET('/api/v1/admin/jellyfin/status').catch(() => ({ data: undefined })),
 				api.GET('/api/v1/admin/servers').catch(() => ({ data: undefined })),
 				api.GET('/api/v1/admin/guardrails'),
 				api.GET('/api/v1/admin/guardrails/audit', {
@@ -240,6 +274,7 @@
 			health = healthRes.data ?? null;
 			readiness = readyRes.data ?? null;
 			plexStatus = plexRes.data ?? null;
+			jellyfinStatus = jellyfinRes?.data ?? null;
 			adminServers = Array.isArray(srvRes?.data?.servers) ? srvRes.data.servers : [];
 			if (guardrailsRes.data) {
 				guardrails = guardrailsRes.data.rules;
@@ -520,6 +555,126 @@
 		const secs = remainingSec % 60;
 		return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 	});
+
+	const remainingJellyfinCountdown = $derived.by(() => {
+		const remainingSec = Math.max(0, Math.floor((jellyfinExpiresAtMs - jellyfinNowTickMs) / 1000));
+		const mins = Math.floor(remainingSec / 60);
+		const secs = remainingSec % 60;
+		return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+	});
+
+	function handleJellyfinWizardOpenChange(open: boolean) {
+		jellyfinWizardOpen = open;
+		if (!open) {
+			stopJellyfinTimers();
+		}
+	}
+
+	function openJellyfinWizard() {
+		stopJellyfinTimers();
+		jellyfinUrlInput = jellyfinStatus?.baseUrl ?? '';
+		jellyfinWizardError = null;
+		jellyfinAttemptId = null;
+		jellyfinCode = '';
+		jellyfinCodeCopied = false;
+		jellyfinServerName = '';
+		jellyfinServerVersion = null;
+		jellyfinConnectResult = null;
+		jellyfinWizardStep = 'url';
+		jellyfinWizardOpen = true;
+	}
+
+	async function startJellyfinQuickConnect(e?: SubmitEvent) {
+		e?.preventDefault();
+		const url = jellyfinUrlInput.trim();
+		if (!url) {
+			jellyfinWizardError = 'Enter your Jellyfin server URL.';
+			return;
+		}
+		stopJellyfinTimers();
+		jellyfinWizardStep = 'starting';
+		jellyfinWizardError = null;
+		jellyfinCodeCopied = false;
+		jellyfinConnectResult = null;
+
+		try {
+			const started = unwrap(
+				await api.POST('/api/v1/admin/jellyfin/quick-connect', {
+					body: { baseUrl: url }
+				})
+			);
+			jellyfinAttemptId = started.attemptId;
+			jellyfinCode = started.code;
+			jellyfinServerName = started.serverName;
+			jellyfinServerVersion = started.serverVersion ?? null;
+			jellyfinExpiresAtMs = started.expiresAtMs;
+			jellyfinNowTickMs = Date.now();
+			jellyfinWizardStep = 'waiting';
+
+			jellyfinCountdownTimerId = setInterval(() => {
+				jellyfinNowTickMs = Date.now();
+				if (jellyfinNowTickMs >= jellyfinExpiresAtMs && jellyfinWizardStep === 'waiting') {
+					stopJellyfinTimers();
+					jellyfinWizardError = 'Quick Connect code expired. Start again to generate a new code.';
+					jellyfinWizardStep = 'expired';
+				}
+			}, 1000);
+
+			jellyfinPollTimerId = setInterval(() => {
+				void pollJellyfinOnce();
+			}, 1500);
+		} catch (err) {
+			if (err instanceof MiruApiError) {
+				jellyfinWizardError =
+					err.status === 502 && err.detail === "Upstream provider 'jellyfin' is currently unavailable"
+						? 'Could not reach the Jellyfin server at that URL. Check the host, port, and network connectivity.'
+						: err.detail;
+			} else {
+				jellyfinWizardError = 'Failed to start Jellyfin Quick Connect';
+			}
+			jellyfinWizardStep = 'url';
+		}
+	}
+
+	async function pollJellyfinOnce() {
+		if (!jellyfinAttemptId || jellyfinWizardStep !== 'waiting') return;
+		try {
+			const poll = unwrap(
+				await api.GET('/api/v1/admin/jellyfin/quick-connect/{attemptId}', {
+					params: { path: { attemptId: jellyfinAttemptId } }
+				})
+			);
+			jellyfinExpiresAtMs = poll.expiresAtMs;
+			if (poll.status === 'AUTHORIZED') {
+				stopJellyfinTimers();
+				jellyfinConnectResult = poll;
+				await Promise.all([serversStore.refresh(true), streamsStore.refresh(), loadAll()]);
+				jellyfinWizardStep = 'done';
+			} else if (poll.status === 'EXPIRED') {
+				stopJellyfinTimers();
+				jellyfinWizardError = poll.message ?? 'Quick Connect code expired. Start again to generate a new code.';
+				jellyfinWizardStep = 'expired';
+			} else if (poll.status === 'NOT_ADMIN' || poll.status === 'FAILED') {
+				stopJellyfinTimers();
+				jellyfinWizardError = poll.message ?? 'Failed to authorize Jellyfin Quick Connect.';
+				jellyfinWizardStep = 'error';
+			}
+		} catch (err) {
+			stopJellyfinTimers();
+			jellyfinWizardError = err instanceof MiruApiError ? err.detail : 'Failed to poll Jellyfin Quick Connect';
+			jellyfinWizardStep = 'error';
+		}
+	}
+
+	async function copyJellyfinCode() {
+		if (!jellyfinCode) return;
+		try {
+			await navigator.clipboard.writeText(jellyfinCode);
+			jellyfinCodeCopied = true;
+		} catch {
+			// ignore clipboard permission issues
+		}
+	}
 
 	const selectedServer = $derived(
 		discoveredServers.find((s) => s.machineId === selectedMachineId) ?? null
@@ -927,13 +1082,25 @@
 				</div>
 			{/if}
 
-			{#if plexStatus && !plexStatus.encryptionKeyConfigured}
+			{#if jellyfinStatus?.credentialSource === 'ENV_OVERRIDE'}
+				<div class="flex items-start gap-2.5 rounded-xl border border-cyan/40 bg-cyan-soft/50 px-3.5 py-2.5 text-xs text-fg-secondary">
+					<AlertTriangle class="mt-0.5 h-4 w-4 shrink-0 text-cyan-hi" />
+					<div>
+						<p class="font-heading font-semibold text-cyan-hi">Environment override active (JELLYFIN_URL / JELLYFIN_API_KEY)</p>
+						<p class="mt-0.5 text-[11px]">
+							Jellyfin is managed via environment variables. Remove them to configure or reconnect Jellyfin from the Admin UI with Quick Connect.
+						</p>
+					</div>
+				</div>
+			{/if}
+
+			{#if (plexStatus && !plexStatus.encryptionKeyConfigured) || (jellyfinStatus && !jellyfinStatus.encryptionKeyConfigured)}
 				<div class="flex items-start gap-2.5 rounded-xl border border-warning/50 bg-warning-soft px-3.5 py-2.5 text-xs text-fg-secondary">
 					<AlertTriangle class="mt-0.5 h-4 w-4 shrink-0 text-warning" />
 					<div>
 						<p class="font-heading font-semibold text-warning">MIRU_ENCRYPTION_KEY is not configured</p>
 						<p class="mt-0.5 text-[11px]">
-							Set <code class="font-mono text-fg-primary">MIRU_ENCRYPTION_KEY</code> (at least 32 characters) in your environment to save Plex OAuth credentials encrypted at rest.
+							Set <code class="font-mono text-fg-primary">MIRU_ENCRYPTION_KEY</code> (at least 32 characters) in your environment to save Plex OAuth and Jellyfin Quick Connect credentials encrypted at rest.
 						</p>
 					</div>
 				</div>
@@ -976,7 +1143,7 @@
 								{:else if srv.serverType === 'plex'}
 									Use Plex PIN OAuth to sign in and auto-discover your server without extracting X-Plex-Token manually.
 								{:else}
-									Configure JELLYFIN_URL and JELLYFIN_API_KEY in environment variables to enable Jellyfin telemetry.
+									Connect your Jellyfin server with Quick Connect — enter your server URL and approve the code as a Jellyfin administrator.
 								{/if}
 							</p>
 							{#if srv.statusMessage && !srv.reachable}
@@ -990,12 +1157,31 @@
 									{srv.configured ? 'Reconnect Plex' : 'Connect with Plex'}
 								</Button>
 							</div>
+						{:else if srv.serverType === 'jellyfin'}
+							<div class="flex shrink-0 items-center gap-2">
+								{#if srv.credentialSource === 'ENV_OVERRIDE' || jellyfinStatus?.credentialSource === 'ENV_OVERRIDE'}
+									<Badge tone="cyan" mono>ENV MANAGED</Badge>
+								{:else}
+									<Button
+										variant="cyan"
+										size="md"
+										disabled={jellyfinStatus !== null && !jellyfinStatus.encryptionKeyConfigured}
+										title={jellyfinStatus && !jellyfinStatus.encryptionKeyConfigured
+											? 'MIRU_ENCRYPTION_KEY must be configured (>= 32 characters)'
+											: undefined}
+										onclick={openJellyfinWizard}
+									>
+										<Link2 class="h-3.5 w-3.5" />
+										{srv.configured ? 'Reconnect Jellyfin' : 'Connect Jellyfin'}
+									</Button>
+								{/if}
+							</div>
 						{/if}
 					</div>
 				{/each}
 			</div>
-		{:else if plexStatus}
-			{#if plexStatus.credentialSource === 'ENV_OVERRIDE'}
+		{:else if plexStatus || jellyfinStatus}
+			{#if plexStatus?.credentialSource === 'ENV_OVERRIDE'}
 				<div class="flex items-start gap-2.5 rounded-xl border border-cyan/40 bg-cyan-soft/50 px-3.5 py-2.5 text-xs text-fg-secondary">
 					<AlertTriangle class="mt-0.5 h-4 w-4 shrink-0 text-cyan-hi" />
 					<div>
@@ -1007,41 +1193,113 @@
 				</div>
 			{/if}
 
-			{#if !plexStatus.encryptionKeyConfigured}
-				<div class="flex items-start gap-2.5 rounded-xl border border-warning/50 bg-warning-soft px-3.5 py-2.5 text-xs text-fg-secondary">
-					<AlertTriangle class="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+			{#if jellyfinStatus?.credentialSource === 'ENV_OVERRIDE'}
+				<div class="flex items-start gap-2.5 rounded-xl border border-cyan/40 bg-cyan-soft/50 px-3.5 py-2.5 text-xs text-fg-secondary">
+					<AlertTriangle class="mt-0.5 h-4 w-4 shrink-0 text-cyan-hi" />
 					<div>
-						<p class="font-heading font-semibold text-warning">MIRU_ENCRYPTION_KEY is not configured</p>
+						<p class="font-heading font-semibold text-cyan-hi">Environment override active (JELLYFIN_URL / JELLYFIN_API_KEY)</p>
 						<p class="mt-0.5 text-[11px]">
-							Set <code class="font-mono text-fg-primary">MIRU_ENCRYPTION_KEY</code> (at least 32 characters) in your environment to save Plex OAuth credentials encrypted at rest.
+							Jellyfin is managed via environment variables. Remove them to configure or reconnect Jellyfin from the Admin UI with Quick Connect.
 						</p>
 					</div>
 				</div>
 			{/if}
 
-			<div class="flex flex-col gap-3 rounded-xl border border-border bg-elevated p-3.5 sm:flex-row sm:items-center sm:justify-between">
-				<div class="min-w-0">
-					<p class="font-heading text-sm font-semibold text-fg-primary">
-						{plexStatus.serverName || (plexStatus.configured ? 'Plex Media Server' : 'No Plex server connected')}
-					</p>
-					<p class="mt-0.5 truncate font-mono text-[11px] text-fg-muted">
-						{#if plexStatus.baseUrl}
-							{plexStatus.baseUrl}{plexStatus.machineId ? ` · ${plexStatus.machineId}` : ''}
-						{:else}
-							Use Plex PIN OAuth to sign in and auto-discover your server without extracting X-Plex-Token manually.
+			{#if (plexStatus && !plexStatus.encryptionKeyConfigured) || (jellyfinStatus && !jellyfinStatus.encryptionKeyConfigured)}
+				<div class="flex items-start gap-2.5 rounded-xl border border-warning/50 bg-warning-soft px-3.5 py-2.5 text-xs text-fg-secondary">
+					<AlertTriangle class="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+					<div>
+						<p class="font-heading font-semibold text-warning">MIRU_ENCRYPTION_KEY is not configured</p>
+						<p class="mt-0.5 text-[11px]">
+							Set <code class="font-mono text-fg-primary">MIRU_ENCRYPTION_KEY</code> (at least 32 characters) in your environment to save Plex OAuth and Jellyfin Quick Connect credentials encrypted at rest.
+						</p>
+					</div>
+				</div>
+			{/if}
+
+			{#if plexStatus}
+				<div class="flex flex-col gap-3 rounded-xl border border-border bg-elevated p-3.5 sm:flex-row sm:items-center sm:justify-between">
+					<div class="min-w-0">
+						<p class="font-heading text-sm font-semibold text-fg-primary">
+							{plexStatus.serverName || (plexStatus.configured ? 'Plex Media Server' : 'No Plex server connected')}
+						</p>
+						<p class="mt-0.5 truncate font-mono text-[11px] text-fg-muted">
+							{#if plexStatus.baseUrl}
+								{plexStatus.baseUrl}{plexStatus.machineId ? ` · ${plexStatus.machineId}` : ''}
+							{:else}
+								Use Plex PIN OAuth to sign in and auto-discover your server without extracting X-Plex-Token manually.
+							{/if}
+						</p>
+						{#if plexStatus.statusMessage && !plexStatus.reachable}
+							<p class="mt-1 text-[11px] text-fg-secondary">{plexStatus.statusMessage}</p>
 						{/if}
-					</p>
-					{#if plexStatus.statusMessage && !plexStatus.reachable}
-						<p class="mt-1 text-[11px] text-fg-secondary">{plexStatus.statusMessage}</p>
-					{/if}
+					</div>
+					<div class="flex shrink-0 items-center gap-2">
+						<Button variant="primary" size="md" onclick={startPlexOAuthWizard}>
+							<Link2 class="h-3.5 w-3.5" />
+							{plexStatus.configured ? 'Reconnect Plex' : 'Connect with Plex'}
+						</Button>
+					</div>
 				</div>
-				<div class="flex shrink-0 items-center gap-2">
-					<Button variant="primary" size="md" onclick={startPlexOAuthWizard}>
-						<Link2 class="h-3.5 w-3.5" />
-						{plexStatus.configured ? 'Reconnect Plex' : 'Connect with Plex'}
-					</Button>
+			{/if}
+
+			{#if jellyfinStatus}
+				<div class="flex flex-col gap-3 rounded-xl border border-border bg-elevated p-3.5 sm:flex-row sm:items-center sm:justify-between">
+					<div class="min-w-0">
+						<div class="flex flex-wrap items-center gap-1.5">
+							<p class="font-heading text-sm font-semibold text-fg-primary">
+								{jellyfinStatus.serverName || (jellyfinStatus.configured ? 'Jellyfin Server' : 'No Jellyfin server connected')}
+							</p>
+							<Badge tone="cyan" mono>JELLYFIN</Badge>
+							<Badge
+								tone={jellyfinStatus.reachable ? 'direct-play' : jellyfinStatus.configured ? 'warning' : 'neutral'}
+								dot
+								mono
+							>
+								{jellyfinStatus.reachable ? 'CONNECTED' : jellyfinStatus.configured ? 'UNREACHABLE' : 'NOT CONFIGURED'}
+							</Badge>
+							<Badge
+								tone={jellyfinStatus.credentialSource === 'ENV_OVERRIDE'
+									? 'cyan'
+									: jellyfinStatus.credentialSource === 'STORED_ENCRYPTED'
+										? 'primary'
+										: 'neutral'}
+								mono
+							>
+								{credentialSourceLabel(jellyfinStatus.credentialSource)}
+							</Badge>
+						</div>
+						<p class="mt-0.5 truncate font-mono text-[11px] text-fg-muted">
+							{#if jellyfinStatus.baseUrl}
+								{jellyfinStatus.baseUrl}{jellyfinStatus.machineId ? ` · ${jellyfinStatus.machineId}` : ''}{jellyfinStatus.version ? ` · v${jellyfinStatus.version}` : ''}
+							{:else}
+								Connect your Jellyfin server with Quick Connect — enter your server URL and approve the code as a Jellyfin administrator.
+							{/if}
+						</p>
+						{#if jellyfinStatus.statusMessage && !jellyfinStatus.reachable}
+							<p class="mt-1 text-[11px] text-fg-secondary">{jellyfinStatus.statusMessage}</p>
+						{/if}
+					</div>
+					<div class="flex shrink-0 items-center gap-2">
+						{#if jellyfinStatus.credentialSource === 'ENV_OVERRIDE'}
+							<Badge tone="cyan" mono>ENV MANAGED</Badge>
+						{:else}
+							<Button
+								variant="cyan"
+								size="md"
+								disabled={!jellyfinStatus.encryptionKeyConfigured}
+								title={!jellyfinStatus.encryptionKeyConfigured
+									? 'MIRU_ENCRYPTION_KEY must be configured (>= 32 characters)'
+									: undefined}
+								onclick={openJellyfinWizard}
+							>
+								<Link2 class="h-3.5 w-3.5" />
+								{jellyfinStatus.configured ? 'Reconnect Jellyfin' : 'Connect Jellyfin'}
+							</Button>
+						{/if}
+					</div>
 				</div>
-			</div>
+			{/if}
 		{:else if loading}
 			<p class="py-4 text-center font-mono text-xs text-fg-muted">Checking media server connections…</p>
 		{/if}
@@ -1731,6 +1989,163 @@
 					</p>
 				</div>
 				<Button variant="primary" size="md" onclick={() => handleWizardOpenChange(false)} class="w-full">
+					Done
+				</Button>
+			</div>
+		{/if}
+	</div>
+</Sheet>
+
+<!-- Jellyfin Quick Connect Wizard Sheet -->
+<Sheet
+	bind:open={jellyfinWizardOpen}
+	onOpenChange={handleJellyfinWizardOpenChange}
+	title="Connect Jellyfin Server"
+	description="Connect your Jellyfin server with Quick Connect — requires a Jellyfin administrator account"
+>
+	<div class="flex flex-col gap-4">
+		{#if jellyfinWizardError && jellyfinWizardStep !== 'expired' && jellyfinWizardStep !== 'error'}
+			<div role="alert" class="rounded-xl border border-danger/50 bg-danger-soft px-3.5 py-2.5 text-xs text-danger">
+				{jellyfinWizardError}
+			</div>
+		{/if}
+
+		{#if jellyfinWizardStep === 'url'}
+			<form onsubmit={startJellyfinQuickConnect} class="flex flex-col gap-3.5">
+				<label class="flex flex-col gap-1">
+					<span class="font-heading text-xs font-semibold text-fg-primary">Jellyfin Server URL</span>
+					<input
+						type="url"
+						required
+						placeholder="http://192.168.1.50:8096"
+						bind:value={jellyfinUrlInput}
+						class="rounded-lg border border-input-border bg-canvas px-3 py-2 font-mono text-sm text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
+					/>
+					<span class="text-[11px] text-fg-muted">
+						Enter the base URL Miru should use to reach your Jellyfin server (<code class="font-mono">http://</code> or <code class="font-mono">https://</code>).
+					</span>
+				</label>
+				<div class="flex gap-2">
+					<Button type="button" variant="outline" size="md" onclick={() => handleJellyfinWizardOpenChange(false)} class="flex-1">
+						Cancel
+					</Button>
+					<Button type="submit" variant="cyan" size="md" class="flex-1">
+						<Link2 class="h-3.5 w-3.5" />
+						Connect
+					</Button>
+				</div>
+			</form>
+		{:else if jellyfinWizardStep === 'starting'}
+			<div class="flex flex-col items-center justify-center gap-3 py-8 text-center">
+				<Loader2 class="h-6 w-6 animate-spin text-cyan-hi" />
+				<p class="font-heading text-sm font-semibold text-fg-primary">
+					Connecting to Jellyfin &amp; generating Quick Connect code…
+				</p>
+			</div>
+		{:else if jellyfinWizardStep === 'waiting'}
+			<div class="flex flex-col gap-3 rounded-xl border border-border bg-elevated p-4">
+				<div class="flex items-center justify-between gap-2">
+					<div class="min-w-0">
+						<p class="truncate font-heading text-xs font-semibold text-fg-primary">
+							{jellyfinServerName}
+							{#if jellyfinServerVersion}
+								<span class="ml-1 font-mono text-[11px] font-normal text-fg-muted">v{jellyfinServerVersion}</span>
+							{/if}
+						</p>
+						<span class="mt-0.5 inline-flex items-center gap-1.5 text-[11px] text-fg-secondary">
+							<Loader2 class="h-3 w-3 animate-spin text-cyan-hi" />
+							Waiting for administrator approval…
+						</span>
+					</div>
+					<Badge tone="cyan" mono>{remainingJellyfinCountdown}</Badge>
+				</div>
+
+				<div class="flex flex-col items-center gap-2 rounded-xl border border-cyan/40 bg-canvas px-4 py-4 text-center">
+					<span class="font-heading text-[10px] uppercase tracking-wider text-fg-muted">Quick Connect Code</span>
+					<p
+						data-testid="jellyfin-qc-code"
+						class="select-all font-mono text-3xl font-bold tracking-[0.28em] text-cyan-hi"
+					>
+						{jellyfinCode}
+					</p>
+					<Button variant="outline" size="sm" onclick={copyJellyfinCode}>
+						{#if jellyfinCodeCopied}
+							<Check class="h-3.5 w-3.5" /> Code Copied
+						{:else}
+							<Copy class="h-3.5 w-3.5" /> Copy Code
+						{/if}
+					</Button>
+				</div>
+
+				<p class="text-xs text-fg-secondary">
+					In Jellyfin, signed in as an administrator, open your profile → Quick Connect and enter this code.
+				</p>
+			</div>
+			<Button variant="ghost" size="md" onclick={() => handleJellyfinWizardOpenChange(false)} class="w-full">
+				Cancel
+			</Button>
+		{:else if jellyfinWizardStep === 'expired'}
+			<div class="flex flex-col items-center gap-3 rounded-xl border border-border bg-elevated p-5 text-center">
+				<AlertTriangle class="h-6 w-6 text-warning" />
+				<div>
+					<p class="font-heading text-sm font-semibold text-fg-primary">Quick Connect Code Expired</p>
+					<p role="alert" class="mt-1 text-xs text-fg-secondary">
+						{jellyfinWizardError ?? 'Quick Connect code expired. Start again to generate a new code.'}
+					</p>
+				</div>
+				<div class="flex w-full gap-2">
+					<Button variant="outline" size="md" onclick={() => handleJellyfinWizardOpenChange(false)} class="flex-1">
+						Close
+					</Button>
+					<Button variant="cyan" size="md" onclick={() => startJellyfinQuickConnect()} class="flex-1">
+						<RefreshCw class="h-3.5 w-3.5" />
+						Try Again
+					</Button>
+				</div>
+			</div>
+		{:else if jellyfinWizardStep === 'error'}
+			<div class="flex flex-col items-center gap-3 rounded-xl border border-danger/40 bg-elevated p-5 text-center">
+				<AlertTriangle class="h-6 w-6 text-danger" />
+				<div>
+					<p class="font-heading text-sm font-semibold text-fg-primary">Jellyfin Authorization Failed</p>
+					<p role="alert" class="mt-1 text-xs text-danger">
+						{jellyfinWizardError ?? 'Failed to connect Jellyfin server.'}
+					</p>
+				</div>
+				<div class="flex w-full gap-2">
+					<Button variant="outline" size="md" onclick={() => handleJellyfinWizardOpenChange(false)} class="flex-1">
+						Close
+					</Button>
+					<Button variant="cyan" size="md" onclick={() => { jellyfinWizardError = null; jellyfinWizardStep = 'url'; }} class="flex-1">
+						<RefreshCw class="h-3.5 w-3.5" />
+						Try Again
+					</Button>
+				</div>
+			</div>
+		{:else if jellyfinWizardStep === 'done' && jellyfinConnectResult}
+			<div class="flex flex-col items-center gap-3 rounded-xl border border-direct-play/50 bg-direct-play-soft p-5 text-center">
+				<CheckCircle2 class="h-7 w-7 text-direct-play" />
+				<div>
+					<p class="font-heading text-sm font-semibold text-fg-primary">
+						{jellyfinConnectResult.serverName ?? jellyfinServerName} Connected
+					</p>
+					<p class="mt-1 font-mono text-[11px] text-fg-secondary">
+						{jellyfinConnectResult.baseUrl ?? jellyfinUrlInput}
+						{#if jellyfinConnectResult.serverVersion ?? jellyfinServerVersion}
+							· v{jellyfinConnectResult.serverVersion ?? jellyfinServerVersion}
+						{/if}
+					</p>
+					<p class="mt-2 text-xs text-fg-secondary">
+						{#if jellyfinConnectResult.envOverrideActive}
+							Encrypted credentials were saved to the database, but static environment variables remain active.
+						{:else if jellyfinConnectResult.hotReloaded}
+							Miru hot-reloaded the live Jellyfin pipeline without restarting.
+						{:else}
+							Credentials saved.
+						{/if}
+					</p>
+				</div>
+				<Button variant="primary" size="md" onclick={() => handleJellyfinWizardOpenChange(false)} class="w-full">
 					Done
 				</Button>
 			</div>

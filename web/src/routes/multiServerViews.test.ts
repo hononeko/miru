@@ -144,6 +144,12 @@ describe('Multi-server Admin & Users views', () => {
 					response: new Response(null, { status: 200 })
 				};
 			}
+			if (url === '/api/v1/admin/jellyfin/status') {
+				return {
+					data: { configured: true, credentialSource: 'ENV_OVERRIDE', encryptionKeyConfigured: true, reachable: true },
+					response: new Response(null, { status: 200 })
+				};
+			}
 			if (url === '/api/v1/admin/guardrails') return { data: { rules: [] }, response: new Response(null, { status: 200 }) };
 			if (url === '/api/v1/admin/guardrails/audit') {
 				return { data: { items: [], totalCount: 0, limit: 20, offset: 0 }, response: new Response(null, { status: 200 }) };

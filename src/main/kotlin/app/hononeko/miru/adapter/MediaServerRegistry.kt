@@ -1,5 +1,6 @@
 package app.hononeko.miru.adapter
 
+import app.hononeko.miru.adapter.jellyfin.JellyfinRuntimeManager
 import app.hononeko.miru.adapter.plex.ConnectionState
 import app.hononeko.miru.adapter.plex.DelegatingMediaServerAdapter
 import app.hononeko.miru.adapter.plex.PlexRuntimeManager
@@ -363,6 +364,16 @@ class MediaServerRegistry(
     ): PlexCredentialSource =
         when (runtime) {
             is PlexRuntimeManager -> runtime.currentCredentialSource()
+            is JellyfinRuntimeManager ->
+                if (jellyfinConfig.isConfigured) {
+                    PlexCredentialSource.ENV_OVERRIDE
+                } else if (runtime.isConfigured()) {
+                    runtime.currentCredentialSource()
+                } else if (matchedRecord != null && !matchedRecord.encryptedToken.isNullOrBlank()) {
+                    PlexCredentialSource.STORED_ENCRYPTED
+                } else {
+                    runtime.currentCredentialSource()
+                }
             else ->
                 if (runtime.serverType.equals("jellyfin", ignoreCase = true) && jellyfinConfig.isConfigured) {
                     PlexCredentialSource.ENV_OVERRIDE
@@ -385,7 +396,12 @@ class MediaServerRegistry(
                     "No Plex server configured"
                 }
 
-            "jellyfin" -> "Set JELLYFIN_URL and JELLYFIN_API_KEY to connect Jellyfin"
+            "jellyfin" ->
+                if (matchedRecord != null && !matchedRecord.encryptedToken.isNullOrBlank()) {
+                    "Jellyfin adapter is not active"
+                } else {
+                    "No Jellyfin server configured"
+                }
             else -> "Server is not configured"
         }
 

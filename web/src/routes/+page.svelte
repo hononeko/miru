@@ -432,7 +432,7 @@
 				<Server class="h-4 w-4 shrink-0 text-cyan-hi" />
 				<div>
 					<p class="font-heading font-semibold text-fg-primary">Connect your Media Server</p>
-					<p class="text-fg-secondary">Sign in with Plex PIN OAuth in Admin or configure Jellyfin environment variables to start tracking live streams.</p>
+					<p class="text-fg-secondary">Sign in with Plex PIN OAuth or Jellyfin Quick Connect in Admin to start tracking live streams.</p>
 				</div>
 			</div>
 			<a

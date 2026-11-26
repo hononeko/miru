@@ -625,4 +625,59 @@ class MediaServerRegistryAndMultiServerTest :
                 dir.toFile().deleteRecursively()
             }
         }
+
+        test("registry reports historical Plex server as unconfigured and prefers active stored Plex row when dormant") {
+            val dir = Files.createTempDirectory("miru-registry-plex-switch-")
+            val handle = DatabaseFactory.createAndMigrate(DatabaseConfig.Sqlite(dir.resolve("miru.db").toString())).shouldBeRight()
+            try {
+                val serverRepo = ExposedMediaServerRepository(handle)
+                serverRepo.upsert(
+                    MediaServerRecord(
+                        id = "plex-a",
+                        name = "Old Plex A",
+                        serverType = "plex",
+                        machineId = "mach-a",
+                        baseUrl = "http://plex-a.local:32400",
+                        encryptedToken = null,
+                        createdAtMs = 100L,
+                        updatedAtMs = 300L,
+                    ),
+                ).shouldBeRight()
+                serverRepo.upsert(
+                    MediaServerRecord(
+                        id = "plex-b",
+                        name = "Active Plex B",
+                        serverType = "plex",
+                        machineId = "mach-b",
+                        baseUrl = "http://plex-b.local:32400",
+                        encryptedToken = "v1:iv.ct",
+                        createdAtMs = 200L,
+                        updatedAtMs = 200L,
+                    ),
+                ).shouldBeRight()
+
+                val plexRuntime =
+                    PlexRuntimeManager(PlexConfig(websocketEnabled = false), handle, mediaServerRepository = serverRepo)
+                val registry =
+                    MediaServerRegistry(
+                        runtimes = listOf(plexRuntime),
+                        mediaServerRepository = serverRepo,
+                    )
+
+                val adminBeforeStart = registry.listAdminServers().servers
+                adminBeforeStart shouldHaveSize 2
+                val primaryRow = adminBeforeStart.first { it.id == "plex-b" }
+                primaryRow.statusMessage shouldBe "Plex adapter is not active"
+                val historicalRow = adminBeforeStart.first { it.id == "plex-a" }
+                historicalRow.configured shouldBe false
+                historicalRow.statusMessage shouldBe "Historical or unconfigured server record"
+
+                val pubBeforeStart = registry.listPublicServers().servers
+                pubBeforeStart.count { it.configured } shouldBe 0
+                registry.stop()
+            } finally {
+                handle.close()
+                dir.toFile().deleteRecursively()
+            }
+        }
     })

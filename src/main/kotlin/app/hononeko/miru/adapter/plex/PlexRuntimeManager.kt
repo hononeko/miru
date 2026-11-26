@@ -18,6 +18,7 @@ import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.http.PlexCredentialSource
 import app.hononeko.miru.persistence.DatabaseHandle
 import app.hononeko.miru.persistence.model.MediaServerRecord
+import app.hononeko.miru.persistence.model.findActiveStoredServer
 import app.hononeko.miru.persistence.repository.ExposedActiveSessionRepository
 import app.hononeko.miru.persistence.repository.ExposedMediaServerRepository
 import app.hononeko.miru.persistence.repository.ExposedPlaybackHistoryRepository
@@ -378,10 +379,7 @@ class PlexRuntimeManager(
     private suspend fun loadAndActivateStoredLocked(triggerSync: Boolean): Either<MiruError, Boolean> =
         either {
             val servers = mediaServerRepository.findAll().bind()
-            val stored =
-                servers.firstOrNull { server ->
-                    server.serverType.equals("plex", ignoreCase = true) && !server.encryptedToken.isNullOrBlank()
-                }
+            val stored = servers.findActiveStoredServer(serverType)
             if (stored == null) {
                 runtimeLogger.info("No Plex server configured yet; Miru is running in zero-config mode awaiting Plex OAuth setup")
                 return@either false
@@ -591,10 +589,11 @@ class PlexRuntimeManager(
             ifLeft = { healthError ->
                 mediaServerRepository.findAll().flatMap { servers ->
                     val matching =
-                        servers.firstOrNull { server ->
-                            server.serverType.equals(adapter.serverType, ignoreCase = true) &&
-                                server.baseUrl.trimEnd('/') == normalizedBaseUrl
-                        }
+                        activeMachineId?.let { mid -> servers.firstOrNull { it.machineId == mid } }
+                            ?: servers.firstOrNull { server ->
+                                server.serverType.equals(adapter.serverType, ignoreCase = true) &&
+                                    server.baseUrl.trimEnd('/') == normalizedBaseUrl
+                            }
                     matching?.id?.right() ?: healthError.left()
                 }
             },

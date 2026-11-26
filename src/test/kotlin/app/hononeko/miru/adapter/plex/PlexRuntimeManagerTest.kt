@@ -345,4 +345,100 @@ class PlexRuntimeManagerTest :
                 tempDir.toFile().deleteRecursively()
             }
         }
+
+        test("PlexRuntimeManager activates the active/latest stored Plex row when historical Plex rows exist") {
+            val tempDir = Files.createTempDirectory("miru-runtime-switch-test-")
+            try {
+                val dbPath = tempDir.resolve("switch.db").toString()
+                val handle = DatabaseFactory.createAndMigrate(DatabaseConfig.Sqlite(dbPath)).shouldBeRight()
+                val serverRepo = ExposedMediaServerRepository(handle)
+                val encA = CredentialCrypto.encrypt("tok-a", TEST_ENC_KEY).shouldBeRight()
+                val encB = CredentialCrypto.encrypt("tok-b", TEST_ENC_KEY).shouldBeRight()
+
+                // Seed legacy multi-token Plex rows (A older, B newer)
+                serverRepo.upsert(
+                    MediaServerRecord(
+                        id = "srv-a",
+                        name = "Plex A",
+                        serverType = "plex",
+                        machineId = "mach-a",
+                        baseUrl = "http://plex-a.local:32400",
+                        encryptedToken = encA,
+                        clientIdentifier = "cid-1",
+                        createdAtMs = 1_000L,
+                        updatedAtMs = 1_000L,
+                    ),
+                ).shouldBeRight()
+                serverRepo.upsert(
+                    MediaServerRecord(
+                        id = "srv-b",
+                        name = "Plex B",
+                        serverType = "plex",
+                        machineId = "mach-b",
+                        baseUrl = "http://plex-b.local:32400",
+                        encryptedToken = encB,
+                        clientIdentifier = "cid-1",
+                        createdAtMs = 2_000L,
+                        updatedAtMs = 2_000L,
+                    ),
+                ).shouldBeRight()
+
+                val jsonHeaders = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+                val mockEngine =
+                    MockEngine { req ->
+                        when (req.url.encodedPath) {
+                            "/" ->
+                                respond(
+                                    """{"MediaContainer":{"machineIdentifier":"mach-b","friendlyName":"Plex B","version":"1.41"}}""",
+                                    HttpStatusCode.OK,
+                                    jsonHeaders,
+                                )
+                            else -> respond("{}", HttpStatusCode.OK, jsonHeaders)
+                        }
+                    }
+
+                val manager =
+                    PlexRuntimeManager(
+                        plexConfig = PlexConfig(websocketEnabled = false, encryptionKey = TEST_ENC_KEY),
+                        databaseHandle = handle,
+                        mediaServerRepository = serverRepo,
+                        httpClientEngineFactory = { mockEngine },
+                    )
+                manager.initialize().shouldBeRight() shouldBe true
+                manager.currentBaseUrl() shouldBe "http://plex-b.local:32400"
+                manager.currentMachineId() shouldBe "mach-b"
+                manager.stop()
+
+                // Also verify exclusive credential upsert leaves only B with a stored token
+                serverRepo.upsertExclusiveStoredCredentials(
+                    MediaServerRecord(
+                        id = "srv-b",
+                        name = "Plex B",
+                        serverType = "plex",
+                        machineId = "mach-b",
+                        baseUrl = "http://plex-b.local:32400",
+                        encryptedToken = encB,
+                        clientIdentifier = "cid-1",
+                        createdAtMs = 2_000L,
+                        updatedAtMs = 3_000L,
+                    ),
+                ).shouldBeRight()
+                serverRepo.findById("srv-a").shouldBeRight()?.encryptedToken.shouldBeNull()
+
+                val restarted =
+                    PlexRuntimeManager(
+                        plexConfig = PlexConfig(websocketEnabled = false, encryptionKey = TEST_ENC_KEY),
+                        databaseHandle = handle,
+                        mediaServerRepository = serverRepo,
+                        httpClientEngineFactory = { mockEngine },
+                    )
+                restarted.initialize().shouldBeRight() shouldBe true
+                restarted.currentBaseUrl() shouldBe "http://plex-b.local:32400"
+                restarted.currentMachineId() shouldBe "mach-b"
+                restarted.stop()
+                handle.close()
+            } finally {
+                tempDir.toFile().deleteRecursively()
+            }
+        }
     })

@@ -17,6 +17,18 @@ data class MediaServerRecord(
             "createdAtMs=$createdAtMs, updatedAtMs=$updatedAtMs)"
 }
 
+/**
+ * Selects the active stored credential row for [serverType], preferring the most recently updated
+ * row with a non-blank [MediaServerRecord.encryptedToken] when multiple historical rows exist.
+ */
+fun Iterable<MediaServerRecord>.findActiveStoredServer(serverType: String): MediaServerRecord? =
+    filter { it.serverType.equals(serverType, ignoreCase = true) && !it.encryptedToken.isNullOrBlank() }
+        .maxWithOrNull(
+            compareBy<MediaServerRecord> { it.updatedAtMs }
+                .thenBy { it.createdAtMs }
+                .thenBy { it.id },
+        )
+
 data class UserRecord(
     val id: String,
     val serverId: String,

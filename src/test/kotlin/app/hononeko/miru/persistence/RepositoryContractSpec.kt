@@ -131,6 +131,7 @@ fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
         }
 
         mediaServerTests { ctx }
+        mediaServerExclusiveCredentialTests { ctx }
         userTests { ctx }
         activeSessionTests { ctx }
         playbackHistoryTests { ctx }
@@ -272,6 +273,108 @@ private fun FunSpecRootScope.mediaServerTests(ctxProvider: () -> ContractContext
                     updatedAtMs = 500L,
                 ).shouldBeRight()
                 .shouldBeNull()
+        }
+    }
+}
+
+private fun FunSpecRootScope.mediaServerExclusiveCredentialTests(ctxProvider: () -> ContractContext) {
+    context("MediaServerRepository exclusive stored credentials") {
+        test("upsertExclusiveStoredCredentials clears prior same-type tokens while preserving rows and child data") {
+            val ctx = ctxProvider()
+            val plexA =
+                sampleServer(
+                    id = "srv-plex-a",
+                    name = "Plex A",
+                    machineId = "mach-plex-a",
+                    createdAtMs = 100L,
+                    updatedAtMs = 100L,
+                ).copy(
+                    serverType = "plex",
+                    baseUrl = "http://plex-a.local:32400",
+                    encryptedToken = "v1:iv-a.ct-a",
+                    clientIdentifier = "cid-miru",
+                )
+            val jellyfin =
+                sampleServer(
+                    id = "srv-jf",
+                    name = "Jellyfin",
+                    machineId = "mach-jf",
+                    createdAtMs = 150L,
+                    updatedAtMs = 150L,
+                ).copy(
+                    serverType = "jellyfin",
+                    baseUrl = "http://jf.local:8096",
+                    encryptedToken = "v1:iv-jf.ct-jf",
+                    clientIdentifier = "cid-jf",
+                )
+
+            ctx.servers.upsertExclusiveStoredCredentials(plexA).shouldBeRight()
+            ctx.servers.upsertExclusiveStoredCredentials(jellyfin).shouldBeRight()
+
+            val userA = sampleUser(id = "u-plex-a", serverId = "srv-plex-a", externalUserId = "1", username = "alice")
+            ctx.users.upsert(userA).shouldBeRight()
+            ctx.library.upsertSection(
+                LibrarySectionRecord(
+                    serverId = "srv-plex-a",
+                    sectionKey = "1",
+                    title = "Movies",
+                    sectionType = "movie",
+                    itemCount = 42,
+                    updatedAtMs = 100L,
+                ),
+            ).shouldBeRight()
+            ctx.history.insert(
+                sampleHistory(
+                    id = "hist-plex-a",
+                    serverId = "srv-plex-a",
+                    userId = "u-plex-a",
+                    ratingKey = "mov-a1",
+                    title = "Server A Movie",
+                ),
+            ).shouldBeRight()
+
+            val plexB =
+                sampleServer(
+                    id = "srv-plex-b",
+                    name = "Plex B",
+                    machineId = "mach-plex-b",
+                    createdAtMs = 200L,
+                    updatedAtMs = 200L,
+                ).copy(
+                    serverType = "plex",
+                    baseUrl = "http://plex-b.local:32400",
+                    encryptedToken = "v1:iv-b.ct-b",
+                    clientIdentifier = "cid-miru",
+                )
+            val savedB = ctx.servers.upsertExclusiveStoredCredentials(plexB).shouldBeRight()
+            savedB.id shouldBe "srv-plex-b"
+            savedB.encryptedToken shouldBe "v1:iv-b.ct-b"
+
+            // Prior Plex A row is preserved with null encryptedToken; Jellyfin token and Plex A child data stay intact
+            val reloadedA = ctx.servers.findById("srv-plex-a").shouldBeRight().shouldNotBeNull()
+            reloadedA.encryptedToken.shouldBeNull()
+            reloadedA.clientIdentifier shouldBe "cid-miru"
+            ctx.servers.findById("srv-jf").shouldBeRight().shouldNotBeNull().encryptedToken shouldBe "v1:iv-jf.ct-jf"
+            ctx.users.findByServer("srv-plex-a").shouldBeRight() shouldHaveSize 1
+            ctx.library.findSectionsByServer("srv-plex-a").shouldBeRight() shouldHaveSize 1
+            ctx.history.query(HistoryFilter(serverId = "srv-plex-a")).shouldBeRight().totalCount shouldBe 1L
+
+            // Switching back to Plex A by machineId reuses original id and createdAtMs and clears Plex B token
+            val reactivatedA =
+                ctx.servers.upsertExclusiveStoredCredentials(
+                    plexA.copy(
+                        id = "ignored-new-id",
+                        name = "Plex A Returned",
+                        baseUrl = "https://plex-a.example.com:32400",
+                        encryptedToken = "v1:iv-a2.ct-a2",
+                        createdAtMs = 999L,
+                        updatedAtMs = 300L,
+                    ),
+                ).shouldBeRight()
+            reactivatedA.id shouldBe "srv-plex-a"
+            reactivatedA.createdAtMs shouldBe 100L
+            reactivatedA.encryptedToken shouldBe "v1:iv-a2.ct-a2"
+            ctx.servers.findById("srv-plex-b").shouldBeRight().shouldNotBeNull().encryptedToken.shouldBeNull()
         }
     }
 }

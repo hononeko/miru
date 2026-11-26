@@ -15,6 +15,7 @@ import app.hononeko.miru.http.PlexCredentialSource
 import app.hononeko.miru.persistence.model.ActiveSessionKey
 import app.hononeko.miru.persistence.model.ActiveSessionRecord
 import app.hononeko.miru.persistence.model.MediaServerRecord
+import app.hononeko.miru.persistence.model.findActiveStoredServer
 import app.hononeko.miru.persistence.repository.MediaServerRepository
 import app.hononeko.miru.session.SessionEvent
 import app.hononeko.miru.session.SessionStateEngine
@@ -354,6 +355,7 @@ class MediaServerRegistry(
                     it.serverType.equals(type, ignoreCase = true) && it.baseUrl.trimEnd('/') == url
                 }
             }
+            ?: dbServers.findActiveStoredServer(type)
             ?: dbServers.firstOrNull { it.serverType.equals(type, ignoreCase = true) }
     }
 

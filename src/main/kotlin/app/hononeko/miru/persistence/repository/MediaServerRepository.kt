@@ -7,8 +7,12 @@ import app.hononeko.miru.persistence.model.MediaServerRecord
 import app.hononeko.miru.persistence.table.MediaServersTable
 import arrow.core.Either
 import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.coalesce
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.isNotNull
+import org.jetbrains.exposed.v1.core.lowerCase
+import org.jetbrains.exposed.v1.core.neq
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.selectAll
@@ -18,6 +22,12 @@ import java.sql.SQLException
 
 interface MediaServerRepository {
     suspend fun upsert(server: MediaServerRecord): Either<MiruError.PersistenceError, MediaServerRecord>
+
+    /**
+     * Atomically clears stored [MediaServerRecord.encryptedToken] values on all other rows sharing
+     * [server]'s server type while preserving their rows and historical data, then upserts [server].
+     */
+    suspend fun upsertExclusiveStoredCredentials(server: MediaServerRecord): Either<MiruError.PersistenceError, MediaServerRecord>
 
     suspend fun updateCredentials(
         id: String,
@@ -44,60 +54,79 @@ class ExposedMediaServerRepository(
 
     override suspend fun upsert(server: MediaServerRecord): Either<MiruError.PersistenceError, MediaServerRecord> =
         database.exposedQuery("media_server_upsert") {
-            val updatedRows =
-                MediaServersTable.update({ MediaServersTable.id eq server.id }) {
-                    it[name] = server.name
-                    it[serverType] = server.serverType
-                    it[machineId] = server.machineId
-                    it[baseUrl] = server.baseUrl
-                    if (server.encryptedToken != null) {
-                        it[encryptedToken] = server.encryptedToken
-                    }
-                    if (server.clientIdentifier != null) {
-                        it[clientIdentifier] = server.clientIdentifier
-                    }
-                    it[updatedAtMs] = server.updatedAtMs
-                }
-
-            if (updatedRows > 0) {
-                MediaServersTable
-                    .selectAll()
-                    .where { MediaServersTable.id eq server.id }
-                    .singleOrNull()
-                    ?.toMediaServerRecord()
-                    ?: throw SQLException("Upserted media server '${server.id}' could not be reloaded")
-            } else {
-                MediaServersTable.upsert(
-                    MediaServersTable.machineId,
-                    onUpdate = {
-                        it[MediaServersTable.name] = insertValue(MediaServersTable.name)
-                        it[MediaServersTable.serverType] = insertValue(MediaServersTable.serverType)
-                        it[MediaServersTable.baseUrl] = insertValue(MediaServersTable.baseUrl)
-                        it[MediaServersTable.encryptedToken] =
-                            coalesce(insertValue(MediaServersTable.encryptedToken), MediaServersTable.encryptedToken)
-                        it[MediaServersTable.clientIdentifier] =
-                            coalesce(insertValue(MediaServersTable.clientIdentifier), MediaServersTable.clientIdentifier)
-                        it[MediaServersTable.updatedAtMs] = insertValue(MediaServersTable.updatedAtMs)
-                    },
-                ) {
-                    it[id] = server.id
-                    it[name] = server.name
-                    it[serverType] = server.serverType
-                    it[machineId] = server.machineId
-                    it[baseUrl] = server.baseUrl
-                    it[encryptedToken] = server.encryptedToken
-                    it[clientIdentifier] = server.clientIdentifier
-                    it[createdAtMs] = server.createdAtMs
-                    it[updatedAtMs] = server.updatedAtMs
-                }
-                MediaServersTable
-                    .selectAll()
-                    .where { MediaServersTable.machineId eq server.machineId }
-                    .singleOrNull()
-                    ?.toMediaServerRecord()
-                    ?: throw SQLException("Upserted media server '${server.machineId}' could not be reloaded")
-            }
+            upsertLocked(server)
         }
+
+    override suspend fun upsertExclusiveStoredCredentials(
+        server: MediaServerRecord,
+    ): Either<MiruError.PersistenceError, MediaServerRecord> =
+        database.exposedQuery("media_server_upsert_exclusive_credentials") {
+            MediaServersTable.update({
+                (MediaServersTable.serverType.lowerCase() eq server.serverType.lowercase()) and
+                    (MediaServersTable.machineId neq server.machineId) and
+                    MediaServersTable.encryptedToken.isNotNull()
+            }) {
+                it[encryptedToken] = null
+                it[updatedAtMs] = server.updatedAtMs
+            }
+            upsertLocked(server)
+        }
+
+    private fun upsertLocked(server: MediaServerRecord): MediaServerRecord {
+        val updatedRows =
+            MediaServersTable.update({ MediaServersTable.id eq server.id }) {
+                it[name] = server.name
+                it[serverType] = server.serverType
+                it[machineId] = server.machineId
+                it[baseUrl] = server.baseUrl
+                if (server.encryptedToken != null) {
+                    it[encryptedToken] = server.encryptedToken
+                }
+                if (server.clientIdentifier != null) {
+                    it[clientIdentifier] = server.clientIdentifier
+                }
+                it[updatedAtMs] = server.updatedAtMs
+            }
+
+        return if (updatedRows > 0) {
+            MediaServersTable
+                .selectAll()
+                .where { MediaServersTable.id eq server.id }
+                .singleOrNull()
+                ?.toMediaServerRecord()
+                ?: throw SQLException("Upserted media server '${server.id}' could not be reloaded")
+        } else {
+            MediaServersTable.upsert(
+                MediaServersTable.machineId,
+                onUpdate = {
+                    it[MediaServersTable.name] = insertValue(MediaServersTable.name)
+                    it[MediaServersTable.serverType] = insertValue(MediaServersTable.serverType)
+                    it[MediaServersTable.baseUrl] = insertValue(MediaServersTable.baseUrl)
+                    it[MediaServersTable.encryptedToken] =
+                        coalesce(insertValue(MediaServersTable.encryptedToken), MediaServersTable.encryptedToken)
+                    it[MediaServersTable.clientIdentifier] =
+                        coalesce(insertValue(MediaServersTable.clientIdentifier), MediaServersTable.clientIdentifier)
+                    it[MediaServersTable.updatedAtMs] = insertValue(MediaServersTable.updatedAtMs)
+                },
+            ) {
+                it[id] = server.id
+                it[name] = server.name
+                it[serverType] = server.serverType
+                it[machineId] = server.machineId
+                it[baseUrl] = server.baseUrl
+                it[encryptedToken] = server.encryptedToken
+                it[clientIdentifier] = server.clientIdentifier
+                it[createdAtMs] = server.createdAtMs
+                it[updatedAtMs] = server.updatedAtMs
+            }
+            MediaServersTable
+                .selectAll()
+                .where { MediaServersTable.machineId eq server.machineId }
+                .singleOrNull()
+                ?.toMediaServerRecord()
+                ?: throw SQLException("Upserted media server '${server.machineId}' could not be reloaded")
+        }
+    }
 
     override suspend fun updateCredentials(
         id: String,

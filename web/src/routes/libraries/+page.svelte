@@ -202,7 +202,7 @@
 				<Server class="h-4 w-4 shrink-0 text-cyan-hi" />
 				<div>
 					<p class="font-heading font-semibold text-fg-primary">No media server connected</p>
-					<p class="text-fg-secondary">Connect Plex via PIN OAuth or configure Jellyfin in Admin before syncing library sections.</p>
+					<p class="text-fg-secondary">Connect Plex via PIN OAuth or Jellyfin via Quick Connect in Admin before syncing library sections.</p>
 				</div>
 			</div>
 			<a

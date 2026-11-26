@@ -104,6 +104,12 @@ export type PlexDiscoveredServersResponse = Schemas['PlexDiscoveredServersRespon
 export type PlexSelectServerRequest = Schemas['PlexSelectServerRequest'];
 export type PlexSelectServerResponse = Schemas['PlexSelectServerResponse'];
 
+export type JellyfinQuickConnectStatus = Schemas['JellyfinQuickConnectStatus'];
+export type JellyfinConnectionStatus = Schemas['JellyfinConnectionStatus'];
+export type JellyfinQuickConnectStartRequest = Schemas['JellyfinQuickConnectStartRequest'];
+export type JellyfinQuickConnectStartResponse = Schemas['JellyfinQuickConnectStartResponse'];
+export type JellyfinQuickConnectPollResponse = Schemas['JellyfinQuickConnectPollResponse'];
+
 export type MediaTechnicalSpecsDto = Schemas['MediaTechnicalSpecsDto'];
 export type SeriesOverviewDto = Schemas['SeriesOverviewDto'];
 export type SeasonDetailsDto = Schemas['SeasonDetailsDto'];

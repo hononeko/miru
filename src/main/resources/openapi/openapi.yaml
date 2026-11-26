@@ -1558,6 +1558,141 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /api/v1/admin/jellyfin/status:
+    get:
+      tags: [Admin]
+      operationId: getJellyfinConnectionStatus
+      summary: Get current Jellyfin connection status and credential source
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Jellyfin connection status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JellyfinConnectionStatus'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/admin/jellyfin/quick-connect:
+    post:
+      tags: [Admin]
+      operationId: startJellyfinQuickConnect
+      summary: Validate a Jellyfin server URL and initiate a Quick Connect session
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JellyfinQuickConnectStartRequest'
+      responses:
+        '200':
+          description: Jellyfin Quick Connect code generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JellyfinQuickConnectStartResponse'
+        '400':
+          description: Invalid URL, non-Jellyfin server, or missing MIRU_ENCRYPTION_KEY
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Quick Connect is disabled on the target Jellyfin server
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '502':
+          description: Jellyfin server unreachable or returned an upstream error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/admin/jellyfin/quick-connect/{attemptId}:
+    get:
+      tags: [Admin]
+      operationId: pollJellyfinQuickConnect
+      summary: Poll Jellyfin Quick Connect authorization status and complete server onboarding
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: attemptId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Current Quick Connect attempt status (or final authorized/failed outcome)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JellyfinQuickConnectPollResponse'
+        '400':
+          description: Invalid Quick Connect attempt identifier
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Quick Connect attempt not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '502':
+          description: Jellyfin server unreachable or returned an upstream error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
   /api/v1/servers:
     get:
       tags: [Servers]
@@ -5376,6 +5511,98 @@ components:
           type: string
         credentialSource:
           $ref: '#/components/schemas/PlexCredentialSource'
+
+    JellyfinQuickConnectStatus:
+      type: string
+      enum: [PENDING, AUTHORIZED, EXPIRED, NOT_ADMIN, FAILED]
+
+    JellyfinConnectionStatus:
+      type: object
+      required: [configured, credentialSource, encryptionKeyConfigured, reachable]
+      properties:
+        configured:
+          type: boolean
+        credentialSource:
+          $ref: '#/components/schemas/PlexCredentialSource'
+        encryptionKeyConfigured:
+          type: boolean
+        serverName:
+          type: string
+          nullable: true
+        machineId:
+          type: string
+          nullable: true
+        baseUrl:
+          type: string
+          nullable: true
+        version:
+          type: string
+          nullable: true
+        reachable:
+          type: boolean
+        statusMessage:
+          type: string
+          nullable: true
+
+    JellyfinQuickConnectStartRequest:
+      type: object
+      required: [baseUrl]
+      properties:
+        baseUrl:
+          type: string
+
+    JellyfinQuickConnectStartResponse:
+      type: object
+      required: [attemptId, code, serverName, expiresAtMs]
+      properties:
+        attemptId:
+          type: string
+        code:
+          type: string
+        serverName:
+          type: string
+        serverVersion:
+          type: string
+          nullable: true
+        expiresAtMs:
+          type: integer
+          format: int64
+
+    JellyfinQuickConnectPollResponse:
+      type: object
+      required: [attemptId, status, expiresAtMs]
+      properties:
+        attemptId:
+          type: string
+        status:
+          $ref: '#/components/schemas/JellyfinQuickConnectStatus'
+        expiresAtMs:
+          type: integer
+          format: int64
+        message:
+          type: string
+          nullable: true
+        serverName:
+          type: string
+          nullable: true
+        serverVersion:
+          type: string
+          nullable: true
+        machineId:
+          type: string
+          nullable: true
+        baseUrl:
+          type: string
+          nullable: true
+        hotReloaded:
+          type: boolean
+          nullable: true
+        envOverrideActive:
+          type: boolean
+          nullable: true
+        credentialSource:
+          $ref: '#/components/schemas/PlexCredentialSource'
+          nullable: true
 
     MediaTechnicalSpecsDto:
       type: object

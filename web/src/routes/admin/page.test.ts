@@ -1,8 +1,9 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { api } from '$api/client';
-import type { AccountResponse, GuardrailRuleDto, TerminationAuditEntryDto } from '$api/types';
+import { api, MiruApiError } from '$api/client';
+import type { AccountResponse, AdminServerStatusDto, GuardrailRuleDto, JellyfinConnectionStatus, TerminationAuditEntryDto } from '$api/types';
 import { authStore } from '$stores/auth.svelte';
+import { serversStore } from '$stores/servers.svelte';
 import AdminPage from './+page.svelte';
 
 function makeRules(): GuardrailRuleDto[] {
@@ -177,6 +178,17 @@ describe('Admin console Stream Guardrails & Audit Log', () => {
 						credentialSource: 'ENV_OVERRIDE',
 						encryptionKeyConfigured: true,
 						reachable: true
+					},
+					response: new Response(null, { status: 200 })
+				};
+			}
+			if (url === '/api/v1/admin/jellyfin/status') {
+				return {
+					data: {
+						configured: false,
+						credentialSource: 'NOT_CONFIGURED',
+						encryptionKeyConfigured: true,
+						reachable: false
 					},
 					response: new Response(null, { status: 200 })
 				};
@@ -536,5 +548,333 @@ describe('Admin console Stream Guardrails & Audit Log', () => {
 
 		const select = screen.getByLabelText('Account Role') as HTMLSelectElement;
 		expect([...select.options].map((option) => option.value)).toEqual(['USER', 'ADMIN']);
+	});
+});
+
+describe('Admin console Jellyfin Quick Connect wizard', () => {
+	function setupJellyfinMocks(options: {
+		jellyfinStatus: JellyfinConnectionStatus;
+		adminServers?: AdminServerStatusDto[];
+	}) {
+		authStore.principal = {
+			accountId: 'acc-1',
+			username: 'admin',
+			email: null,
+			role: 'ADMIN',
+			linkedMediaUserIds: [],
+			authSource: 'SESSION_COOKIE',
+			authProvider: 'LOCAL',
+			avatarUrl: null
+		};
+		serversStore.reset();
+		let currentJellyfinStatus = options.jellyfinStatus;
+		let currentAdminServers =
+			options.adminServers ?? [
+				{
+					id: null,
+					name: options.jellyfinStatus.serverName ?? 'Jellyfin',
+					serverType: 'jellyfin',
+					configured: options.jellyfinStatus.configured,
+					credentialSource: options.jellyfinStatus.credentialSource,
+					machineId: options.jellyfinStatus.machineId ?? null,
+					baseUrl: options.jellyfinStatus.baseUrl ?? null,
+					reachable: options.jellyfinStatus.reachable,
+					websocketEnabled: true,
+					websocketState: options.jellyfinStatus.configured ? 'CONNECTED' : 'DISCONNECTED',
+					statusMessage: options.jellyfinStatus.statusMessage ?? null
+				}
+			];
+
+		vi.spyOn(api, 'GET').mockImplementation((async (url: string) => {
+			if (url === '/api/v1/admin/accounts') {
+				return { data: { accounts: makeAccounts(), emailLinkingEnabled: false }, response: new Response(null, { status: 200 }) };
+			}
+			if (url === '/api/v1/admin/api-keys') return { data: { apiKeys: [] }, response: new Response(null, { status: 200 }) };
+			if (url === '/api/v1/users') return { data: { users: [] }, response: new Response(null, { status: 200 }) };
+			if (url === '/healthz') return { data: { status: 'ok', service: 'miru', version: '1.2.3' }, response: new Response(null, { status: 200 }) };
+			if (url === '/readyz') return { data: { status: 'ready', checks: {} }, response: new Response(null, { status: 200 }) };
+			if (url === '/api/v1/admin/plex/status') {
+				return {
+					data: { configured: false, credentialSource: 'NOT_CONFIGURED', encryptionKeyConfigured: currentJellyfinStatus.encryptionKeyConfigured, reachable: false },
+					response: new Response(null, { status: 200 })
+				};
+			}
+			if (url === '/api/v1/admin/jellyfin/status') {
+				return { data: currentJellyfinStatus, response: new Response(null, { status: 200 }) };
+			}
+			if (url === '/api/v1/admin/servers') {
+				return { data: { servers: currentAdminServers }, response: new Response(null, { status: 200 }) };
+			}
+			if (url === '/api/v1/servers') {
+				return {
+					data: {
+						servers: currentJellyfinStatus.configured
+							? [
+									{
+										id: 'srv-jf-1',
+										name: currentJellyfinStatus.serverName ?? 'Studio Jellyfin',
+										serverType: 'jellyfin',
+										configured: true,
+										reachable: true,
+										websocketEnabled: true,
+										websocketState: 'CONNECTED'
+									}
+								]
+							: []
+					},
+					response: new Response(null, { status: 200 })
+				};
+			}
+			if (url === '/api/v1/streams') return { data: { streams: [] }, response: new Response(null, { status: 200 }) };
+			if (url === '/api/v1/admin/guardrails') return { data: { rules: makeRules() }, response: new Response(null, { status: 200 }) };
+			if (url === '/api/v1/admin/guardrails/audit') {
+				return { data: { items: [], totalCount: 0, limit: 20, offset: 0 }, response: new Response(null, { status: 200 }) };
+			}
+			if (url === '/api/v1/admin/webhooks') {
+				return { data: { targets: [], encryptionKeyConfigured: true }, response: new Response(null, { status: 200 }) };
+			}
+			if (url === '/api/v1/admin/webhooks/deliveries') {
+				return { data: { items: [], totalCount: 0, limit: 20, offset: 0 }, response: new Response(null, { status: 200 }) };
+			}
+			return { data: {}, response: new Response(null, { status: 200 }) };
+		}) as never);
+
+		return {
+			setConnected(status: JellyfinConnectionStatus) {
+				currentJellyfinStatus = status;
+				currentAdminServers = [
+					{
+						id: 'srv-jf-1',
+						name: status.serverName ?? 'Studio Jellyfin',
+						serverType: 'jellyfin',
+						configured: true,
+						credentialSource: status.credentialSource,
+						machineId: status.machineId ?? 'jf-1',
+						baseUrl: status.baseUrl ?? 'http://jf.local:8096',
+						reachable: status.reachable,
+						websocketEnabled: true,
+						websocketState: 'CONNECTED',
+						statusMessage: status.statusMessage ?? null
+					}
+				];
+			}
+		};
+	}
+
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.restoreAllMocks();
+		cleanup();
+		authStore.principal = null;
+		serversStore.reset();
+	});
+
+	it('disables Connect Jellyfin button when MIRU_ENCRYPTION_KEY is missing and hides flow for ENV_OVERRIDE', async () => {
+		setupJellyfinMocks({
+			jellyfinStatus: {
+				configured: false,
+				credentialSource: 'NOT_CONFIGURED',
+				encryptionKeyConfigured: false,
+				reachable: false
+			}
+		});
+		render(AdminPage);
+
+		await waitFor(() => {
+			expect(screen.getByText('MIRU_ENCRYPTION_KEY is not configured')).toBeTruthy();
+		});
+		const connectBtn = screen.getByRole('button', { name: 'Connect Jellyfin' }) as HTMLButtonElement;
+		expect(connectBtn.disabled).toBe(true);
+
+		cleanup();
+
+		setupJellyfinMocks({
+			jellyfinStatus: {
+				configured: true,
+				credentialSource: 'ENV_OVERRIDE',
+				encryptionKeyConfigured: true,
+				serverName: 'Env Jellyfin',
+				baseUrl: 'http://env-jf.local:8096',
+				reachable: true
+			}
+		});
+		render(AdminPage);
+
+		await waitFor(() => {
+			expect(screen.getByText('Environment override active (JELLYFIN_URL / JELLYFIN_API_KEY)')).toBeTruthy();
+		});
+		expect(screen.queryByRole('button', { name: /Connect Jellyfin|Reconnect Jellyfin/ })).toBeNull();
+		expect(screen.getByText('ENV MANAGED')).toBeTruthy();
+	});
+
+	it('shows error states for Quick Connect disabled, non-admin rejection, and expired code, then completes happy path and refreshes stores', async () => {
+		const harness = setupJellyfinMocks({
+			jellyfinStatus: {
+				configured: false,
+				credentialSource: 'NOT_CONFIGURED',
+				encryptionKeyConfigured: true,
+				reachable: false
+			}
+		});
+
+		const postSpy = vi.spyOn(api, 'POST').mockImplementation((async (url: string) => {
+			if (url === '/api/v1/admin/jellyfin/quick-connect') {
+				return {
+					error: {
+						type: 'about:blank',
+						title: 'Conflict',
+						status: 409,
+						detail: 'Quick Connect is disabled on this Jellyfin server. Enable it in Jellyfin Dashboard -> General -> Enable Quick Connect.'
+					},
+					response: new Response(null, { status: 409 })
+				};
+			}
+			return { data: {}, response: new Response(null, { status: 200 }) };
+		}) as never);
+
+		render(AdminPage);
+
+		await waitFor(() => expect(screen.getByRole('button', { name: 'Connect Jellyfin' })).toBeTruthy());
+		await fireEvent.click(screen.getByRole('button', { name: 'Connect Jellyfin' }));
+
+		await waitFor(() => expect(screen.getByRole('heading', { name: 'Connect Jellyfin Server' })).toBeTruthy());
+		const urlInput = screen.getByLabelText(/Jellyfin Server URL/i) as HTMLInputElement;
+		await fireEvent.input(urlInput, { target: { value: 'http://jf.local:8096' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+
+		// Quick Connect disabled error shown inline
+		await waitFor(() => {
+			expect(screen.getByRole('alert').textContent).toContain('Jellyfin Dashboard -> General -> Enable Quick Connect');
+		});
+
+		// Next attempt succeeds, then poll returns NOT_ADMIN
+		postSpy.mockResolvedValueOnce({
+			data: {
+				attemptId: 'att-1',
+				code: '918273',
+				serverName: 'Studio Jellyfin',
+				serverVersion: '10.10.3',
+				expiresAtMs: Date.now() + 600_000
+			},
+			response: new Response(null, { status: 200 })
+		} as never);
+
+		const originalGet = vi.mocked(api.GET).getMockImplementation()!;
+		let pollStatus: 'NOT_ADMIN' | 'EXPIRED' | 'AUTHORIZED' = 'NOT_ADMIN';
+		vi.mocked(api.GET).mockImplementation((async (url: string, ...rest: unknown[]) => {
+			if (url === '/api/v1/admin/jellyfin/quick-connect/{attemptId}') {
+				if (pollStatus === 'NOT_ADMIN') {
+					return {
+						data: {
+							attemptId: 'att-1',
+							status: 'NOT_ADMIN',
+							expiresAtMs: Date.now() + 500_000,
+							message: 'Quick Connect must be approved by a Jellyfin administrator account.'
+						},
+						response: new Response(null, { status: 200 })
+					};
+				}
+				if (pollStatus === 'EXPIRED') {
+					return {
+						data: {
+							attemptId: 'att-2',
+							status: 'EXPIRED',
+							expiresAtMs: Date.now() - 1000,
+							message: 'Quick Connect code expired. Start again to generate a new code.'
+						},
+						response: new Response(null, { status: 200 })
+					};
+				}
+				harness.setConnected({
+					configured: true,
+					credentialSource: 'STORED_ENCRYPTED',
+					encryptionKeyConfigured: true,
+					serverName: 'Studio Jellyfin',
+					machineId: 'jf-1',
+					baseUrl: 'http://jf.local:8096',
+					version: '10.10.3',
+					reachable: true
+				});
+				return {
+					data: {
+						attemptId: 'att-3',
+						status: 'AUTHORIZED',
+						expiresAtMs: Date.now() + 500_000,
+						serverName: 'Studio Jellyfin',
+						serverVersion: '10.10.3',
+						machineId: 'jf-1',
+						baseUrl: 'http://jf.local:8096',
+						hotReloaded: true,
+						envOverrideActive: false,
+						credentialSource: 'STORED_ENCRYPTED'
+					},
+					response: new Response(null, { status: 200 })
+				};
+			}
+			return (originalGet as (...args: unknown[]) => unknown)(url, ...rest);
+		}) as never);
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+		await waitFor(() => {
+			expect(screen.getByTestId('jellyfin-qc-code').textContent?.trim()).toBe('918273');
+			expect(screen.getByText(/open your profile/i)).toBeTruthy();
+		});
+
+		// Wait for automatic poll (1.5s) -> NOT_ADMIN error state
+		await waitFor(
+			() => {
+				expect(screen.getByText('Jellyfin Authorization Failed')).toBeTruthy();
+				expect(screen.getByRole('alert').textContent).toContain('administrator');
+			},
+			{ timeout: 3_000 }
+		);
+
+		// Try again -> EXPIRED state
+		await fireEvent.click(screen.getByRole('button', { name: 'Try Again' }));
+		pollStatus = 'EXPIRED';
+		postSpy.mockResolvedValueOnce({
+			data: {
+				attemptId: 'att-2',
+				code: '555666',
+				serverName: 'Studio Jellyfin',
+				serverVersion: '10.10.3',
+				expiresAtMs: Date.now() + 600_000
+			},
+			response: new Response(null, { status: 200 })
+		} as never);
+		await fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+		await waitFor(() => expect(screen.getByTestId('jellyfin-qc-code').textContent?.trim()).toBe('555666'));
+		await waitFor(
+			() => {
+				expect(screen.getByText('Quick Connect Code Expired')).toBeTruthy();
+			},
+			{ timeout: 3_000 }
+		);
+
+		// Retry -> AUTHORIZED state -> Done & serversStore refreshed
+		pollStatus = 'AUTHORIZED';
+		postSpy.mockResolvedValueOnce({
+			data: {
+				attemptId: 'att-3',
+				code: '777888',
+				serverName: 'Studio Jellyfin',
+				serverVersion: '10.10.3',
+				expiresAtMs: Date.now() + 600_000
+			},
+			response: new Response(null, { status: 200 })
+		} as never);
+		await fireEvent.click(screen.getByRole('button', { name: 'Try Again' }));
+		await waitFor(() => expect(screen.getByTestId('jellyfin-qc-code').textContent?.trim()).toBe('777888'));
+		await waitFor(
+			() => {
+				expect(screen.getByText('Studio Jellyfin Connected')).toBeTruthy();
+				expect(screen.getByText(/Miru hot-reloaded the live Jellyfin pipeline/)).toBeTruthy();
+			},
+			{ timeout: 3_000 }
+		);
+
+		expect(serversStore.servers.some((s) => s.serverType === 'jellyfin' && s.configured)).toBe(true);
+		await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+		await waitFor(() => expect(screen.getByRole('button', { name: 'Reconnect Jellyfin' })).toBeTruthy());
 	});
 });

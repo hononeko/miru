@@ -68,14 +68,15 @@ fun createJellyfinHttpClient(
     }
 
 internal fun buildMediaBrowserAuthHeader(
-    apiKey: String,
+    apiKey: String?,
     deviceId: String,
     version: String = "1.0.0",
 ): String {
     val safeDeviceId = sanitizeHeaderValue(deviceId).ifBlank { "miru" }
     val safeVersion = sanitizeHeaderValue(version).ifBlank { "1.0.0" }
-    val safeToken = sanitizeHeaderValue(apiKey)
-    return "MediaBrowser Client=\"Miru\", Device=\"Miru\", DeviceId=\"$safeDeviceId\", Version=\"$safeVersion\", Token=\"$safeToken\""
+    val base = "MediaBrowser Client=\"Miru\", Device=\"Miru\", DeviceId=\"$safeDeviceId\", Version=\"$safeVersion\""
+    val safeToken = apiKey?.let(::sanitizeHeaderValue)?.takeIf { it.isNotBlank() }
+    return if (safeToken != null) "$base, Token=\"$safeToken\"" else base
 }
 
 private fun sanitizeHeaderValue(value: String): String =

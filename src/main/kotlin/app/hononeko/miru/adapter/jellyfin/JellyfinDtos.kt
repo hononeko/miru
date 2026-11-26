@@ -204,3 +204,65 @@ data class JellyfinLibraryChangedDto(
     @SerialName("ItemsUpdated") val itemsUpdated: List<String>? = null,
     @SerialName("ItemsRemoved") val itemsRemoved: List<String>? = null,
 )
+
+@Serializable
+data class JellyfinQuickConnectResultDto(
+    @SerialName("Authenticated") val authenticated: Boolean? = null,
+    @SerialName("Secret") val secret: String? = null,
+    @SerialName("Code") val code: String? = null,
+    @SerialName("DeviceId") val deviceId: String? = null,
+    @SerialName("DeviceName") val deviceName: String? = null,
+    @SerialName("AppName") val appName: String? = null,
+    @SerialName("AppVersion") val appVersion: String? = null,
+    @SerialName("DateAdded") val dateAdded: String? = null,
+) {
+    override fun toString(): String =
+        "JellyfinQuickConnectResultDto(authenticated=$authenticated, secret=${if (secret != null) "***" else "null"}, " +
+            "code=${if (code != null) "***" else "null"}, deviceId=$deviceId, appName=$appName, dateAdded=$dateAdded)"
+}
+
+@Serializable
+data class JellyfinQuickConnectAuthRequest(
+    @SerialName("Secret") val secret: String,
+) {
+    override fun toString(): String = "JellyfinQuickConnectAuthRequest(secret=***)"
+}
+
+@Serializable
+data class JellyfinAuthenticationResultDto(
+    @SerialName("User") val user: JellyfinUserDto? = null,
+    @SerialName("AccessToken") val accessToken: String? = null,
+    @SerialName("ServerId") val serverId: String? = null,
+) {
+    override fun toString(): String =
+        "JellyfinAuthenticationResultDto(userId=${user?.id}, userName=${user?.name}, " +
+            "isAdministrator=${user?.policy?.isAdministrator}, " +
+            "accessToken=${if (accessToken != null) "***" else "null"}, serverId=$serverId)"
+}
+
+@Serializable
+data class JellyfinAuthenticationInfoDto(
+    @SerialName("Id") val id: Long? = null,
+    @SerialName("AccessToken") val accessToken: String? = null,
+    @SerialName("DeviceId") val deviceId: String? = null,
+    @SerialName("AppName") val appName: String? = null,
+    @SerialName("AppVersion") val appVersion: String? = null,
+    @SerialName("DeviceName") val deviceName: String? = null,
+    @SerialName("UserId") val userId: String? = null,
+    @SerialName("IsActive") val isActive: Boolean? = null,
+    @SerialName("DateCreated") val dateCreated: String? = null,
+    @SerialName("DateRevoked") val dateRevoked: String? = null,
+    @SerialName("DateLastActivity") val dateLastActivity: String? = null,
+    @SerialName("UserName") val userName: String? = null,
+) {
+    override fun toString(): String =
+        "JellyfinAuthenticationInfoDto(id=$id, accessToken=${if (accessToken != null) "***" else "null"}, " +
+            "deviceId=$deviceId, appName=$appName, isActive=$isActive, dateCreated=$dateCreated, dateRevoked=$dateRevoked)"
+}
+
+@Serializable
+data class JellyfinAuthKeysQueryResponse(
+    @SerialName("Items") val items: List<JellyfinAuthenticationInfoDto>? = null,
+    @SerialName("TotalRecordCount") val totalRecordCount: Int? = null,
+    @SerialName("StartIndex") val startIndex: Int? = null,
+)

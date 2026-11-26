@@ -595,6 +595,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/jellyfin/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get current Jellyfin connection status and credential source */
+        get: operations["getJellyfinConnectionStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/jellyfin/quick-connect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Validate a Jellyfin server URL and initiate a Quick Connect session */
+        post: operations["startJellyfinQuickConnect"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/jellyfin/quick-connect/{attemptId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Poll Jellyfin Quick Connect authorization status and complete server onboarding */
+        get: operations["pollJellyfinQuickConnect"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/servers": {
         parameters: {
             query?: never;
@@ -2011,6 +2062,44 @@ export interface components {
             machineId: string;
             baseUrl: string;
             credentialSource: components["schemas"]["PlexCredentialSource"];
+        };
+        /** @enum {string} */
+        JellyfinQuickConnectStatus: "PENDING" | "AUTHORIZED" | "EXPIRED" | "NOT_ADMIN" | "FAILED";
+        JellyfinConnectionStatus: {
+            configured: boolean;
+            credentialSource: components["schemas"]["PlexCredentialSource"];
+            encryptionKeyConfigured: boolean;
+            serverName?: string | null;
+            machineId?: string | null;
+            baseUrl?: string | null;
+            version?: string | null;
+            reachable: boolean;
+            statusMessage?: string | null;
+        };
+        JellyfinQuickConnectStartRequest: {
+            baseUrl: string;
+        };
+        JellyfinQuickConnectStartResponse: {
+            attemptId: string;
+            code: string;
+            serverName: string;
+            serverVersion?: string | null;
+            /** Format: int64 */
+            expiresAtMs: number;
+        };
+        JellyfinQuickConnectPollResponse: {
+            attemptId: string;
+            status: components["schemas"]["JellyfinQuickConnectStatus"];
+            /** Format: int64 */
+            expiresAtMs: number;
+            message?: string | null;
+            serverName?: string | null;
+            serverVersion?: string | null;
+            machineId?: string | null;
+            baseUrl?: string | null;
+            hotReloaded?: boolean | null;
+            envOverrideActive?: boolean | null;
+            credentialSource?: components["schemas"]["PlexCredentialSource"];
         };
         MediaTechnicalSpecsDto: {
             videoResolution?: string | null;
@@ -4121,6 +4210,180 @@ export interface operations {
                 };
             };
             /** @description Upstream Plex.tv error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    getJellyfinConnectionStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Jellyfin connection status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JellyfinConnectionStatus"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    startJellyfinQuickConnect: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["JellyfinQuickConnectStartRequest"];
+            };
+        };
+        responses: {
+            /** @description Jellyfin Quick Connect code generated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JellyfinQuickConnectStartResponse"];
+                };
+            };
+            /** @description Invalid URL, non-Jellyfin server, or missing MIRU_ENCRYPTION_KEY */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Quick Connect is disabled on the target Jellyfin server */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Jellyfin server unreachable or returned an upstream error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    pollJellyfinQuickConnect: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                attemptId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current Quick Connect attempt status (or final authorized/failed outcome) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JellyfinQuickConnectPollResponse"];
+                };
+            };
+            /** @description Invalid Quick Connect attempt identifier */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Quick Connect attempt not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Jellyfin server unreachable or returned an upstream error */
             502: {
                 headers: {
                     [name: string]: unknown;

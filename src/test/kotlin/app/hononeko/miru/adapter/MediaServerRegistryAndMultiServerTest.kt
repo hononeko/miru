@@ -601,7 +601,7 @@ class MediaServerRegistryAndMultiServerTest :
                 adminEmpty shouldHaveSize 2
                 adminEmpty.first { it.serverType == "plex" }.statusMessage shouldBe "No Plex server configured"
                 adminEmpty.first { it.serverType == "jellyfin" }.statusMessage shouldBe
-                    "Set JELLYFIN_URL and JELLYFIN_API_KEY to connect Jellyfin"
+                    "No Jellyfin server configured"
 
                 // Single configured Jellyfin runtime whose cachedServerId is not yet warmed exercises async adapterForServer lookup
                 val jfEngine = createJellyfinMockEngine()

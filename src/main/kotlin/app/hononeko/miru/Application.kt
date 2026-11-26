@@ -2,7 +2,10 @@ package app.hononeko.miru
 
 import app.hononeko.miru.adapter.ManagedMediaServerRuntime
 import app.hononeko.miru.adapter.MediaServerRegistry
+import app.hononeko.miru.adapter.jellyfin.JellyfinQuickConnectClient
+import app.hononeko.miru.adapter.jellyfin.JellyfinQuickConnectService
 import app.hononeko.miru.adapter.jellyfin.JellyfinRuntimeManager
+import app.hononeko.miru.adapter.jellyfin.createJellyfinHttpClient
 import app.hononeko.miru.adapter.plex.PlexOAuthClient
 import app.hononeko.miru.adapter.plex.PlexOAuthService
 import app.hononeko.miru.adapter.plex.PlexRuntimeManager
@@ -29,6 +32,7 @@ import app.hononeko.miru.http.healthRoutes
 import app.hononeko.miru.http.historyStatsRoutes
 import app.hononeko.miru.http.installRequestLogging
 import app.hononeko.miru.http.installSecurityHeaders
+import app.hononeko.miru.http.jellyfinQuickConnectRoutes
 import app.hononeko.miru.http.libraryRoutes
 import app.hononeko.miru.http.mediaDetailsRoutes
 import app.hononeko.miru.http.metricsRoutes
@@ -152,10 +156,13 @@ fun main(args: Array<String>) {
 
 internal data class CoreServiceWiring(
     val plexRuntimeManager: PlexRuntimeManager,
+    val jellyfinRuntimeManager: JellyfinRuntimeManager,
     val mediaServerRegistry: MediaServerRegistry,
     val libraryRepository: ExposedLibraryRepository,
     val plexOAuthHttpClient: LazyCloseableHttpClient,
     val plexOAuthService: PlexOAuthService,
+    val jellyfinQuickConnectHttpClient: LazyCloseableHttpClient,
+    val jellyfinQuickConnectService: JellyfinQuickConnectService,
     val artworkProxyService: ArtworkProxyService,
     val streamsAndUsersService: StreamsAndUsersService,
     val streamControlService: StreamControlService,
@@ -221,6 +228,7 @@ private fun runServer() {
                 databaseHandle,
                 metricsRuntime,
                 wiring.plexOAuthHttpClient,
+                wiring.jellyfinQuickConnectHttpClient,
                 wiring.webhookBundle.httpClient,
                 oidcClient,
             )
@@ -244,6 +252,7 @@ private fun runServer() {
                 tautulliImporterService = tautulliImporterService,
                 tautulliCompatService = wiring.tautulliCompatService,
                 plexOAuthService = wiring.plexOAuthService,
+                jellyfinQuickConnectService = wiring.jellyfinQuickConnectService,
                 metricsService = metricsRuntime?.service,
                 mediaServerRegistry = wiring.mediaServerRegistry,
             )
@@ -261,6 +270,7 @@ private fun runServer() {
             databaseHandle,
             metricsRuntime,
             wiring.plexOAuthHttpClient,
+            wiring.jellyfinQuickConnectHttpClient,
             wiring.webhookBundle.httpClient,
             oidcClient,
         )
@@ -279,26 +289,8 @@ internal fun createCoreServiceWiring(
     sessionRepository: ExposedAuthSessionRepository,
     emailLinker: EmailMediaUserLinker,
 ): CoreServiceWiring {
-    val plexRuntimeManager =
-        PlexRuntimeManager(
-            plexConfig = appConfig.plex,
-            databaseHandle = databaseHandle,
-            sessionConfig = appConfig.session,
-            mediaServerRepository = mediaServerRepository,
-        )
-    val jellyfinRuntimeManager =
-        JellyfinRuntimeManager(
-            jellyfinConfig = appConfig.jellyfin,
-            databaseHandle = databaseHandle,
-            sessionConfig = appConfig.session,
-            mediaServerRepository = mediaServerRepository,
-        )
-    val mediaServerRegistry =
-        MediaServerRegistry(
-            runtimes = listOf(plexRuntimeManager, jellyfinRuntimeManager),
-            mediaServerRepository = mediaServerRepository,
-            jellyfinConfig = appConfig.jellyfin,
-        )
+    val (plexRuntimeManager, jellyfinRuntimeManager, mediaServerRegistry) =
+        createMediaServerRuntimes(appConfig, databaseHandle, mediaServerRepository)
     val libraryRepository = ExposedLibraryRepository(databaseHandle)
     val sectionAccessChecker =
         MediaSectionAccessChecker(
@@ -307,7 +299,17 @@ internal fun createCoreServiceWiring(
             adapterForServer = { sid -> mediaServerRegistry.adapterForServer(sid) },
         )
     val plexOAuthHttpClient = LazyCloseableHttpClient { createPlexHttpClient() }
-    val plexOAuthService = createPlexOAuthService(appConfig, plexOAuthHttpClient, appVersion, mediaServerRepository, plexRuntimeManager)
+    val plexOAuthService =
+        createPlexOAuthService(appConfig, plexOAuthHttpClient, appVersion, mediaServerRepository, plexRuntimeManager)
+    val jellyfinQuickConnectHttpClient = LazyCloseableHttpClient { createJellyfinHttpClient() }
+    val jellyfinQuickConnectService =
+        createJellyfinQuickConnectService(
+            appConfig,
+            jellyfinQuickConnectHttpClient,
+            appVersion,
+            mediaServerRepository,
+            jellyfinRuntimeManager,
+        )
     val artworkProxyService =
         createArtworkProxyService(
             plexRuntimeManager = plexRuntimeManager,
@@ -319,37 +321,32 @@ internal fun createCoreServiceWiring(
     val activeSessionRepository = ExposedActiveSessionRepository(databaseHandle)
     val streamsAndUsersService =
         createStreamsAndUsersService(
-            activeSessionRepository = activeSessionRepository,
-            userRepository = userRepository,
-            playbackHistoryRepository = playbackHistoryRepository,
-            mediaServerRepository = mediaServerRepository,
-            mediaServerRegistry = mediaServerRegistry,
+            activeSessionRepository,
+            userRepository,
+            playbackHistoryRepository,
+            mediaServerRepository,
+            mediaServerRegistry,
         )
     val streamControlService =
         createStreamControlService(
-            plexRuntimeManager = plexRuntimeManager,
-            activeSessionRepository = activeSessionRepository,
-            userRepository = userRepository,
-            databaseHandle = databaseHandle,
-            appConfig = appConfig,
-            mediaServerRegistry = mediaServerRegistry,
+            plexRuntimeManager,
+            activeSessionRepository,
+            userRepository,
+            databaseHandle,
+            appConfig,
+            mediaServerRegistry,
         )
-    val libraryQueryService =
-        LibraryQueryService(
-            libraryRepository = libraryRepository,
-            mediaServerRepository = mediaServerRepository,
-        )
+    val libraryQueryService = LibraryQueryService(libraryRepository = libraryRepository, mediaServerRepository = mediaServerRepository)
     val webhookBundle =
         createWebhookServices(databaseHandle, mediaServerRegistry, streamControlService, userRepository, appConfig, appVersion)
     val mediaDetailsService =
-        MediaDetailsService(
-            mediaServerAdapter = plexRuntimeManager.adapter,
-            playbackHistoryRepository = playbackHistoryRepository,
-            libraryRepository = libraryRepository,
-            sectionAccessChecker = sectionAccessChecker,
-            adapterForServer = { sid -> mediaServerRegistry.adapterForServer(sid) },
-            allServerAdaptersProvider = { mediaServerRegistry.activeServerAdapters() },
-            mediaServerRepository = mediaServerRepository,
+        createMediaDetailsService(
+            plexRuntimeManager,
+            playbackHistoryRepository,
+            libraryRepository,
+            sectionAccessChecker,
+            mediaServerRegistry,
+            mediaServerRepository,
         )
     val tautulliCompatService =
         TautulliCompatService(
@@ -377,10 +374,13 @@ internal fun createCoreServiceWiring(
         }
     return CoreServiceWiring(
         plexRuntimeManager = plexRuntimeManager,
+        jellyfinRuntimeManager = jellyfinRuntimeManager,
         mediaServerRegistry = mediaServerRegistry,
         libraryRepository = libraryRepository,
         plexOAuthHttpClient = plexOAuthHttpClient,
         plexOAuthService = plexOAuthService,
+        jellyfinQuickConnectHttpClient = jellyfinQuickConnectHttpClient,
+        jellyfinQuickConnectService = jellyfinQuickConnectService,
         artworkProxyService = artworkProxyService,
         streamsAndUsersService = streamsAndUsersService,
         streamControlService = streamControlService,
@@ -391,6 +391,54 @@ internal fun createCoreServiceWiring(
         syncServices = syncServices,
     )
 }
+
+private fun createMediaServerRuntimes(
+    appConfig: AppConfig,
+    databaseHandle: DatabaseHandle,
+    mediaServerRepository: ExposedMediaServerRepository,
+): Triple<PlexRuntimeManager, JellyfinRuntimeManager, MediaServerRegistry> {
+    val plexRuntimeManager =
+        PlexRuntimeManager(
+            plexConfig = appConfig.plex,
+            databaseHandle = databaseHandle,
+            sessionConfig = appConfig.session,
+            mediaServerRepository = mediaServerRepository,
+        )
+    val jellyfinRuntimeManager =
+        JellyfinRuntimeManager(
+            jellyfinConfig = appConfig.jellyfin,
+            databaseHandle = databaseHandle,
+            sessionConfig = appConfig.session,
+            mediaServerRepository = mediaServerRepository,
+            encryptionKey = appConfig.plex.encryptionKey,
+        )
+    val mediaServerRegistry =
+        MediaServerRegistry(
+            runtimes = listOf(plexRuntimeManager, jellyfinRuntimeManager),
+            mediaServerRepository = mediaServerRepository,
+            jellyfinConfig = appConfig.jellyfin,
+        )
+    return Triple(plexRuntimeManager, jellyfinRuntimeManager, mediaServerRegistry)
+}
+
+@Suppress("LongParameterList")
+private fun createMediaDetailsService(
+    plexRuntimeManager: PlexRuntimeManager,
+    playbackHistoryRepository: ExposedPlaybackHistoryRepository,
+    libraryRepository: ExposedLibraryRepository,
+    sectionAccessChecker: MediaSectionAccessChecker,
+    mediaServerRegistry: MediaServerRegistry,
+    mediaServerRepository: ExposedMediaServerRepository,
+): MediaDetailsService =
+    MediaDetailsService(
+        mediaServerAdapter = plexRuntimeManager.adapter,
+        playbackHistoryRepository = playbackHistoryRepository,
+        libraryRepository = libraryRepository,
+        sectionAccessChecker = sectionAccessChecker,
+        adapterForServer = { sid -> mediaServerRegistry.adapterForServer(sid) },
+        allServerAdaptersProvider = { mediaServerRegistry.activeServerAdapters() },
+        mediaServerRepository = mediaServerRepository,
+    )
 
 private fun createPlexOAuthService(
     appConfig: AppConfig,
@@ -404,6 +452,21 @@ private fun createPlexOAuthService(
         oauthClient = PlexOAuthClient({ plexOAuthHttpClient.client }, appConfig.plex.plexTvBaseUrl, appVersion),
         mediaServerRepository = mediaServerRepository,
         runtimeManager = plexRuntimeManager,
+    )
+
+private fun createJellyfinQuickConnectService(
+    appConfig: AppConfig,
+    jellyfinQuickConnectHttpClient: LazyCloseableHttpClient,
+    appVersion: String,
+    mediaServerRepository: ExposedMediaServerRepository,
+    jellyfinRuntimeManager: JellyfinRuntimeManager,
+): JellyfinQuickConnectService =
+    JellyfinQuickConnectService(
+        jellyfinConfig = appConfig.jellyfin,
+        encryptionKey = appConfig.plex.encryptionKey,
+        quickConnectClient = JellyfinQuickConnectClient({ jellyfinQuickConnectHttpClient.client }, appVersion),
+        mediaServerRepository = mediaServerRepository,
+        runtimeManager = jellyfinRuntimeManager,
     )
 
 internal data class WebhookServicesBundle(
@@ -1056,6 +1119,7 @@ fun Application.miruModule(
     tautulliImporterService: TautulliImporterService? = null,
     tautulliCompatService: TautulliCompatService? = null,
     plexOAuthService: PlexOAuthService? = null,
+    jellyfinQuickConnectService: JellyfinQuickConnectService? = null,
     authRateLimiter: AuthRateLimiter = AuthRateLimiter(config.auth.rateLimit),
     metricsService: MiruMetricsService? = null,
     mediaServerRegistry: MediaServerRegistry? = null,
@@ -1112,6 +1176,7 @@ fun Application.miruModule(
                 tautulliImporterService = tautulliImporterService,
                 tautulliCompatService = tautulliCompatService,
                 plexOAuthService = plexOAuthService,
+                jellyfinQuickConnectService = jellyfinQuickConnectService,
                 authRateLimiter = authRateLimiter,
                 mediaServerRegistry = mediaServerRegistry,
             )
@@ -1142,6 +1207,7 @@ private fun io.ktor.server.routing.Routing.registerAuthenticatedRoutes(
     tautulliImporterService: TautulliImporterService?,
     tautulliCompatService: TautulliCompatService?,
     plexOAuthService: PlexOAuthService?,
+    jellyfinQuickConnectService: JellyfinQuickConnectService?,
     authRateLimiter: AuthRateLimiter,
     mediaServerRegistry: MediaServerRegistry?,
 ) {
@@ -1156,6 +1222,13 @@ private fun io.ktor.server.routing.Routing.registerAuthenticatedRoutes(
     if (plexOAuthService != null) {
         plexOAuthRoutes(
             plexOAuthService = plexOAuthService,
+            authService = authService,
+            authMode = config.auth.mode,
+        )
+    }
+    if (jellyfinQuickConnectService != null) {
+        jellyfinQuickConnectRoutes(
+            jellyfinQuickConnectService = jellyfinQuickConnectService,
             authService = authService,
             authMode = config.auth.mode,
         )

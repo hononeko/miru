@@ -4,9 +4,11 @@ import app.hononeko.miru.adapter.ManagedMediaServerRuntime
 import app.hononeko.miru.adapter.plex.ConnectionState
 import app.hononeko.miru.adapter.plex.DelegatingMediaServerAdapter
 import app.hononeko.miru.adapter.plex.RealtimeLifecycle
+import app.hononeko.miru.auth.CredentialCrypto
 import app.hononeko.miru.config.JellyfinConfig
 import app.hononeko.miru.config.SessionConfig
 import app.hononeko.miru.domain.error.MiruError
+import app.hononeko.miru.http.PlexCredentialSource
 import app.hononeko.miru.persistence.DatabaseHandle
 import app.hononeko.miru.persistence.model.MediaServerRecord
 import app.hononeko.miru.persistence.repository.ExposedActiveSessionRepository
@@ -22,6 +24,7 @@ import app.hononeko.miru.webhook.WebhookServerPayload
 import arrow.core.Either
 import arrow.core.flatMap
 import arrow.core.left
+import arrow.core.raise.either
 import arrow.core.right
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.HttpClientEngine
@@ -51,7 +54,7 @@ private val jellyfinRuntimeLogger = LoggerFactory.getLogger("app.hononeko.miru.a
 
 /**
  * Manages the active Jellyfin adapter, WebSocket listener, and [SessionReconciler] lifecycle,
- * supporting zero-config startup when [JellyfinConfig.isConfigured] is false.
+ * supporting zero-config startup, stored encrypted credentials, and live hot-reload after Quick Connect.
  */
 class JellyfinRuntimeManager(
     private val jellyfinConfig: JellyfinConfig,
@@ -60,6 +63,7 @@ class JellyfinRuntimeManager(
     private val mediaServerRepository: MediaServerRepository = ExposedMediaServerRepository(databaseHandle),
     private val httpClientEngineFactory: () -> HttpClientEngine = { Java.create() },
     private val wsClientFactory: (() -> HttpClient)? = null,
+    private val encryptionKey: String? = null,
     private val clock: () -> Long = System::currentTimeMillis,
     private val idGenerator: () -> String = { UUID.randomUUID().toString() },
 ) : RealtimeLifecycle,
@@ -117,6 +121,9 @@ class JellyfinRuntimeManager(
     private var latestReconcileHealth: ReconcileHealthSignal? = null
 
     @Volatile
+    private var activeCredentialSource: PlexCredentialSource = PlexCredentialSource.NOT_CONFIGURED
+
+    @Volatile
     private var onReloadLibrarySync: (suspend () -> Unit)? = null
 
     private var activePipeline: ActivePipeline? = null
@@ -153,6 +160,8 @@ class JellyfinRuntimeManager(
 
     override fun cachedServerIdOrNull(): String? = cachedServerId
 
+    fun currentCredentialSource(): PlexCredentialSource = activeCredentialSource
+
     override fun websocketEnabled(): Boolean = jellyfinConfig.websocketEnabled
 
     override fun connectionState(): ConnectionState =
@@ -183,14 +192,48 @@ class JellyfinRuntimeManager(
 
     suspend fun initialize(): Either<MiruError, Boolean> =
         reloadMutex.withLock {
-            if (!jellyfinConfig.isConfigured) {
-                jellyfinRuntimeLogger.debug("Jellyfin is not configured; Jellyfin runtime remains dormant")
-                false.right()
-            } else {
-                activateLocked(triggerSync = true)
+            if (jellyfinConfig.isConfigured) {
+                activateLocked(
+                    baseUrl = jellyfinConfig.baseUrl,
+                    apiKey = jellyfinConfig.apiKey,
+                    machineId = null,
+                    clientIdentifier = jellyfinConfig.clientIdentifier,
+                    source = PlexCredentialSource.ENV_OVERRIDE,
+                    triggerSync = true,
+                )
                 true.right()
+            } else {
+                loadAndActivateStoredLocked(triggerSync = true)
             }
         }
+
+    suspend fun reloadFromStoredCredentials(): Either<MiruError, Boolean> =
+        reloadMutex.withLock {
+            if (jellyfinConfig.isConfigured) {
+                false.right()
+            } else {
+                loadAndActivateStoredLocked(triggerSync = true)
+            }
+        }
+
+    suspend fun reload(
+        baseUrl: String,
+        apiKey: String,
+        machineId: String? = null,
+        clientIdentifier: String? = jellyfinConfig.clientIdentifier,
+        source: PlexCredentialSource = PlexCredentialSource.STORED_ENCRYPTED,
+    ) {
+        reloadMutex.withLock {
+            activateLocked(
+                baseUrl = baseUrl,
+                apiKey = apiKey,
+                machineId = machineId,
+                clientIdentifier = clientIdentifier,
+                source = source,
+                triggerSync = true,
+            )
+        }
+    }
 
     override suspend fun stop() {
         val pendingStartup = startupJob
@@ -204,15 +247,67 @@ class JellyfinRuntimeManager(
             activeMachineId = null
             cachedServerId = null
             latestReconcileHealth = null
+            activeCredentialSource = PlexCredentialSource.NOT_CONFIGURED
         }
         managerScope.cancel()
     }
 
-    private suspend fun activateLocked(triggerSync: Boolean) {
+    private suspend fun loadAndActivateStoredLocked(triggerSync: Boolean): Either<MiruError, Boolean> =
+        either {
+            val servers = mediaServerRepository.findAll().bind()
+            val stored =
+                servers.firstOrNull { server ->
+                    server.serverType.equals(serverType, ignoreCase = true) && !server.encryptedToken.isNullOrBlank()
+                }
+            if (stored == null) {
+                jellyfinRuntimeLogger.debug("Jellyfin is not configured; Jellyfin runtime remains dormant")
+                return@either false
+            }
+
+            val encrypted = stored.encryptedToken ?: return@either false
+            val decrypted =
+                CredentialCrypto.decrypt(encrypted, encryptionKey).fold(
+                    ifLeft = { error ->
+                        jellyfinRuntimeLogger.warn(
+                            "Found stored Jellyfin credentials for '{}' but failed to decrypt ({}); " +
+                                "waiting for valid MIRU_ENCRYPTION_KEY or Quick Connect re-auth",
+                            stored.name,
+                            error.message,
+                        )
+                        raise(error)
+                    },
+                    ifRight = { it },
+                )
+
+            activateLocked(
+                baseUrl = stored.baseUrl,
+                apiKey = decrypted,
+                machineId = stored.machineId,
+                clientIdentifier = stored.clientIdentifier ?: jellyfinConfig.clientIdentifier,
+                source = PlexCredentialSource.STORED_ENCRYPTED,
+                triggerSync = triggerSync,
+            )
+            true
+        }
+
+    @Suppress("LongParameterList")
+    private suspend fun activateLocked(
+        baseUrl: String,
+        apiKey: String,
+        machineId: String?,
+        clientIdentifier: String?,
+        source: PlexCredentialSource,
+        triggerSync: Boolean,
+    ) {
         stopActivePipelineLocked()
 
-        val normalizedBaseUrl = jellyfinConfig.baseUrl.trim().trimEnd('/')
-        val runtimeConfig = jellyfinConfig.copy(baseUrl = normalizedBaseUrl)
+        val normalizedBaseUrl = baseUrl.trim().trimEnd('/')
+        val runtimeConfig =
+            jellyfinConfig.copy(
+                baseUrl = normalizedBaseUrl,
+                apiKey = apiKey,
+                clientIdentifier = clientIdentifier ?: jellyfinConfig.clientIdentifier,
+            )
         val pipelineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("jellyfin-realtime"))
         val restClient = createJellyfinHttpClient(engine = httpClientEngineFactory())
         val wsClient =
@@ -289,7 +384,8 @@ class JellyfinRuntimeManager(
             )
 
         activeBaseUrl = normalizedBaseUrl
-        activeMachineId = null
+        activeMachineId = machineId
+        activeCredentialSource = source
         cachedServerId = null
         latestReconcileHealth = null
         adapter.setDelegate(concreteAdapter)
@@ -297,7 +393,7 @@ class JellyfinRuntimeManager(
         listener?.start()
         reconciler.start()
 
-        jellyfinRuntimeLogger.info("Activated Jellyfin runtime for {}", normalizedBaseUrl)
+        jellyfinRuntimeLogger.info("Activated Jellyfin runtime for {} (source={})", normalizedBaseUrl, source)
 
         if (triggerSync) {
             onReloadLibrarySync?.let { syncCallback ->

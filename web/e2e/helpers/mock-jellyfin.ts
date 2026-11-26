@@ -44,6 +44,7 @@ export interface MockJellyfinOptions {
 	apiKey?: string;
 	serverName?: string;
 	machineId?: string;
+	quickConnectEnabled?: boolean;
 }
 
 export interface TerminatedJellyfinSession {
@@ -63,6 +64,12 @@ export interface MockJellyfinServer {
 	clearTerminatedSessions(): void;
 	getSessionsStartCount(): number;
 	getKeepAliveCount(): number;
+	approveQuickConnect(options?: { isAdministrator?: boolean; userName?: string }): void;
+	expireQuickConnect(): void;
+	setQuickConnectEnabled(enabled: boolean): void;
+	getIssuedApiKeys(): string[];
+	getRevokedApiKeys(): string[];
+	getLogoutCount(): number;
 	waitForWsClient(timeoutMs?: number): Promise<void>;
 	stop(): Promise<void>;
 }
@@ -327,6 +334,33 @@ export async function startMockJellyfinServer(options: MockJellyfinOptions = {})
 	const wsWaiters: Array<() => void> = [];
 	let sessionsStartCount = 0;
 	let keepAliveCount = 0;
+	let quickConnectEnabled = options.quickConnectEnabled ?? true;
+	let nextQcCounter = 1;
+	let nextKeyCounter = 1;
+	let logoutCount = 0;
+	const validApiKeys = new Set<string>([apiKey]);
+	const issuedApiKeys: string[] = [];
+	const revokedApiKeys: string[] = [];
+	const authKeyRecords: Array<{
+		Id: number;
+		AccessToken: string;
+		AppName: string;
+		IsActive: boolean;
+		DateCreated: string;
+	}> = [
+		{
+			Id: 100,
+			AccessToken: 'older-miru-key-should-not-be-picked',
+			AppName: 'Miru',
+			IsActive: true,
+			DateCreated: new Date(Date.now() - 3_600_000).toISOString()
+		}
+	];
+	const qcRequests = new Map<
+		string,
+		{ secret: string; code: string; authenticated: boolean; expired: boolean; isAdministrator: boolean; userName: string }
+	>();
+	const tempSessions = new Map<string, { isAdministrator: boolean; userName: string }>();
 
 	const broadcastSessions = () => {
 		const payload = JSON.stringify({
@@ -340,19 +374,170 @@ export async function startMockJellyfinServer(options: MockJellyfinOptions = {})
 		}
 	};
 
-	const isAuthorized = (req: http.IncomingMessage): boolean => {
+	const extractToken = (req: http.IncomingMessage): string | null => {
 		const auth = String(req.headers.authorization ?? '');
-		return auth.startsWith('MediaBrowser ') && auth.includes(`Token="${apiKey}"`);
+		if (!auth.startsWith('MediaBrowser ')) return null;
+		const match = auth.match(/Token="([^"]+)"/);
+		return match ? match[1] : null;
+	};
+
+	const isAuthorized = (req: http.IncomingMessage): boolean => {
+		const tok = extractToken(req);
+		return tok !== null && validApiKeys.has(tok);
 	};
 
 	const handleHttpRequest = async (req: http.IncomingMessage, res: http.ServerResponse, preReadBody?: string) => {
+		const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`);
+		const pathname = url.pathname;
+		const method = req.method ?? 'GET';
+
+		if (method === 'GET' && pathname === '/System/Info/Public') {
+			sendJson(res, 200, {
+				Id: machineId,
+				ServerName: serverName,
+				Version: '10.10.3',
+				OperatingSystem: 'Linux'
+			});
+			return;
+		}
+
+		if (method === 'GET' && pathname === '/QuickConnect/Enabled') {
+			sendJson(res, 200, quickConnectEnabled);
+			return;
+		}
+
+		if (method === 'POST' && pathname === '/QuickConnect/Initiate') {
+			const auth = String(req.headers.authorization ?? '');
+			if (!auth.startsWith('MediaBrowser ')) {
+				sendJson(res, 401, { error: 'Missing MediaBrowser header' });
+				return;
+			}
+			const idx = nextQcCounter++;
+			const secret = `e2e-qc-secret-${idx}`;
+			const code = String(100000 + ((idx * 13791) % 899999)).padStart(6, '0');
+			qcRequests.set(secret, {
+				secret,
+				code,
+				authenticated: false,
+				expired: false,
+				isAdministrator: true,
+				userName: 'alice'
+			});
+			sendJson(res, 200, {
+				Secret: secret,
+				Code: code,
+				Authenticated: false,
+				DateAdded: new Date().toISOString()
+			});
+			return;
+		}
+
+		if (method === 'GET' && pathname === '/QuickConnect/Connect') {
+			const secret = url.searchParams.get('secret') ?? '';
+			const entry = qcRequests.get(secret);
+			if (!entry || entry.expired) {
+				sendJson(res, 404, { error: 'Unknown Quick Connect secret' });
+				return;
+			}
+			sendJson(res, 200, {
+				Secret: entry.secret,
+				Code: entry.code,
+				Authenticated: entry.authenticated
+			});
+			return;
+		}
+
+		if (method === 'POST' && pathname === '/Users/AuthenticateWithQuickConnect') {
+			const raw = preReadBody ?? (await readBody(req));
+			let secret = '';
+			try {
+				const parsed = JSON.parse(raw) as { Secret?: string };
+				secret = parsed.Secret ?? '';
+			} catch {
+				secret = '';
+			}
+			const entry = qcRequests.get(secret);
+			if (!entry || !entry.authenticated || entry.expired) {
+				sendJson(res, 401, { error: 'Quick Connect not authenticated' });
+				return;
+			}
+			const tempToken = `e2e-temp-qc-token-${nextKeyCounter++}`;
+			tempSessions.set(tempToken, { isAdministrator: entry.isAdministrator, userName: entry.userName });
+			sendJson(res, 200, {
+				AccessToken: tempToken,
+				ServerId: machineId,
+				User: {
+					Id: entry.isAdministrator ? 'jf-u-alice' : 'jf-u-diana',
+					Name: entry.userName,
+					Policy: { IsAdministrator: entry.isAdministrator }
+				}
+			});
+			return;
+		}
+
+		if (method === 'POST' && pathname === '/Sessions/Logout') {
+			const tok = extractToken(req);
+			if (tok && tempSessions.has(tok)) {
+				tempSessions.delete(tok);
+				logoutCount += 1;
+				res.writeHead(204);
+				res.end();
+				return;
+			}
+			sendJson(res, 401, { error: 'Unauthorized' });
+			return;
+		}
+
+		if (pathname === '/Auth/Keys') {
+			const tok = extractToken(req);
+			const temp = tok ? tempSessions.get(tok) : undefined;
+			const authorized = (tok !== null && validApiKeys.has(tok)) || Boolean(temp?.isAdministrator);
+			if (!authorized) {
+				sendJson(res, 401, { error: 'Unauthorized' });
+				return;
+			}
+			if (method === 'POST') {
+				const appName = url.searchParams.get('app') ?? 'Miru';
+				const newKey = `e2e-jf-qc-key-${nextKeyCounter++}`;
+				validApiKeys.add(newKey);
+				issuedApiKeys.push(newKey);
+				authKeyRecords.push({
+					Id: 100 + nextKeyCounter,
+					AccessToken: newKey,
+					AppName: appName,
+					IsActive: true,
+					DateCreated: new Date().toISOString()
+				});
+				res.writeHead(204);
+				res.end();
+				return;
+			}
+			if (method === 'GET') {
+				sendJson(res, 200, { Items: authKeyRecords, TotalRecordCount: authKeyRecords.length });
+				return;
+			}
+		}
+
+		const deleteKeyMatch = pathname.match(/^\/Auth\/Keys\/([^/]+)$/);
+		if (method === 'DELETE' && deleteKeyMatch) {
+			if (!isAuthorized(req)) {
+				sendJson(res, 401, { error: 'Unauthorized' });
+				return;
+			}
+			const keyToDelete = decodeURIComponent(deleteKeyMatch[1]);
+			validApiKeys.delete(keyToDelete);
+			revokedApiKeys.push(keyToDelete);
+			const idx = authKeyRecords.findIndex((k) => k.AccessToken === keyToDelete);
+			if (idx >= 0) authKeyRecords.splice(idx, 1);
+			res.writeHead(204);
+			res.end();
+			return;
+		}
+
 		if (!isAuthorized(req)) {
 			sendJson(res, 401, { error: 'Unauthorized' });
 			return;
 		}
-		const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`);
-		const pathname = url.pathname;
-		const method = req.method ?? 'GET';
 
 		if (pathname === '/System/Info') {
 			sendJson(res, 200, {
@@ -532,7 +717,8 @@ export async function startMockJellyfinServer(options: MockJellyfinOptions = {})
 		}
 
 		const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`);
-		if (url.pathname !== '/socket' || url.searchParams.get('api_key') !== apiKey) {
+		const wsKey = url.searchParams.get('api_key') ?? '';
+		if (url.pathname !== '/socket' || !validApiKeys.has(wsKey)) {
 			socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
 			socket.destroy();
 			return;
@@ -592,6 +778,32 @@ export async function startMockJellyfinServer(options: MockJellyfinOptions = {})
 		},
 		getKeepAliveCount() {
 			return keepAliveCount;
+		},
+		approveQuickConnect(opts = {}) {
+			for (const entry of qcRequests.values()) {
+				if (!entry.expired) {
+					entry.authenticated = true;
+					entry.isAdministrator = opts.isAdministrator ?? true;
+					entry.userName = opts.userName ?? (entry.isAdministrator ? 'alice' : 'diana');
+				}
+			}
+		},
+		expireQuickConnect() {
+			for (const entry of qcRequests.values()) {
+				entry.expired = true;
+			}
+		},
+		setQuickConnectEnabled(enabled: boolean) {
+			quickConnectEnabled = enabled;
+		},
+		getIssuedApiKeys() {
+			return [...issuedApiKeys];
+		},
+		getRevokedApiKeys() {
+			return [...revokedApiKeys];
+		},
+		getLogoutCount() {
+			return logoutCount;
 		},
 		waitForWsClient(timeoutMs = 15_000): Promise<void> {
 			if (wsClients.size > 0) return Promise.resolve();

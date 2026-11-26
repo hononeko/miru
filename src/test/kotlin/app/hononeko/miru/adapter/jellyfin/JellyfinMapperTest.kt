@@ -9,6 +9,7 @@ import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.collections.shouldHaveSize
+import io.kotest.matchers.collections.shouldNotContainAnyOf
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
@@ -120,6 +121,24 @@ class JellyfinMapperTest :
                     LibrarySectionType.OTHER,
                     LibrarySectionType.OTHER,
                 )
+        }
+
+        test("tells mixed libraries apart and lists the title item types of each collection type") {
+            listOf(null, "", "  ", "mixed", "MIXED").forEach { JellyfinMapper.isMixedCollection(it) shouldBe true }
+            listOf("movies", "tvshows", "boxsets").forEach { JellyfinMapper.isMixedCollection(it) shouldBe false }
+
+            JellyfinMapper.titleItemTypes("movies") shouldBe "Movie"
+            JellyfinMapper.titleItemTypes("TVSHOWS") shouldBe "Series"
+            JellyfinMapper.titleItemTypes("music") shouldBe "MusicAlbum"
+            JellyfinMapper.titleItemTypes("musicvideos") shouldBe "MusicVideo"
+            JellyfinMapper.titleItemTypes("homevideos") shouldBe "Video,Photo"
+            JellyfinMapper.titleItemTypes("photos") shouldBe "Video,Photo"
+            JellyfinMapper.titleItemTypes("boxsets") shouldBe "BoxSet"
+            JellyfinMapper.titleItemTypes("books") shouldBe "Book,AudioBook"
+            JellyfinMapper.titleItemTypes("folders") shouldBe JellyfinMapper.GENERIC_TITLE_ITEM_TYPES
+            JellyfinMapper.titleItemTypes(null) shouldBe JellyfinMapper.GENERIC_TITLE_ITEM_TYPES
+            // Never folders, seasons, episodes or box sets outside a collections library
+            JellyfinMapper.GENERIC_TITLE_ITEM_TYPES.split(',') shouldNotContainAnyOf listOf("Folder", "Season", "Episode", "BoxSet")
         }
 
         test("mapMediaType classifies all Jellyfin item types and Live TV channel fallbacks") {

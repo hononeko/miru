@@ -64,7 +64,7 @@ class EmailMediaUserLinker(
     ): Either<MiruError, LinkResult> =
         either {
             val current = accountRepository.findLinkedMediaUserIds(account.id).bind()
-            val expected = expectedLinks(account, mediaUsers)
+            val expected = expectedLinks(account, mediaUsers, current)
             if (expected == current) {
                 return@either LinkResult(current, changed = false)
             }
@@ -80,12 +80,29 @@ class EmailMediaUserLinker(
     private fun expectedLinks(
         account: AuthAccountRecord,
         mediaUsers: List<UserRecord>,
+        current: Set<String>,
     ): Set<String> {
         val verifiedEmail = account.email?.takeIf { it.isNotBlank() && account.emailVerified == true } ?: return emptySet()
-        return mediaUsers
-            .filter { it.email != null && it.email.equals(verifiedEmail, ignoreCase = true) }
-            .map { it.id }
-            .toSet()
+        val matchesByServer =
+            mediaUsers
+                .filter { it.email != null && it.email.equals(verifiedEmail, ignoreCase = true) }
+                .groupBy { it.serverId }
+        // An account is linked to at most one user per server. When several users on one server share the
+        // email, Miru can't tell which is this person's: it keeps the one already linked, if any, and
+        // otherwise links none there rather than guess.
+        return matchesByServer
+            .mapNotNull { (serverId, users) ->
+                users.singleOrNull()?.id
+                    ?: users.map { it.id }.singleOrNull { it in current }
+                    ?: null.also {
+                        logger.warn(
+                            "Not linking SSO account '{}' by email on server {}: {} media users there share its email",
+                            account.username,
+                            serverId,
+                            users.size,
+                        )
+                    }
+            }.toSet()
     }
 
     private data class LinkResult(

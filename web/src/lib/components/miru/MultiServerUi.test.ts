@@ -131,6 +131,30 @@ describe('Multi-server UI components', () => {
 		expect(onchange).toHaveBeenCalledWith('srv-jf');
 	});
 
+	it('colours ServerFilterBar dots with the same status as the sidebar', () => {
+		makeTwoServers();
+		serversStore.servers = [
+			...serversStore.servers,
+			{
+				id: 'srv-old-plex',
+				name: 'Old Plex',
+				serverType: 'plex',
+				configured: false,
+				reachable: false,
+				websocketEnabled: false,
+				websocketState: 'DISCONNECTED'
+			}
+		];
+
+		render(ServerFilterBar, { props: { selectedServerId: null, onchange: vi.fn() } });
+
+		const dotStatus = (name: RegExp) =>
+			screen.getByRole('button', { name }).querySelector('[data-status]')?.getAttribute('data-status');
+		expect(dotStatus(/Home Plex/)).toBe('live');
+		expect(dotStatus(/Studio Jellyfin/)).toBe('offline');
+		expect(dotStatus(/Old Plex/)).toBe('not-connected');
+	});
+
 	it('shows compact server badge on StreamCard and passes serverId to mediaDetailsModal', async () => {
 		makeTwoServers();
 		const openSpy = vi.spyOn(mediaDetailsModal, 'open').mockResolvedValue(undefined);

@@ -576,4 +576,60 @@ class AppConfigLoaderTest :
                     .shouldBeLeft()
             zeroPort.fieldErrors.keys shouldBe setOf("METRICS_PORT")
         }
+
+        test("loads, validates, and redacts Jellyfin configuration from env and HOCON") {
+            val env =
+                baseSqliteEnv(
+                    mapOf(
+                        "JELLYFIN_URL" to "https://jellyfin.local:8920/",
+                        "JELLYFIN_API_KEY" to "super-secret-jf-api-key",
+                        "JELLYFIN_POLL_INTERVAL_SECONDS" to "15",
+                        "JELLYFIN_WEBSOCKET_ENABLED" to "false",
+                        "JELLYFIN_CLIENT_IDENTIFIER" to "miru-jf-prod",
+                    ),
+                )
+
+            val loaded = AppConfigLoader.load(env = env).shouldBeRight()
+            loaded.jellyfin.isConfigured shouldBe true
+            loaded.jellyfin.baseUrl shouldBe "https://jellyfin.local:8920"
+            loaded.jellyfin.pollIntervalSeconds shouldBe 15
+            loaded.jellyfin.websocketEnabled shouldBe false
+            loaded.jellyfin.clientIdentifier shouldBe "miru-jf-prod"
+            loaded.toString() shouldNotContain "super-secret-jf-api-key"
+
+            val hocon =
+                MapApplicationConfig(
+                    "miru.jellyfin.url" to "http://jf-hocon:8096/",
+                    "miru.jellyfin.apiKey" to "hocon-jf-key",
+                    "miru.jellyfin.pollIntervalSeconds" to "25",
+                    "miru.jellyfin.websocketEnabled" to "true",
+                    "miru.auth.mode" to "none",
+                )
+            val fromHocon = AppConfigLoader.load(env = emptyMap(), hocon = hocon).shouldBeRight()
+            fromHocon.jellyfin.isConfigured shouldBe true
+            fromHocon.jellyfin.baseUrl shouldBe "http://jf-hocon:8096"
+            fromHocon.jellyfin.pollIntervalSeconds shouldBe 25
+            fromHocon.toString() shouldNotContain "hocon-jf-key"
+
+            val invalid =
+                AppConfigLoader
+                    .load(
+                        env =
+                            baseSqliteEnv(
+                                mapOf(
+                                    "JELLYFIN_URL" to "ftp://bad-jellyfin",
+                                    "JELLYFIN_API_KEY" to "   ",
+                                    "JELLYFIN_POLL_INTERVAL_SECONDS" to "2",
+                                    "JELLYFIN_WEBSOCKET_ENABLED" to "nah",
+                                ),
+                            ),
+                    ).shouldBeLeft()
+            invalid.fieldErrors.keys shouldBe
+                setOf(
+                    "JELLYFIN_URL",
+                    "JELLYFIN_API_KEY",
+                    "JELLYFIN_POLL_INTERVAL_SECONDS",
+                    "JELLYFIN_WEBSOCKET_ENABLED",
+                )
+        }
     })

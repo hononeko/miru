@@ -12,6 +12,8 @@ data class ActiveStreamsResponse(
 @Serializable
 data class ActiveStreamDto(
     val serverId: String,
+    val serverName: String? = null,
+    val serverType: String? = null,
     val sessionKey: String,
     val sessionId: String? = null,
     val user: StreamUserDto,
@@ -115,6 +117,8 @@ data class UsersListResponse(
 data class UserSummaryDto(
     val id: String,
     val serverId: String,
+    val serverName: String? = null,
+    val serverType: String? = null,
     val externalUserId: String,
     val username: String,
     val displayName: String? = null,
@@ -131,6 +135,8 @@ data class UserSummaryDto(
 data class UserRecentPlayDto(
     val id: String,
     val serverId: String,
+    val serverName: String? = null,
+    val serverType: String? = null,
     val ratingKey: String,
     val mediaType: String,
     val title: String,

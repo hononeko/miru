@@ -4,8 +4,10 @@
 	import Badge from '$components/ui/Badge.svelte';
 	import Button from '$components/ui/Button.svelte';
 	import ProxiedImage from './ProxiedImage.svelte';
+	import ServerBadge from './ServerBadge.svelte';
 	import { authStore } from '$stores/auth.svelte';
 	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
+	import { serversStore } from '$stores/servers.svelte';
 	import {
 		cn,
 		formatBandwidthKbps,
@@ -60,6 +62,11 @@
 	const playerLabel = $derived(
 		[stream.player.name || stream.player.product, stream.player.platform].filter(Boolean).join(' · ')
 	);
+
+	function openMedia() {
+		const sid = stream.serverId?.trim();
+		void mediaDetailsModal.open(stream.media.ratingKey, sid ? { serverId: sid } : undefined);
+	}
 </script>
 
 <article
@@ -72,12 +79,13 @@
 	<div class="flex items-start gap-3.5">
 		<button
 			type="button"
-			onclick={() => void mediaDetailsModal.open(stream.media.ratingKey)}
+			onclick={openMedia}
 			aria-label={`View media details for ${titles.primary}`}
 			class="shrink-0 cursor-pointer rounded-lg transition-transform hover:scale-[1.02] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan"
 		>
 			<ProxiedImage
 				src={stream.media.thumbUrl}
+				serverId={stream.serverId}
 				alt={titles.primary}
 				fallbackLabel={titles.primary}
 				variant="poster"
@@ -90,7 +98,7 @@
 				<div class="min-w-0">
 					<button
 						type="button"
-						onclick={() => void mediaDetailsModal.open(stream.media.ratingKey)}
+						onclick={openMedia}
 						class="block max-w-full cursor-pointer text-left hover:underline"
 					>
 						<h3 class="truncate font-heading text-sm font-semibold text-fg-primary sm:text-[15px]">
@@ -99,13 +107,22 @@
 					</button>
 					<p class="truncate text-xs text-fg-secondary">{titles.secondary}</p>
 				</div>
-				{#if isPaused}
-					<Badge tone="neutral" dot>Paused</Badge>
-				{:else if isBuffering}
-					<Badge tone="warning" dot pulse>Buffering</Badge>
-				{:else}
-					<Badge tone="direct-play" dot pulse>Playing</Badge>
-				{/if}
+				<div class="flex shrink-0 items-center gap-1.5">
+					{#if serversStore.hasMultipleServers}
+						<ServerBadge
+							serverId={stream.serverId}
+							serverType={stream.serverType}
+							serverName={stream.serverName}
+						/>
+					{/if}
+					{#if isPaused}
+						<Badge tone="neutral" dot>Paused</Badge>
+					{:else if isBuffering}
+						<Badge tone="warning" dot pulse>Buffering</Badge>
+					{:else}
+						<Badge tone="direct-play" dot pulse>Playing</Badge>
+					{/if}
+				</div>
 			</div>
 
 			<div class="flex flex-wrap items-center justify-between gap-2">

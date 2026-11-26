@@ -20,9 +20,11 @@ import app.hononeko.miru.http.buildThumbUrl
 import app.hononeko.miru.http.normalizedDisplayName
 import app.hononeko.miru.persistence.model.ActiveSessionKey
 import app.hononeko.miru.persistence.model.ActiveSessionRecord
+import app.hononeko.miru.persistence.model.MediaServerRecord
 import app.hononeko.miru.persistence.model.PlaybackHistoryRecord
 import app.hononeko.miru.persistence.model.UserRecord
 import app.hononeko.miru.persistence.repository.ActiveSessionRepository
+import app.hononeko.miru.persistence.repository.MediaServerRepository
 import app.hononeko.miru.persistence.repository.PlaybackHistoryRepository
 import app.hononeko.miru.persistence.repository.UserRepository
 import arrow.core.Either
@@ -43,10 +45,19 @@ class StreamsAndUsersService(
     private val playbackHistoryRepository: PlaybackHistoryRepository,
     private val liveTechnicalProvider: suspend () -> Map<ActiveSessionKey, StreamTechnicalInfo> = { emptyMap() },
     private val serverNameProvider: suspend () -> String? = { null },
+    private val mediaServerRepository: MediaServerRepository? = null,
 ) {
-    suspend fun listActiveStreams(principal: MiruPrincipal): Either<MiruError, ActiveStreamsResponse> =
+    suspend fun listActiveStreams(
+        principal: MiruPrincipal,
+        serverId: String? = null,
+    ): Either<MiruError, ActiveStreamsResponse> =
         either {
-            val serverName = serverNameProvider()?.trim()?.takeIf { it.isNotEmpty() }
+            val normalizedServerId = serverId?.trim()?.takeIf { it.isNotEmpty() }
+            val serversById = loadServersById()
+            val selectedServer = normalizedServerId?.let { serversById[it] }
+            val serverName =
+                selectedServer?.name?.normalizedDisplayName()
+                    ?: serverNameProvider()?.trim()?.takeIf { it.isNotEmpty() }
             if (!principal.isAdmin() && principal.linkedMediaUserIds.isEmpty()) {
                 return@either ActiveStreamsResponse(streams = emptyList(), totalCount = 0, serverName = serverName)
             }
@@ -54,7 +65,10 @@ class StreamsAndUsersService(
                 activeSessionRepository
                     .findAll()
                     .bind()
-                    .filter { principal.canAccessMediaUser(it.userId) }
+                    .filter { session ->
+                        principal.canAccessMediaUser(session.userId) &&
+                            (normalizedServerId == null || session.serverId == normalizedServerId)
+                    }
 
             if (sessions.isEmpty()) {
                 return@either ActiveStreamsResponse(streams = emptyList(), totalCount = 0, serverName = serverName)
@@ -68,6 +82,7 @@ class StreamsAndUsersService(
                         session = session,
                         user = usersById[session.userId],
                         liveTech = liveTechByKey[session.key],
+                        server = serversById[session.serverId],
                     )
                 }
             ActiveStreamsResponse(streams = streams, totalCount = streams.size, serverName = serverName)
@@ -77,13 +92,15 @@ class StreamsAndUsersService(
         either {
             val user = userRepository.findById(session.userId).bind()
             val liveTech = liveTechnicalProvider()[session.key]
-            toActiveStreamDto(session = session, user = user, liveTech = liveTech)
+            val server = mediaServerRepository?.findById(session.serverId)?.getOrNull()
+            toActiveStreamDto(session = session, user = user, liveTech = liveTech, server = server)
         }
 
     fun toActiveStreamDto(
         session: ActiveSessionRecord,
         user: UserRecord?,
         liveTech: StreamTechnicalInfo?,
+        server: MediaServerRecord? = null,
     ): ActiveStreamDto {
         val durationMs = session.media.durationMs
         val progressPercent =
@@ -95,6 +112,8 @@ class StreamsAndUsersService(
 
         return ActiveStreamDto(
             serverId = session.serverId,
+            serverName = server?.name?.normalizedDisplayName(),
+            serverType = server?.serverType?.lowercase(),
             sessionKey = session.sessionKey,
             sessionId = session.sessionId,
             user =
@@ -154,20 +173,31 @@ class StreamsAndUsersService(
         )
     }
 
-    suspend fun listUsers(principal: MiruPrincipal): Either<MiruError, UsersListResponse> =
+    suspend fun listUsers(
+        principal: MiruPrincipal,
+        serverId: String? = null,
+    ): Either<MiruError, UsersListResponse> =
         either {
             principal.requireAdmin().bind()
 
-            val users = userRepository.findAll().bind()
+            val normalizedServerId = serverId?.trim()?.takeIf { it.isNotEmpty() }
+            val users =
+                if (normalizedServerId != null) {
+                    userRepository.findByServer(normalizedServerId).bind()
+                } else {
+                    userRepository.findAll().bind()
+                }
 
             if (users.isEmpty()) {
                 return@either UsersListResponse(users = emptyList())
             }
 
+            val serversById = loadServersById()
             val activeCountByUser =
                 activeSessionRepository
                     .findAll()
                     .bind()
+                    .filter { normalizedServerId == null || it.serverId == normalizedServerId }
                     .groupingBy { it.userId }
                     .eachCount()
 
@@ -181,6 +211,7 @@ class StreamsAndUsersService(
                         activeStreamCount = activeCountByUser[user.id] ?: 0,
                         totalPlays = summary?.totalPlays ?: 0L,
                         totalWatchDurationSec = summary?.totalWatchDurationSec ?: 0L,
+                        server = serversById[user.serverId],
                     )
                 }
             UsersListResponse(users = items)
@@ -205,6 +236,8 @@ class StreamsAndUsersService(
                 MiruError.NotFound(resource = "User", id = trimmedUserId)
             }
 
+            val serversById = loadServersById()
+            val userServer = serversById[user.serverId]
             val userSessions =
                 activeSessionRepository
                     .findAll()
@@ -217,6 +250,7 @@ class StreamsAndUsersService(
                         session = session,
                         user = user,
                         liveTech = liveTechByKey[session.key],
+                        server = serversById[session.serverId] ?: userServer,
                     )
                 }
 
@@ -230,11 +264,12 @@ class StreamsAndUsersService(
                         activeStreamCount = activeStreams.size,
                         totalPlays = totalPlays,
                         totalWatchDurationSec = totalWatchDurationSec,
+                        server = userServer,
                     ),
                 activeStreams = activeStreams,
                 totalPlays = totalPlays,
                 totalWatchDurationSec = totalWatchDurationSec,
-                recentPlays = history.take(RECENT_PLAYS_LIMIT).map { it.toRecentPlayDto() },
+                recentPlays = history.take(RECENT_PLAYS_LIMIT).map { it.toRecentPlayDto(serversById[it.serverId]) },
                 topClients = aggregateUsage(history) { it.player.playerProduct ?: it.player.playerName ?: UNKNOWN_LABEL },
                 topPlatforms = aggregateUsage(history) { it.player.playerPlatform ?: UNKNOWN_LABEL },
                 decisionBreakdown = computeDecisionBreakdown(history),
@@ -242,14 +277,24 @@ class StreamsAndUsersService(
             )
         }
 
+    private suspend fun loadServersById(): Map<String, MediaServerRecord> =
+        mediaServerRepository
+            ?.findAll()
+            ?.getOrNull()
+            .orEmpty()
+            .associateBy { it.id }
+
     private fun UserRecord.toSummaryDto(
         activeStreamCount: Int,
         totalPlays: Long,
         totalWatchDurationSec: Long,
+        server: MediaServerRecord? = null,
     ): UserSummaryDto =
         UserSummaryDto(
             id = id,
             serverId = serverId,
+            serverName = server?.name?.normalizedDisplayName(),
+            serverType = server?.serverType?.lowercase(),
             externalUserId = externalUserId,
             username = username,
             displayName = displayName.normalizedDisplayName(),
@@ -262,10 +307,12 @@ class StreamsAndUsersService(
             totalWatchDurationSec = totalWatchDurationSec,
         )
 
-    private fun PlaybackHistoryRecord.toRecentPlayDto(): UserRecentPlayDto =
+    private fun PlaybackHistoryRecord.toRecentPlayDto(server: MediaServerRecord? = null): UserRecentPlayDto =
         UserRecentPlayDto(
             id = id,
             serverId = serverId,
+            serverName = server?.name?.normalizedDisplayName(),
+            serverType = server?.serverType?.lowercase(),
             ratingKey = media.ratingKey,
             mediaType = media.mediaType,
             title = media.title,

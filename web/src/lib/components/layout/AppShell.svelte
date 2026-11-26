@@ -22,6 +22,7 @@
 	import MediaDetailsModal from '$components/miru/MediaDetailsModal.svelte';
 	import { authStore } from '$stores/auth.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
+	import { serversStore } from '$stores/servers.svelte';
 	import { streamsStore } from '$stores/streams.svelte';
 	import { themeStore } from '$stores/theme.svelte';
 	import { cn } from '$lib/utils';
@@ -83,6 +84,22 @@
 		}
 		if (streamsStore.status === 'reconnecting' || streamsStore.status === 'connecting') return 'SYNCING';
 		return 'OFFLINE';
+	});
+
+	const telemetryTargetLabel = $derived.by(() => {
+		if (serversStore.hasMultipleServers) {
+			const configured = serversStore.configuredServers;
+			const online = configured.filter((s) => s.reachable).length;
+			return `${online}/${configured.length} Servers`;
+		}
+		return streamsStore.serverName ?? 'Telemetry';
+	});
+
+	const telemetryTargetTitle = $derived.by(() => {
+		if (serversStore.hasMultipleServers) {
+			return serversStore.servers.map((s) => `${s.name} (${s.serverType})`).join(', ');
+		}
+		return streamsStore.serverName ?? 'Telemetry';
 	});
 
 	function handleSignOutOpenChange(open: boolean) {
@@ -157,8 +174,8 @@
 									: 'bg-warning animate-pulse'
 						)}
 					></span>
-					<span class="truncate" title={streamsStore.serverName ?? 'Telemetry'}>
-						{streamsStore.serverName ?? 'Telemetry'}
+					<span class="truncate" title={telemetryTargetTitle}>
+						{telemetryTargetLabel}
 					</span>
 				</span>
 				<span class="shrink-0 font-mono text-[10px] font-semibold uppercase text-fg-secondary">

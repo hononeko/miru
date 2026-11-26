@@ -84,11 +84,13 @@ interface PlaybackHistoryRepository {
     suspend fun summarizeByRatingKey(
         ratingKey: String,
         allowedUserIds: Set<String>? = null,
+        serverId: String? = null,
     ): Either<MiruError.PersistenceError, MediaPlaySummary>
 
     suspend fun summarizeSeriesByTitle(
         seriesTitle: String,
         allowedUserIds: Set<String>? = null,
+        serverId: String? = null,
     ): Either<MiruError.PersistenceError, MediaPlaySummary>
 
     suspend fun listRecentByUser(
@@ -639,6 +641,7 @@ class ExposedPlaybackHistoryRepository(
     override suspend fun summarizeByRatingKey(
         ratingKey: String,
         allowedUserIds: Set<String>?,
+        serverId: String?,
     ): Either<MiruError.PersistenceError, MediaPlaySummary> {
         if (ratingKey.isBlank()) {
             return Either.Right(MediaPlaySummary.EMPTY)
@@ -646,6 +649,7 @@ class ExposedPlaybackHistoryRepository(
         return summarizeMatching(
             operation = "playback_history_summarize_by_rating_key",
             allowedUserIds = allowedUserIds,
+            serverId = serverId,
         ) {
             PlaybackHistoryTable.ratingKey eq ratingKey
         }
@@ -654,6 +658,7 @@ class ExposedPlaybackHistoryRepository(
     override suspend fun summarizeSeriesByTitle(
         seriesTitle: String,
         allowedUserIds: Set<String>?,
+        serverId: String?,
     ): Either<MiruError.PersistenceError, MediaPlaySummary> {
         val trimmed = seriesTitle.trim()
         if (trimmed.isEmpty()) {
@@ -662,6 +667,7 @@ class ExposedPlaybackHistoryRepository(
         return summarizeMatching(
             operation = "playback_history_summarize_series_by_title",
             allowedUserIds = allowedUserIds,
+            serverId = serverId,
         ) {
             (PlaybackHistoryTable.mediaType eq "episode") and
                 (PlaybackHistoryTable.grandparentTitle.lowerCase() eq trimmed.lowercase())
@@ -671,19 +677,20 @@ class ExposedPlaybackHistoryRepository(
     private suspend fun summarizeMatching(
         operation: String,
         allowedUserIds: Set<String>?,
+        serverId: String? = null,
         predicate: () -> Op<Boolean>,
     ): Either<MiruError.PersistenceError, MediaPlaySummary> {
         if (allowedUserIds != null && allowedUserIds.isEmpty()) {
             return Either.Right(MediaPlaySummary.EMPTY)
         }
         return database.exposedQuery(operation) {
-            val baseCondition = predicate()
-            val condition =
-                if (allowedUserIds != null) {
-                    baseCondition and (PlaybackHistoryTable.userId inList allowedUserIds)
-                } else {
-                    baseCondition
-                }
+            var condition = predicate()
+            if (serverId != null) {
+                condition = condition and (PlaybackHistoryTable.serverId eq serverId)
+            }
+            if (allowedUserIds != null) {
+                condition = condition and (PlaybackHistoryTable.userId inList allowedUserIds)
+            }
 
             val uniqueUsers = hashSetOf<String>()
             var totalPlays = 0L

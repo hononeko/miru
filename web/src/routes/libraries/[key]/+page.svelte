@@ -4,10 +4,13 @@
 	import { api, MiruApiError, unwrap } from '$api/client';
 	import type { LibraryStatsResponse, RecentMediaItemResponse } from '$api/types';
 	import LibrarySectionDetail from '$components/miru/LibrarySectionDetail.svelte';
+	import ServerBadge from '$components/miru/ServerBadge.svelte';
 	import UnlinkedUserEmptyState from '$components/miru/UnlinkedUserEmptyState.svelte';
 	import { authStore } from '$stores/auth.svelte';
+	import { serversStore } from '$stores/servers.svelte';
 
 	const sectionKey = $derived(page.params.key ?? '');
+	const requestedServerId = $derived(page.url.searchParams.get('serverId')?.trim() || null);
 
 	let stats = $state<LibraryStatsResponse | null>(null);
 	let recentItems = $state<RecentMediaItemResponse[]>([]);
@@ -15,7 +18,7 @@
 	let accessDenied = $state(false);
 	let error = $state<string | null>(null);
 
-	async function loadSection(key: string) {
+	async function loadSection(key: string, serverId: string | null) {
 		if (!key) return;
 		if (authStore.isUnlinkedUser) {
 			stats = null;
@@ -30,8 +33,21 @@
 		error = null;
 		try {
 			const [sRes, rRes] = await Promise.all([
-				api.GET('/api/v1/libraries/{id}/stats', { params: { path: { id: key } } }),
-				api.GET('/api/v1/libraries/{id}/recent', { params: { path: { id: key }, query: { limit: 12 } } })
+				api.GET('/api/v1/libraries/{id}/stats', {
+					params: {
+						path: { id: key },
+						...(serverId ? { query: { serverId } } : {})
+					}
+				}),
+				api.GET('/api/v1/libraries/{id}/recent', {
+					params: {
+						path: { id: key },
+						query: {
+							limit: 12,
+							...(serverId ? { serverId } : {})
+						}
+					}
+				})
 			]);
 			stats = unwrap(sRes);
 			recentItems = unwrap(rRes).items;
@@ -50,7 +66,7 @@
 	}
 
 	$effect(() => {
-		void loadSection(sectionKey);
+		void loadSection(sectionKey, requestedServerId);
 	});
 </script>
 
@@ -84,7 +100,7 @@
 					Library access unavailable
 				</h1>
 				<p class="text-xs text-fg-secondary">
-					This library section does not exist or is no longer shared with your Plex account.
+					This library section does not exist or is no longer shared with your account.
 				</p>
 			</div>
 			<a
@@ -100,9 +116,18 @@
 		</div>
 	{:else if stats}
 		<div>
-			<h1 class="font-display text-2xl font-bold tracking-wide text-fg-primary sm:text-3xl">
-				{stats.section.title}
-			</h1>
+			<div class="flex flex-wrap items-center gap-2">
+				<h1 class="font-display text-2xl font-bold tracking-wide text-fg-primary sm:text-3xl">
+					{stats.section.title}
+				</h1>
+				{#if serversStore.hasMultipleServers}
+					<ServerBadge
+						serverId={stats.section.serverId}
+						serverType={stats.section.serverType}
+						serverName={stats.section.serverName}
+					/>
+				{/if}
+			</div>
 			<p class="mt-0.5 text-xs text-fg-secondary sm:text-sm">
 				Section #{stats.section.sectionKey} · {stats.section.itemCount.toLocaleString()} items
 			</p>

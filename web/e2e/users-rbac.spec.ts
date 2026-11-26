@@ -126,8 +126,8 @@ test.describe('Users & RBAC isolation (ADMIN vs scoped USER vs unlinked USER)', 
 		await expect(nav.getByRole('link', { name: 'Admin' })).toHaveCount(0);
 		await expect(nav.getByRole('link', { name: 'Users' })).toHaveCount(0);
 
-		await expect(page.getByText('No Plex user linked to your account')).toBeVisible();
-		await expect(page.getByText(/administrator must link your Plex media user/i)).toBeVisible();
+		await expect(page.getByText('No media user linked to your account')).toBeVisible();
+		await expect(page.getByText(/administrator must link your media user/i)).toBeVisible();
 
 		await page.goto(`${miru.baseUrl}/users`);
 		await expect(page).toHaveURL(`${miru.baseUrl}/`);
@@ -136,9 +136,9 @@ test.describe('Users & RBAC isolation (ADMIN vs scoped USER vs unlinked USER)', 
 
 		await nav.getByRole('link', { name: 'History' }).click();
 		await expect(page.getByText('0 PLAYS')).toBeVisible();
-		await expect(page.getByText('No Plex user linked to your account')).toBeVisible();
+		await expect(page.getByText('No media user linked to your account')).toBeVisible();
 
 		await nav.getByRole('link', { name: 'Libraries' }).click();
-		await expect(page.getByText('No Plex user linked to your account')).toBeVisible();
+		await expect(page.getByText('No media user linked to your account')).toBeVisible();
 	});
 });

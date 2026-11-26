@@ -21,6 +21,7 @@
 	import { api, MiruApiError, unwrap } from '$api/client';
 	import type {
 		AccountResponse,
+		AdminServerStatusDto,
 		ApiKeyResponse,
 		GuardrailMode,
 		GuardrailRuleDto,
@@ -44,9 +45,11 @@
 	import Button from '$components/ui/Button.svelte';
 	import Sheet from '$components/ui/Sheet.svelte';
 	import DeleteAccountButton from '$components/miru/DeleteAccountButton.svelte';
+	import ServerBadge from '$components/miru/ServerBadge.svelte';
 	import WebhooksPanel from '$components/miru/WebhooksPanel.svelte';
 	import { authStore } from '$stores/auth.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
+	import { serversStore } from '$stores/servers.svelte';
 	import { streamsStore } from '$stores/streams.svelte';
 	import {
 		API_KEY_EXPIRY_PRESETS,
@@ -71,6 +74,7 @@
 	let health = $state<HealthResponse | null>(null);
 	let readiness = $state<ReadinessResponse | null>(null);
 	let plexStatus = $state<PlexConnectionStatus | null>(null);
+	let adminServers = $state<AdminServerStatusDto[]>([]);
 	let guardrails = $state<GuardrailRuleDto[]>([]);
 	let auditEntries = $state<TerminationAuditEntryDto[]>([]);
 	let auditTotalCount = $state(0);
@@ -209,13 +213,14 @@
 		error = null;
 		guardrailError = null;
 		try {
-			const [accRes, keyRes, usrRes, healthRes, readyRes, plexRes, guardrailsRes, auditRes] = await Promise.all([
+			const [accRes, keyRes, usrRes, healthRes, readyRes, plexRes, srvRes, guardrailsRes, auditRes] = await Promise.all([
 				api.GET('/api/v1/admin/accounts'),
 				api.GET('/api/v1/admin/api-keys'),
 				api.GET('/api/v1/users'),
 				api.GET('/healthz'),
 				api.GET('/readyz'),
 				api.GET('/api/v1/admin/plex/status'),
+				api.GET('/api/v1/admin/servers').catch(() => ({ data: undefined })),
 				api.GET('/api/v1/admin/guardrails'),
 				api.GET('/api/v1/admin/guardrails/audit', {
 					params: {
@@ -235,6 +240,7 @@
 			health = healthRes.data ?? null;
 			readiness = readyRes.data ?? null;
 			plexStatus = plexRes.data ?? null;
+			adminServers = Array.isArray(srvRes?.data?.servers) ? srvRes.data.servers : [];
 			if (guardrailsRes.data) {
 				guardrails = guardrailsRes.data.rules;
 			} else if (guardrailsRes.error) {
@@ -525,8 +531,8 @@
 		return 'REMOTE';
 	}
 
-	function credentialSourceLabel(status: PlexConnectionStatus): string {
-		switch (status.credentialSource) {
+	function credentialSourceLabel(source: PlexConnectionStatus['credentialSource']): string {
+		switch (source) {
 			case 'ENV_OVERRIDE':
 				return 'ENV OVERRIDE';
 			case 'STORED_ENCRYPTED':
@@ -534,6 +540,19 @@
 			case 'NOT_CONFIGURED':
 				return 'NOT CONFIGURED';
 		}
+	}
+
+	function websocketReadinessBadge(server: AdminServerStatusDto): {
+		tone: 'direct-play' | 'warning' | 'danger' | 'neutral';
+		label: string;
+	} {
+		if (!server.configured) return { tone: 'neutral', label: 'WS OFF' };
+		if (!server.websocketEnabled) return { tone: 'neutral', label: 'POLLING ONLY' };
+		const st = server.websocketState.toUpperCase();
+		if (st === 'CONNECTED') return { tone: 'direct-play', label: 'WS CONNECTED' };
+		if (st === 'CONNECTING' || st === 'RECONNECTING') return { tone: 'warning', label: `WS ${st}` };
+		if (st === 'BACKOFF') return { tone: 'danger', label: 'WS BACKOFF' };
+		return { tone: 'neutral', label: `WS ${st}` };
 	}
 
 	async function handleCreateAccount(e: SubmitEvent) {
@@ -813,9 +832,19 @@
 		return 'LOCAL';
 	});
 
+	const hasMultipleServers = $derived(
+		serversStore.hasMultipleServers ||
+			adminServers.filter((s) => s.configured).length > 1 ||
+			new Set(mediaUsers.map((u) => u.serverId).filter(Boolean)).size > 1
+	);
+
 	function mediaUserName(id: string): string {
 		const found = mediaUsers.find((u) => u.id === id);
-		return found ? found.displayName || found.username : id;
+		if (!found) return id;
+		const base = found.displayName || found.username;
+		if (!hasMultipleServers) return base;
+		const srv = found.serverName || found.serverType?.toUpperCase() || '';
+		return srv ? `${base} (${srv})` : base;
 	}
 </script>
 
@@ -830,7 +859,7 @@
 				Admin & Access Control
 			</h1>
 			<p class="mt-0.5 text-xs text-fg-secondary sm:text-sm">
-				Manage Plex server connection, local Miru accounts, RBAC links, and headless API keys
+				Manage media server connections, local Miru accounts, RBAC links, and headless API keys
 			</p>
 		</div>
 		<div class="flex items-center gap-2">
@@ -853,16 +882,16 @@
 		</div>
 	{/if}
 
-	<!-- Media Server · Plex Connection -->
+	<!-- Media Servers & Readiness -->
 	<section class="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
 		<div class="flex flex-wrap items-center justify-between gap-2">
 			<div class="flex items-center gap-2">
 				<Server class="h-4 w-4 text-primary-text" />
 				<h2 class="font-heading text-sm font-semibold text-fg-primary">
-					Media Server · Plex Connection
+					Media Servers &amp; Readiness
 				</h2>
 			</div>
-			{#if plexStatus}
+			{#if adminServers.length === 0 && plexStatus}
 				<div class="flex flex-wrap items-center gap-1.5">
 					<Badge
 						tone={plexStatus.reachable ? 'direct-play' : plexStatus.configured ? 'warning' : 'neutral'}
@@ -879,13 +908,93 @@
 								: 'neutral'}
 						mono
 					>
-						{credentialSourceLabel(plexStatus)}
+						{credentialSourceLabel(plexStatus.credentialSource)}
 					</Badge>
 				</div>
 			{/if}
 		</div>
 
-		{#if plexStatus}
+		{#if adminServers.length > 0}
+			{#if plexStatus?.credentialSource === 'ENV_OVERRIDE'}
+				<div class="flex items-start gap-2.5 rounded-xl border border-cyan/40 bg-cyan-soft/50 px-3.5 py-2.5 text-xs text-fg-secondary">
+					<AlertTriangle class="mt-0.5 h-4 w-4 shrink-0 text-cyan-hi" />
+					<div>
+						<p class="font-heading font-semibold text-cyan-hi">Environment override active (PLEX_URL / PLEX_TOKEN)</p>
+						<p class="mt-0.5 text-[11px]">
+							You can still run Plex OAuth to save encrypted credentials in the database, but Miru will continue using environment variables until they are removed.
+						</p>
+					</div>
+				</div>
+			{/if}
+
+			{#if plexStatus && !plexStatus.encryptionKeyConfigured}
+				<div class="flex items-start gap-2.5 rounded-xl border border-warning/50 bg-warning-soft px-3.5 py-2.5 text-xs text-fg-secondary">
+					<AlertTriangle class="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+					<div>
+						<p class="font-heading font-semibold text-warning">MIRU_ENCRYPTION_KEY is not configured</p>
+						<p class="mt-0.5 text-[11px]">
+							Set <code class="font-mono text-fg-primary">MIRU_ENCRYPTION_KEY</code> (at least 32 characters) in your environment to save Plex OAuth credentials encrypted at rest.
+						</p>
+					</div>
+				</div>
+			{/if}
+
+			<div class="flex flex-col gap-2.5">
+				{#each adminServers as srv (srv.id ?? `${srv.serverType}:${srv.name}`)}
+					{@const wsBadge = websocketReadinessBadge(srv)}
+					<div class="flex flex-col gap-3 rounded-xl border border-border bg-elevated p-3.5 sm:flex-row sm:items-center sm:justify-between">
+						<div class="min-w-0 flex-1">
+							<div class="flex flex-wrap items-center gap-1.5">
+								<p class="font-heading text-sm font-semibold text-fg-primary">
+									{srv.name}
+								</p>
+								<Badge tone={srv.serverType === 'jellyfin' ? 'cyan' : 'primary'} mono>
+									{srv.serverType.toUpperCase()}
+								</Badge>
+								<Badge
+									tone={srv.reachable ? 'direct-play' : srv.configured ? 'warning' : 'neutral'}
+									dot
+									mono
+								>
+									{srv.reachable ? 'CONNECTED' : srv.configured ? 'UNREACHABLE' : 'NOT CONFIGURED'}
+								</Badge>
+								<Badge tone={wsBadge.tone} mono>{wsBadge.label}</Badge>
+								<Badge
+									tone={srv.credentialSource === 'ENV_OVERRIDE'
+										? 'cyan'
+										: srv.credentialSource === 'STORED_ENCRYPTED'
+											? 'primary'
+											: 'neutral'}
+									mono
+								>
+									{credentialSourceLabel(srv.credentialSource)}
+								</Badge>
+							</div>
+							<p class="mt-1 truncate font-mono text-[11px] text-fg-muted">
+								{#if srv.baseUrl}
+									{srv.baseUrl}{srv.machineId ? ` · ${srv.machineId}` : ''}
+								{:else if srv.serverType === 'plex'}
+									Use Plex PIN OAuth to sign in and auto-discover your server without extracting X-Plex-Token manually.
+								{:else}
+									Configure JELLYFIN_URL and JELLYFIN_API_KEY in environment variables to enable Jellyfin telemetry.
+								{/if}
+							</p>
+							{#if srv.statusMessage && !srv.reachable}
+								<p class="mt-1 text-[11px] text-fg-secondary">{srv.statusMessage}</p>
+							{/if}
+						</div>
+						{#if srv.serverType === 'plex'}
+							<div class="flex shrink-0 items-center gap-2">
+								<Button variant="primary" size="md" onclick={startPlexOAuthWizard}>
+									<Link2 class="h-3.5 w-3.5" />
+									{srv.configured ? 'Reconnect Plex' : 'Connect with Plex'}
+								</Button>
+							</div>
+						{/if}
+					</div>
+				{/each}
+			</div>
+		{:else if plexStatus}
 			{#if plexStatus.credentialSource === 'ENV_OVERRIDE'}
 				<div class="flex items-start gap-2.5 rounded-xl border border-cyan/40 bg-cyan-soft/50 px-3.5 py-2.5 text-xs text-fg-secondary">
 					<AlertTriangle class="mt-0.5 h-4 w-4 shrink-0 text-cyan-hi" />
@@ -934,7 +1043,7 @@
 				</div>
 			</div>
 		{:else if loading}
-			<p class="py-4 text-center font-mono text-xs text-fg-muted">Checking Plex connection…</p>
+			<p class="py-4 text-center font-mono text-xs text-fg-muted">Checking media server connections…</p>
 		{/if}
 	</section>
 
@@ -1408,7 +1517,7 @@
 					<Badge tone="cyan" mono>v{health.version}</Badge>
 				{/if}
 			</div>
-			{#if readiness}
+			{#if readiness?.checks}
 				<div class="flex flex-wrap items-center gap-2">
 					{#each Object.entries(readiness.checks) as [name, check]}
 						<Badge tone={check.status === 'healthy' ? 'direct-play' : 'danger'} dot mono>
@@ -1698,7 +1807,7 @@
 		if (!v) linkError = null;
 	}}
 	title={`Link Media Users · ${linkTarget?.username ?? ''}`}
-	description="Select which Plex users this account may view"
+	description="Select which media users this account may view"
 >
 	<div class="flex flex-col gap-3">
 		{#if linkError}
@@ -1713,8 +1822,8 @@
 				</p>
 			{:else if linkTarget.mediaUserLinkMode === 'AUTO'}
 				<p class="rounded-lg border border-border bg-elevated px-3 py-2.5 text-[11px] text-fg-secondary">
-					Linked by email: this account is linked to the Plex users with the same verified email,
-					updated when its sign-in email changes and after each hourly Plex user sync.
+					Linked by email: this account is linked to the media users with the same verified email,
+					updated when its sign-in email changes and after each hourly user sync.
 					{#if linkTarget.emailVerified === false}
 						Its identity provider has not marked the email as verified, so it has no email links.
 					{:else if linkTarget.emailVerified == null}
@@ -1746,21 +1855,28 @@
 			{/if}
 		{/if}
 		{#if mediaUsers.length === 0}
-			<p class="text-xs text-fg-muted">No Plex media users synced yet.</p>
+			<p class="text-xs text-fg-muted">No media users synced yet.</p>
 		{:else}
 			<div class="flex flex-col gap-2">
 				{#each mediaUsers as mu (mu.id)}
 					{@const checked = selectedMediaUserIds.includes(mu.id)}
-					<label class="flex cursor-pointer items-center justify-between rounded-lg border border-border bg-elevated px-3 py-2.5 text-xs">
-						<span class="font-heading font-semibold text-fg-primary">
-							{mu.displayName || mu.username}
-							<span class="font-mono font-normal text-fg-muted"> (#{mu.externalUserId})</span>
+					<label class="flex cursor-pointer items-center justify-between gap-2 rounded-lg border border-border bg-elevated px-3 py-2.5 text-xs">
+						<span class="flex min-w-0 flex-wrap items-center gap-1.5 font-heading font-semibold text-fg-primary">
+							<span class="truncate">{mu.displayName || mu.username}</span>
+							<span class="font-mono font-normal text-fg-muted">(#{mu.externalUserId})</span>
+							{#if mu.serverType || mu.serverName || hasMultipleServers}
+								<ServerBadge
+									serverId={mu.serverId}
+									serverType={mu.serverType}
+									serverName={mu.serverName}
+								/>
+							{/if}
 						</span>
 						<input
 							type="checkbox"
 							{checked}
 							onchange={() => toggleMediaUser(mu.id)}
-							class="h-4 w-4 accent-cyan"
+							class="h-4 w-4 shrink-0 accent-cyan"
 						/>
 					</label>
 				{/each}

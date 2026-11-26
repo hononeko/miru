@@ -2,7 +2,9 @@
 	import type { HistoryDetailResponse } from '$api/types';
 	import Badge from '$components/ui/Badge.svelte';
 	import ProxiedImage from './ProxiedImage.svelte';
+	import ServerBadge from './ServerBadge.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
+	import { serversStore } from '$stores/servers.svelte';
 	import {
 		formatBandwidthKbps,
 		formatClockMs,
@@ -14,7 +16,7 @@
 
 	type Props = {
 		detail: HistoryDetailResponse;
-		onopenMedia: (ratingKey: string) => void;
+		onopenMedia: (ratingKey: string, serverId?: string | null) => void;
 	};
 
 	let { detail, onopenMedia }: Props = $props();
@@ -70,12 +72,13 @@
 	<div class="flex items-start gap-3.5">
 		<button
 			type="button"
-			onclick={() => onopenMedia(detail.media.ratingKey)}
+			onclick={() => onopenMedia(detail.media.ratingKey, detail.serverId)}
 			aria-label={`View media details for ${titles.primary}`}
 			class="shrink-0 cursor-pointer rounded-lg transition-transform hover:scale-[1.02] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan"
 		>
 			<ProxiedImage
 				src={detail.media.thumbUrl}
+				serverId={detail.serverId}
 				alt={titles.primary}
 				fallbackLabel={titles.primary}
 				variant="poster"
@@ -85,7 +88,7 @@
 		<div class="flex min-w-0 flex-1 flex-col gap-1.5">
 			<button
 				type="button"
-				onclick={() => onopenMedia(detail.media.ratingKey)}
+				onclick={() => onopenMedia(detail.media.ratingKey, detail.serverId)}
 				class="cursor-pointer text-left hover:underline"
 			>
 				<h3 class="font-display text-xl font-bold leading-tight text-fg-primary">
@@ -97,6 +100,13 @@
 				<Badge tone={detail.isWatched ? 'direct-play' : 'neutral'} dot>
 					{detail.isWatched ? `Watched · ${Math.round(pct)}%` : `${Math.round(pct)}%`}
 				</Badge>
+				{#if serversStore.hasMultipleServers}
+					<ServerBadge
+						serverId={detail.serverId}
+						serverType={detail.serverType}
+						serverName={detail.serverName}
+					/>
+				{/if}
 				{#if userLabel}
 					<a href={`/users/${encodeURIComponent(detail.userId)}`}>
 						<Badge tone="primary">{userLabel}</Badge>
@@ -104,7 +114,7 @@
 				{/if}
 				<button
 					type="button"
-					onclick={() => onopenMedia(detail.media.ratingKey)}
+					onclick={() => onopenMedia(detail.media.ratingKey, detail.serverId)}
 					class="cursor-pointer font-mono text-[11px] font-semibold text-cyan-hi hover:underline"
 				>
 					Media info →

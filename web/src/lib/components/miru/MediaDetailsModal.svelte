@@ -16,9 +16,11 @@
 	import Badge from '$components/ui/Badge.svelte';
 	import Button from '$components/ui/Button.svelte';
 	import ProxiedImage from './ProxiedImage.svelte';
+	import ServerBadge from './ServerBadge.svelte';
 	import { modalDialog } from '$lib/actions/modalDialog';
 	import { sheetDrag } from '$lib/actions/sheetDrag';
 	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
+	import { serversStore } from '$stores/servers.svelte';
 	import {
 		formatBandwidthKbps,
 		formatBytes,
@@ -68,9 +70,20 @@
 		);
 	});
 
-	const heroBackdropSrc = $derived(
-		heroBackdrop ? (heroBackdrop.includes('?') ? heroBackdrop : `${heroBackdrop}?w=960`) : null
-	);
+	const heroBackdropSrc = $derived.by(() => {
+		if (!heroBackdrop) return null;
+		const sid = data?.serverId?.trim();
+		const params = new URLSearchParams();
+		if (sid && !heroBackdrop.includes('serverId=')) {
+			params.set('serverId', sid);
+		}
+		if (!heroBackdrop.includes('w=')) {
+			params.set('w', '960');
+		}
+		const qs = params.toString();
+		if (!qs) return heroBackdrop;
+		return heroBackdrop.includes('?') ? `${heroBackdrop}&${qs}` : `${heroBackdrop}?${qs}`;
+	});
 
 	const heroPosterSrc = $derived.by(() => {
 		if (!data) return null;
@@ -114,8 +127,13 @@
 
 	const historyHref = $derived.by(() => {
 		if (!data) return '/history';
-		const query = data.series?.title ?? data.title;
-		return `/history?q=${encodeURIComponent(query)}`;
+		const params = new URLSearchParams();
+		params.set('q', data.series?.title ?? data.title);
+		const sid = data.serverId?.trim();
+		if (sid && serversStore.hasMultipleServers) {
+			params.set('serverId', sid);
+		}
+		return `/history?${params.toString()}`;
 	});
 
 	const technicalItems = $derived.by(() => {
@@ -203,7 +221,13 @@
 						variant="secondary"
 						size="sm"
 						onclick={() => {
-							if (mediaDetailsModal.ratingKey) void mediaDetailsModal.open(mediaDetailsModal.ratingKey);
+							if (mediaDetailsModal.ratingKey) {
+								const sid = mediaDetailsModal.serverId?.trim();
+								void mediaDetailsModal.open(
+									mediaDetailsModal.ratingKey,
+									sid ? { serverId: sid } : undefined
+								);
+							}
 						}}
 					>
 						Retry
@@ -246,6 +270,7 @@
 				<div class="relative flex flex-col gap-4 p-5 pt-7 sm:flex-row sm:items-end sm:gap-5 sm:p-6 sm:pt-7 md:pt-6">
 					<ProxiedImage
 						src={heroPosterSrc}
+						serverId={data.serverId}
 						alt={data.title}
 						fallbackLabel={data.title}
 						variant="poster"
@@ -255,6 +280,13 @@
 					<div class="flex min-w-0 flex-1 flex-col gap-2">
 						<div class="flex flex-wrap items-center gap-1.5">
 							<Badge tone="primary" mono>{data.mediaType.replace('_', ' ').toUpperCase()}</Badge>
+							{#if serversStore.hasMultipleServers}
+								<ServerBadge
+									serverId={data.serverId}
+									serverType={data.serverType}
+									serverName={data.serverName}
+								/>
+							{/if}
 							{#if episodeCode}
 								<Badge tone="cyan" mono>{episodeCode}</Badge>
 							{/if}
@@ -318,7 +350,13 @@
 										<button
 											type="button"
 											onclick={() => {
-												if (data.series?.ratingKey) void mediaDetailsModal.open(data.series.ratingKey);
+												if (data.series?.ratingKey) {
+													const sid = data.serverId?.trim();
+													void mediaDetailsModal.open(
+														data.series.ratingKey,
+														sid ? { serverId: sid } : undefined
+													);
+												}
 											}}
 											class="cursor-pointer font-mono text-[11px] font-semibold text-cyan-hi hover:underline"
 										>
@@ -402,7 +440,13 @@
 										<button
 											type="button"
 											onclick={() => {
-												if (data.season?.ratingKey) void mediaDetailsModal.open(data.season.ratingKey);
+												if (data.season?.ratingKey) {
+													const sid = data.serverId?.trim();
+													void mediaDetailsModal.open(
+														data.season.ratingKey,
+														sid ? { serverId: sid } : undefined
+													);
+												}
 											}}
 											class="shrink-0 cursor-pointer font-mono text-[11px] font-semibold text-primary-text hover:underline"
 										>

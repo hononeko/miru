@@ -3,6 +3,7 @@
 
 	type Props = {
 		src?: string | null;
+		serverId?: string | null;
 		alt: string;
 		fallbackLabel?: string;
 		variant?: 'poster' | 'avatar';
@@ -11,6 +12,7 @@
 
 	let {
 		src = null,
+		serverId = null,
 		alt,
 		fallbackLabel = '',
 		variant = 'poster',
@@ -22,9 +24,19 @@
 	let imgEl = $state<HTMLImageElement | null>(null);
 
 	// Security guard: only allow same-origin Miru artwork/avatar proxy URLs
+	const resolvedSrc = $derived.by(() => {
+		if (!src || !src.startsWith('/api/v1/')) return null;
+		const sid = serverId?.trim();
+		if (!sid || !src.startsWith('/api/v1/media/') || src.includes('serverId=')) {
+			return src;
+		}
+		const sep = src.includes('?') ? '&' : '?';
+		return `${src}${sep}serverId=${encodeURIComponent(sid)}`;
+	});
+
 	const safeSrc = $derived.by(() => {
-		if (!src || src === failedSrc) return null;
-		return src.startsWith('/api/v1/') ? src : null;
+		if (!resolvedSrc || resolvedSrc === failedSrc) return null;
+		return resolvedSrc;
 	});
 
 	$effect(() => {
@@ -57,8 +69,8 @@
 					loadedSrc = safeSrc;
 				}}
 				onerror={() => {
-					if (src) failedSrc = src;
-					if (loadedSrc === src) loadedSrc = null;
+					if (safeSrc) failedSrc = safeSrc;
+					if (loadedSrc === safeSrc) loadedSrc = null;
 				}}
 				class={cn(
 					'absolute inset-0 h-full w-full object-cover text-transparent transition-opacity duration-150',
@@ -74,7 +86,7 @@
 		loading="lazy"
 		decoding="async"
 		onerror={() => {
-			if (src) failedSrc = src;
+			if (safeSrc) failedSrc = safeSrc;
 		}}
 		class={cn('shrink-0 rounded-lg border border-border-strong bg-elevated object-cover', className)}
 	/>

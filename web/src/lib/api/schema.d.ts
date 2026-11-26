@@ -595,6 +595,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/servers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List configured media servers and their connection/WebSocket status */
+        get: operations["listServers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/servers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List all media server runtimes with connection details and WebSocket readiness (admin only) */
+        get: operations["listAdminServers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/media/{ratingKey}": {
         parameters: {
             query?: never;
@@ -1240,6 +1274,8 @@ export interface components {
         };
         ActiveStreamDto: {
             serverId: string;
+            serverName?: string | null;
+            serverType?: string | null;
             sessionKey: string;
             sessionId?: string | null;
             user: components["schemas"]["StreamUserDto"];
@@ -1340,6 +1376,8 @@ export interface components {
         UserSummaryDto: {
             id: string;
             serverId: string;
+            serverName?: string | null;
+            serverType?: string | null;
             externalUserId: string;
             username: string;
             displayName?: string | null;
@@ -1358,6 +1396,8 @@ export interface components {
         UserRecentPlayDto: {
             id: string;
             serverId: string;
+            serverName?: string | null;
+            serverType?: string | null;
             ratingKey: string;
             mediaType: string;
             title: string;
@@ -1456,6 +1496,8 @@ export interface components {
         HistoryItemDto: {
             id: string;
             serverId: string;
+            serverName?: string | null;
+            serverType?: string | null;
             userId: string;
             username?: string | null;
             /** @description The user's name from the media server (e.g. a Plex friend's first name), when it has one. */
@@ -1538,6 +1580,8 @@ export interface components {
         HistoryDetailResponse: {
             id: string;
             serverId: string;
+            serverName?: string | null;
+            serverType?: string | null;
             userId: string;
             username?: string | null;
             /** @description The user's name from the media server (e.g. a Plex friend's first name), when it has one. */
@@ -1757,6 +1801,8 @@ export interface components {
             /** @description Opaque identifier of the section, for use as `{id}` in paths */
             id: string;
             serverId: string;
+            serverName?: string | null;
+            serverType?: string | null;
             sectionKey: string;
             title: string;
             sectionType: string;
@@ -1818,6 +1864,9 @@ export interface components {
         };
         RecentMediaItemResponse: {
             ratingKey: string;
+            serverId?: string | null;
+            serverName?: string | null;
+            serverType?: string | null;
             sectionKey: string;
             mediaType: string;
             title: string;
@@ -1841,6 +1890,9 @@ export interface components {
         };
         StaleMediaItemResponse: {
             ratingKey: string;
+            serverId?: string | null;
+            serverName?: string | null;
+            serverType?: string | null;
             sectionKey: string;
             mediaType: string;
             title: string;
@@ -2012,7 +2064,40 @@ export interface components {
             /** Format: int64 */
             totalWatchDurationSec: number;
         };
+        MediaServerSummaryDto: {
+            id: string;
+            name: string;
+            serverType: string;
+            configured: boolean;
+            reachable: boolean;
+            websocketEnabled: boolean;
+            websocketState: string;
+        };
+        MediaServersResponse: {
+            servers: components["schemas"]["MediaServerSummaryDto"][];
+        };
+        AdminServerStatusDto: {
+            id?: string | null;
+            name: string;
+            serverType: string;
+            configured: boolean;
+            credentialSource: components["schemas"]["PlexCredentialSource"];
+            machineId?: string | null;
+            baseUrl?: string | null;
+            reachable: boolean;
+            websocketEnabled: boolean;
+            websocketState: string;
+            statusMessage?: string | null;
+            /** Format: int64 */
+            lastCheckedAtMs?: number | null;
+        };
+        AdminServersResponse: {
+            servers: components["schemas"]["AdminServerStatusDto"][];
+        };
         MediaDetailsResponse: {
+            serverId?: string | null;
+            serverName?: string | null;
+            serverType?: string | null;
             ratingKey: string;
             mediaType: string;
             title: string;
@@ -4046,9 +4131,79 @@ export interface operations {
             };
         };
     };
-    getMediaDetails: {
+    listServers: {
         parameters: {
             query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Configured media servers summary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaServersResponse"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    listAdminServers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Detailed media server connection statuses */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminServersResponse"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    getMediaDetails: {
+        parameters: {
+            query?: {
+                /** @description Optional media server ID to target when multiple servers are configured */
+                serverId?: string;
+            };
             header?: never;
             path: {
                 ratingKey: string;
@@ -4116,6 +4271,8 @@ export interface operations {
     getMediaThumb: {
         parameters: {
             query?: {
+                /** @description Optional media server ID */
+                serverId?: string;
                 /** @description Optional requested width in pixels (1-2000) */
                 w?: number;
                 /** @description Optional requested height in pixels (1-2000) */
@@ -4201,6 +4358,8 @@ export interface operations {
     getMediaArt: {
         parameters: {
             query?: {
+                /** @description Optional media server ID */
+                serverId?: string;
                 /** @description Optional requested width in pixels (1-2000) */
                 w?: number;
                 /** @description Optional requested height in pixels (1-2000) */
@@ -4365,7 +4524,9 @@ export interface operations {
     };
     listActiveStreams: {
         parameters: {
-            query?: never;
+            query?: {
+                serverId?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -4394,7 +4555,9 @@ export interface operations {
     };
     streamEvents: {
         parameters: {
-            query?: never;
+            query?: {
+                serverId?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -4423,10 +4586,12 @@ export interface operations {
     };
     terminateStream: {
         parameters: {
-            query?: never;
+            query?: {
+                serverId?: string;
+            };
             header?: never;
             path: {
-                /** @description Plex session ID or Miru session key of the active stream */
+                /** @description Media server session ID or Miru session key of the active stream */
                 sessionId: string;
             };
             cookie?: never;
@@ -4504,7 +4669,9 @@ export interface operations {
     };
     listUsers: {
         parameters: {
-            query?: never;
+            query?: {
+                serverId?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -4592,6 +4759,7 @@ export interface operations {
     listPlaybackHistory: {
         parameters: {
             query?: {
+                serverId?: string;
                 userId?: string;
                 mediaType?: "movie" | "episode" | "track" | "clip" | "live_tv";
                 libraryId?: string;
@@ -4704,6 +4872,7 @@ export interface operations {
     getOverviewStats: {
         parameters: {
             query?: {
+                serverId?: string;
                 range?: "7d" | "30d" | "90d" | "365d" | "all";
                 /** @description Whether breakdowns and rankings are calculated by number of plays or playback duration */
                 metric?: "plays" | "duration";
@@ -4746,6 +4915,7 @@ export interface operations {
     getHeatmapStats: {
         parameters: {
             query?: {
+                serverId?: string;
                 range?: "7d" | "30d";
                 userId?: string;
                 /** @description Whether peak activity is ranked by number of plays or playback duration */
@@ -4798,6 +4968,7 @@ export interface operations {
     getClientStats: {
         parameters: {
             query?: {
+                serverId?: string;
                 range?: "7d" | "30d" | "90d" | "365d" | "all";
                 userId?: string;
                 /** @description Whether client, codec, and transcode percentages and ordering are calculated by plays or duration */
@@ -4850,6 +5021,7 @@ export interface operations {
     getWrappedStats: {
         parameters: {
             query?: {
+                serverId?: string;
                 userId?: string;
                 /** @description Whether annual rankings, peak periods, and percentages are calculated by plays or duration */
                 metric?: "plays" | "duration";
@@ -5292,6 +5464,7 @@ export interface operations {
             query?: {
                 deep?: boolean;
                 sectionKey?: string;
+                serverId?: string;
             };
             header?: never;
             path?: never;

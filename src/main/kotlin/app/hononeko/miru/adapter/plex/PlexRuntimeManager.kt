@@ -4,6 +4,7 @@ import app.hononeko.miru.adapter.ActiveStreamSnapshot
 import app.hononeko.miru.adapter.ArtworkData
 import app.hononeko.miru.adapter.LibraryItemsPage
 import app.hononeko.miru.adapter.LibrarySectionInfo
+import app.hononeko.miru.adapter.ManagedMediaServerRuntime
 import app.hononeko.miru.adapter.MediaItemDetails
 import app.hononeko.miru.adapter.MediaServerAdapter
 import app.hononeko.miru.adapter.MediaServerEvent
@@ -69,9 +70,8 @@ private val runtimeLogger = LoggerFactory.getLogger("app.hononeko.miru.adapter.p
  */
 class DelegatingMediaServerAdapter(
     initialDelegate: MediaServerAdapter? = null,
+    override val serverType: String = PLEX_SERVER_TYPE,
 ) : MediaServerAdapter {
-    override val serverType: String = PLEX_SERVER_TYPE
-
     private val delegateRef = AtomicReference<MediaServerAdapter?>(initialDelegate)
     private val _events =
         MutableSharedFlow<MediaServerEvent>(
@@ -124,6 +124,11 @@ class DelegatingMediaServerAdapter(
     override suspend fun fetchMediaSectionKey(ratingKey: String): Either<MiruError, String?> =
         withDelegate { it.fetchMediaSectionKey(ratingKey) }
 
+    override fun mediaArtworkPath(
+        ratingKey: String,
+        isBackdrop: Boolean,
+    ): String = delegateRef.get()?.mediaArtworkPath(ratingKey, isBackdrop) ?: super.mediaArtworkPath(ratingKey, isBackdrop)
+
     override suspend fun fetchArtwork(
         path: String,
         width: Int?,
@@ -146,8 +151,13 @@ class DelegatingMediaServerAdapter(
 
     private fun notConfiguredError(): MiruError.UpstreamUnavailable =
         MiruError.UpstreamUnavailable(
-            provider = PLEX_SERVER_TYPE,
-            message = "Plex server is not configured",
+            provider = serverType,
+            message =
+                if (serverType == PLEX_SERVER_TYPE) {
+                    "Plex server is not configured"
+                } else {
+                    "Media server ($serverType) is not configured"
+                },
         )
 
     private companion object {
@@ -170,7 +180,8 @@ class PlexRuntimeManager(
     private val plexTvBaseUrl: String? = plexConfig.plexTvBaseUrl,
     private val clock: () -> Long = System::currentTimeMillis,
     private val idGenerator: () -> String = { UUID.randomUUID().toString() },
-) : RealtimeLifecycle {
+) : RealtimeLifecycle,
+    ManagedMediaServerRuntime {
     private data class ActivePipeline(
         val scope: CoroutineScope,
         val restClient: HttpClient,
@@ -196,14 +207,15 @@ class PlexRuntimeManager(
         }
     }
 
-    val adapter: DelegatingMediaServerAdapter = DelegatingMediaServerAdapter()
+    override val serverType: String = "plex"
+    override val adapter: DelegatingMediaServerAdapter = DelegatingMediaServerAdapter()
 
     private val _reconcileHealth =
         MutableSharedFlow<ReconcileHealthSignal>(
             extraBufferCapacity = RECONCILE_HEALTH_BUFFER_CAPACITY,
             onBufferOverflow = BufferOverflow.DROP_OLDEST,
         )
-    val reconcileHealth: SharedFlow<ReconcileHealthSignal> = _reconcileHealth.asSharedFlow()
+    override val reconcileHealth: SharedFlow<ReconcileHealthSignal> = _reconcileHealth.asSharedFlow()
 
     private val _websocketConnected = MutableStateFlow(false)
     val websocketConnected: StateFlow<Boolean> = _websocketConnected.asStateFlow()
@@ -229,6 +241,9 @@ class PlexRuntimeManager(
     private var cachedServerId: String? = null
 
     @Volatile
+    private var latestReconcileHealth: ReconcileHealthSignal? = null
+
+    @Volatile
     private var activeCredentialSource: PlexCredentialSource = PlexCredentialSource.NOT_CONFIGURED
 
     @Volatile
@@ -237,7 +252,7 @@ class PlexRuntimeManager(
     private var activePipeline: ActivePipeline? = null
     private var startupJob: Job? = null
 
-    val serverIdProvider: suspend () -> Either<MiruError, String> = {
+    override val serverIdProvider: suspend () -> Either<MiruError, String> = {
         cachedServerId?.right()
             ?: serverIdMutex.withLock {
                 cachedServerId?.right()
@@ -245,7 +260,7 @@ class PlexRuntimeManager(
             }
     }
 
-    val sessionEngine: SessionStateEngine =
+    override val sessionEngine: SessionStateEngine =
         SessionStateEngine(
             serverIdProvider = serverIdProvider,
             userRepository = ExposedUserRepository(databaseHandle),
@@ -256,21 +271,30 @@ class PlexRuntimeManager(
             idGenerator = idGenerator,
         )
 
-    fun setOnReloadLibrarySync(callback: (suspend () -> Unit)?) {
+    override fun setOnReloadLibrarySync(callback: (suspend () -> Unit)?) {
         onReloadLibrarySync = callback
     }
 
-    fun currentBaseUrl(): String? = activeBaseUrl
+    override fun currentBaseUrl(): String? = activeBaseUrl
 
-    fun currentMachineId(): String? = activeMachineId
+    override fun currentMachineId(): String? = activeMachineId
+
+    override fun cachedServerIdOrNull(): String? = cachedServerId
 
     fun currentCredentialSource(): PlexCredentialSource = activeCredentialSource
 
-    fun isConfigured(): Boolean = adapter.currentDelegate() != null
+    override fun isConfigured(): Boolean = adapter.currentDelegate() != null
+
+    override fun websocketEnabled(): Boolean = plexConfig.websocketEnabled
+
+    override fun connectionState(): ConnectionState =
+        activePipeline?.listener?.connectionState?.value ?: ConnectionState.Disconnected
+
+    override fun lastReconcileHealth(): ReconcileHealthSignal? = latestReconcileHealth
 
     suspend fun currentServerName(): String? = currentServerSummary()?.name
 
-    suspend fun currentServerSummary(): WebhookServerPayload? {
+    override suspend fun currentServerSummary(): WebhookServerPayload? {
         if (!isConfigured()) return null
         val machineId = activeMachineId
         val baseUrl = activeBaseUrl?.trimEnd('/')
@@ -345,6 +369,7 @@ class PlexRuntimeManager(
             activeBaseUrl = null
             activeMachineId = null
             cachedServerId = null
+            latestReconcileHealth = null
             activeCredentialSource = PlexCredentialSource.NOT_CONFIGURED
         }
         managerScope.cancel()
@@ -419,24 +444,7 @@ class PlexRuntimeManager(
                     secretToRedact = token,
                 )
             }
-        val forwarderJob =
-            listener?.let { activeListener ->
-                pipelineScope.launch(CoroutineName("plex-event-forwarder")) {
-                    launch(CoroutineName("plex-ws-state-forwarder")) {
-                        activeListener.connectionState.collect { state ->
-                            _websocketConnected.value = (state == ConnectionState.Connected)
-                        }
-                    }
-                    launch(CoroutineName("plex-ws-reconnect-forwarder")) {
-                        activeListener.reconnected.collect {
-                            _websocketReconnected.tryEmit(Unit)
-                        }
-                    }
-                    activeListener.events.collect { event ->
-                        adapter.emitEvent(event)
-                    }
-                }
-            }
+        val forwarderJob = listener?.let { startEventForwarder(it, pipelineScope) }
         if (listener == null) {
             _websocketConnected.value = false
         }
@@ -448,35 +456,7 @@ class PlexRuntimeManager(
                 eventSource = listener?.events ?: emptyFlow(),
             )
         val sink: ActiveSessionsSink = sessionEngine
-        val reconciler =
-            SessionReconciler(
-                adapter = concreteAdapter,
-                sink = sink,
-                scope = pipelineScope,
-                interval = runtimePlexConfig.pollIntervalSeconds.seconds,
-                reconnectSignals = listener?.reconnected ?: emptyFlow(),
-                onReconcileOutcome = { outcome ->
-                    val nowMs = clock()
-                    val signal =
-                        outcome.fold(
-                            ifLeft = { err ->
-                                ReconcileHealthSignal(
-                                    reachable = false,
-                                    errorMessage = err.message,
-                                    timestampMs = nowMs,
-                                )
-                            },
-                            ifRight = {
-                                ReconcileHealthSignal(
-                                    reachable = true,
-                                    errorMessage = null,
-                                    timestampMs = nowMs,
-                                )
-                            },
-                        )
-                    _reconcileHealth.tryEmit(signal)
-                },
-            )
+        val reconciler = createReconciler(concreteAdapter, sink, pipelineScope, runtimePlexConfig, listener)
 
         activePipeline =
             ActivePipeline(
@@ -492,6 +472,7 @@ class PlexRuntimeManager(
         activeMachineId = machineId
         activeCredentialSource = source
         cachedServerId = null
+        latestReconcileHealth = null
         adapter.setDelegate(concreteAdapter)
 
         listener?.start()
@@ -517,6 +498,65 @@ class PlexRuntimeManager(
             }
         }
     }
+
+    private fun startEventForwarder(
+        activeListener: PlexNotificationListener,
+        pipelineScope: CoroutineScope,
+    ): Job =
+        pipelineScope.launch(CoroutineName("plex-event-forwarder")) {
+            launch(CoroutineName("plex-ws-state-forwarder")) {
+                activeListener.connectionState.collect { state ->
+                    _websocketConnected.value = (state == ConnectionState.Connected)
+                }
+            }
+            launch(CoroutineName("plex-ws-reconnect-forwarder")) {
+                activeListener.reconnected.collect {
+                    _websocketReconnected.tryEmit(Unit)
+                }
+            }
+            activeListener.events.collect { event ->
+                adapter.emitEvent(event)
+            }
+        }
+
+    private fun createReconciler(
+        concreteAdapter: PlexMediaServerAdapter,
+        sink: ActiveSessionsSink,
+        pipelineScope: CoroutineScope,
+        runtimePlexConfig: PlexConfig,
+        listener: PlexNotificationListener?,
+    ): SessionReconciler =
+        SessionReconciler(
+            adapter = concreteAdapter,
+            sink = sink,
+            scope = pipelineScope,
+            interval = runtimePlexConfig.pollIntervalSeconds.seconds,
+            reconnectSignals = listener?.reconnected ?: emptyFlow(),
+            onReconcileOutcome = { outcome ->
+                val nowMs = clock()
+                val signal =
+                    outcome.fold(
+                        ifLeft = { err ->
+                            ReconcileHealthSignal(
+                                reachable = false,
+                                errorMessage = err.message,
+                                timestampMs = nowMs,
+                                serverId = cachedServerId,
+                            )
+                        },
+                        ifRight = {
+                            ReconcileHealthSignal(
+                                reachable = true,
+                                errorMessage = null,
+                                timestampMs = nowMs,
+                                serverId = cachedServerId,
+                            )
+                        },
+                    )
+                latestReconcileHealth = signal
+                _reconcileHealth.tryEmit(signal)
+            },
+        )
 
     private suspend fun stopActivePipelineLocked() {
         val current = activePipeline

@@ -40,7 +40,11 @@ fun Route.libraryRoutes(
                         either {
                             val deep = parseOptionalBooleanParam(query, "deep", defaultValue = true).bind()
                             val sectionKey = parseOptionalSectionKeyParam(query, "sectionKey").bind()
-                            librarySyncTrigger.triggerSync(deep = deep, sectionKey = sectionKey).bind().toResponse()
+                            val serverId = query["serverId"]?.trim()?.takeIf { it.isNotEmpty() }
+                            librarySyncTrigger
+                                .triggerSync(deep = deep, sectionKey = sectionKey, serverId = serverId)
+                                .bind()
+                                .toResponse()
                         }
                     call.respondEither(result)
                 }
@@ -59,7 +63,8 @@ private fun Route.registerLibraryReadRoutes(libraryQueryService: LibraryQuerySer
                     libraryQueryService
                         .listLibraries(principal = principal, serverId = serverId)
                         .bind()
-                LibraryListResponse(libraries = sections.map { it.toResponse() })
+                val serversById = libraryQueryService.loadServersById()
+                LibraryListResponse(libraries = sections.map { it.toResponse(serversById[it.serverId]) })
             }
         call.respondEither(result)
     }
@@ -70,13 +75,15 @@ private fun Route.registerLibraryReadRoutes(libraryQueryService: LibraryQuerySer
         val result =
             either {
                 val principal = call.requireMiruPrincipal().bind()
-                libraryQueryService
-                    .getLibrarySection(
-                        principal = principal,
-                        sectionId = sectionId,
-                        serverId = serverId,
-                    ).bind()
-                    .toResponse()
+                val section =
+                    libraryQueryService
+                        .getLibrarySection(
+                            principal = principal,
+                            sectionId = sectionId,
+                            serverId = serverId,
+                        ).bind()
+                val serversById = libraryQueryService.loadServersById()
+                section.toResponse(serversById[section.serverId])
             }
         call.respondEither(result)
     }
@@ -92,16 +99,18 @@ private fun Route.registerLibraryReadRoutes(libraryQueryService: LibraryQuerySer
                 val limit =
                     parseOptionalIntParam(query, "limit", LibraryQueryService.DEFAULT_STATS_LIMIT).bind()
                 val serverId = query["serverId"]
-                libraryQueryService
-                    .getLibraryStats(
-                        principal = principal,
-                        sectionId = sectionId,
-                        serverId = serverId,
-                        fromMs = fromMs,
-                        toMs = toMs,
-                        limit = limit,
-                    ).bind()
-                    .toResponse()
+                val stats =
+                    libraryQueryService
+                        .getLibraryStats(
+                            principal = principal,
+                            sectionId = sectionId,
+                            serverId = serverId,
+                            fromMs = fromMs,
+                            toMs = toMs,
+                            limit = limit,
+                        ).bind()
+                val serversById = libraryQueryService.loadServersById()
+                stats.toResponse(serversById[stats.section.serverId])
             }
         call.respondEither(result)
     }
@@ -115,14 +124,16 @@ private fun Route.registerLibraryReadRoutes(libraryQueryService: LibraryQuerySer
                 val limit =
                     parseOptionalIntParam(query, "limit", LibraryQueryService.DEFAULT_RECENT_LIMIT).bind()
                 val serverId = query["serverId"]
-                libraryQueryService
-                    .getRecentlyAdded(
-                        principal = principal,
-                        sectionId = sectionId,
-                        serverId = serverId,
-                        limit = limit,
-                    ).bind()
-                    .toResponse()
+                val recent =
+                    libraryQueryService
+                        .getRecentlyAdded(
+                            principal = principal,
+                            sectionId = sectionId,
+                            serverId = serverId,
+                            limit = limit,
+                        ).bind()
+                val serversById = libraryQueryService.loadServersById()
+                recent.toResponse(serversById[recent.section.serverId])
             }
         call.respondEither(result)
     }
@@ -145,16 +156,18 @@ private fun Route.registerLibraryAdminRoutes(libraryQueryService: LibraryQuerySe
                     parseOptionalIntParam(query, "limit", LibraryQueryService.DEFAULT_STALE_LIMIT).bind()
                 val sort = query["sort"]
                 val serverId = query["serverId"]
-                libraryQueryService
-                    .getStaleMedia(
-                        principal = principal,
-                        sectionId = sectionId,
-                        serverId = serverId,
-                        unwatchedDays = unwatchedDays,
-                        sortRaw = sort,
-                        limit = limit,
-                    ).bind()
-                    .toResponse()
+                val stale =
+                    libraryQueryService
+                        .getStaleMedia(
+                            principal = principal,
+                            sectionId = sectionId,
+                            serverId = serverId,
+                            unwatchedDays = unwatchedDays,
+                            sortRaw = sort,
+                            limit = limit,
+                        ).bind()
+                val serversById = libraryQueryService.loadServersById()
+                stale.toResponse(serversById[stale.section.serverId])
             }
         call.respondEither(result)
     }

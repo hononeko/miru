@@ -70,6 +70,7 @@ data class ReconcileHealthSignal(
     val reachable: Boolean,
     val errorMessage: String? = null,
     val timestampMs: Long,
+    val serverId: String? = null,
 )
 
 internal fun ActiveSessionRecord.toWebhookSessionPayload(): WebhookSessionPayload =

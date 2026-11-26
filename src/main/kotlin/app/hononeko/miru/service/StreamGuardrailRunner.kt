@@ -1,5 +1,6 @@
 package app.hononeko.miru.service
 
+import app.hononeko.miru.persistence.model.ActiveSessionRecord
 import app.hononeko.miru.session.SessionEvent
 import app.hononeko.miru.session.SessionStateEngine
 import kotlinx.coroutines.CancellationException
@@ -7,17 +8,30 @@ import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.launch
 import org.slf4j.LoggerFactory
 
 /**
- * Listens to [SessionStateEngine.sessionEvents] and evaluates stream guardrails on live session updates.
+ * Listens to live [SessionEvent] updates and evaluates stream guardrails on live session updates.
  */
 class StreamGuardrailRunner(
-    private val sessionEngine: SessionStateEngine,
+    private val sessionEvents: SharedFlow<SessionEvent>,
+    private val currentSessionsProvider: suspend () -> List<ActiveSessionRecord>,
     private val streamControlService: StreamControlService,
     private val scope: CoroutineScope,
 ) {
+    constructor(
+        sessionEngine: SessionStateEngine,
+        streamControlService: StreamControlService,
+        scope: CoroutineScope,
+    ) : this(
+        sessionEvents = sessionEngine.sessionEvents,
+        currentSessionsProvider = { sessionEngine.currentSessions() },
+        streamControlService = streamControlService,
+        scope = scope,
+    )
+
     private val logger = LoggerFactory.getLogger(StreamGuardrailRunner::class.java)
     private val lock = Any()
     private var job: Job? = null
@@ -34,12 +48,12 @@ class StreamGuardrailRunner(
     }
 
     private suspend fun run() {
-        sessionEngine.sessionEvents.collect { event ->
+        sessionEvents.collect { event ->
             try {
                 when (event) {
                     is SessionEvent.SessionStarted,
                     is SessionEvent.SessionUpdated,
-                    -> streamControlService.evaluateActiveSessions(sessionEngine.currentSessions())
+                    -> streamControlService.evaluateActiveSessions(currentSessionsProvider())
 
                     is SessionEvent.SessionStopped -> streamControlService.onSessionStopped(event.key)
                 }

@@ -11,12 +11,16 @@
 	import Badge from '$components/ui/Badge.svelte';
 	import Button from '$components/ui/Button.svelte';
 	import LibrarySectionDetail from '$components/miru/LibrarySectionDetail.svelte';
+	import ServerBadge from '$components/miru/ServerBadge.svelte';
+	import ServerFilterBar from '$components/miru/ServerFilterBar.svelte';
 	import UnlinkedUserEmptyState from '$components/miru/UnlinkedUserEmptyState.svelte';
 	import { authStore } from '$stores/auth.svelte';
+	import { serversStore } from '$stores/servers.svelte';
 	import { cn, formatBytes, formatDurationSec, formatRelativeTime } from '$lib/utils';
 
 	let libraries = $state<LibrarySectionResponse[]>([]);
-	let selectedId = $state<string | null>(null);
+	let selectedServerId = $state<string | null>(null);
+	let selectedKey = $state<string | null>(null);
 	let stats = $state<LibraryStatsResponse | null>(null);
 	let recentItems = $state<RecentMediaItemResponse[]>([]);
 	let loadingList = $state(true);
@@ -26,6 +30,14 @@
 	let error = $state<string | null>(null);
 	let plexStatus = $state<PlexConnectionStatus | null>(null);
 
+	function libraryKey(lib: Pick<LibrarySectionResponse, 'serverId' | 'sectionKey'>): string {
+		return `${lib.serverId}:${lib.sectionKey}`;
+	}
+
+	const selectedLibrary = $derived(
+		selectedKey ? libraries.find((lib) => libraryKey(lib) === selectedKey) ?? null : null
+	);
+
 	$effect(() => {
 		if (authStore.isAdmin) {
 			void api.GET('/api/v1/admin/plex/status').then((res) => {
@@ -34,10 +46,10 @@
 		}
 	});
 
-	async function loadLibraries() {
+	async function loadLibraries(serverFilter: string | null = selectedServerId) {
 		if (authStore.isUnlinkedUser) {
 			libraries = [];
-			selectedId = null;
+			selectedKey = null;
 			stats = null;
 			recentItems = [];
 			error = null;
@@ -47,14 +59,16 @@
 		loadingList = true;
 		error = null;
 		try {
-			const res = unwrap(await api.GET('/api/v1/libraries'));
+			const res = unwrap(
+				await api.GET('/api/v1/libraries', serverFilter ? { params: { query: { serverId: serverFilter } } } : undefined)
+			);
 			libraries = res.libraries;
 			if (res.libraries.length === 0) {
-				selectedId = null;
+				selectedKey = null;
 				stats = null;
 				recentItems = [];
-			} else if (!selectedId || !res.libraries.some((lib) => lib.id === selectedId)) {
-				selectedId = res.libraries[0].id;
+			} else if (!selectedKey || !res.libraries.some((lib) => libraryKey(lib) === selectedKey)) {
+				selectedKey = libraryKey(res.libraries[0]);
 			}
 		} catch (e) {
 			error = e instanceof MiruApiError ? e.detail : 'Failed to load library sections';
@@ -63,12 +77,25 @@
 		}
 	}
 
-	async function loadSectionDetails(id: string) {
+	async function loadSectionDetails(lib: LibrarySectionResponse) {
 		loadingSection = true;
 		try {
 			const [sRes, rRes] = await Promise.all([
-				api.GET('/api/v1/libraries/{id}/stats', { params: { path: { id } } }),
-				api.GET('/api/v1/libraries/{id}/recent', { params: { path: { id }, query: { limit: 12 } } })
+				api.GET('/api/v1/libraries/{id}/stats', {
+					params: {
+						path: { id: lib.sectionKey },
+						...(lib.serverId ? { query: { serverId: lib.serverId } } : {})
+					}
+				}),
+				api.GET('/api/v1/libraries/{id}/recent', {
+					params: {
+						path: { id: lib.sectionKey },
+						query: {
+							limit: 12,
+							...(lib.serverId ? { serverId: lib.serverId } : {})
+						}
+					}
+				})
 			]);
 			stats = unwrap(sRes);
 			recentItems = unwrap(rRes).items;
@@ -76,9 +103,9 @@
 			if (e instanceof MiruApiError && (e.status === 403 || e.status === 404)) {
 				stats = null;
 				recentItems = [];
-				selectedId = null;
+				selectedKey = null;
 				error = 'Access to this library is no longer available';
-				void loadLibraries();
+				void loadLibraries(selectedServerId);
 			} else {
 				error = e instanceof MiruApiError ? e.detail : 'Failed to load library details';
 			}
@@ -94,12 +121,17 @@
 		try {
 			const summary = unwrap(
 				await api.POST('/api/v1/libraries/sync', {
-					params: { query: { deep: true } }
+					params: {
+						query: {
+							deep: true,
+							...(selectedServerId ? { serverId: selectedServerId } : {})
+						}
+					}
 				})
 			);
 			syncNotice = `Synced ${summary.syncedSections} sections (${summary.totalItemsSynced.toLocaleString()} items)`;
-			await loadLibraries();
-			if (selectedId) await loadSectionDetails(selectedId);
+			await loadLibraries(selectedServerId);
+			if (selectedLibrary) await loadSectionDetails(selectedLibrary);
 		} catch (e) {
 			error = e instanceof MiruApiError ? e.detail : 'Library sync failed';
 		} finally {
@@ -108,12 +140,12 @@
 	}
 
 	onMount(() => {
-		void loadLibraries();
+		void loadLibraries(selectedServerId);
 	});
 
 	$effect(() => {
-		if (selectedId && !authStore.isUnlinkedUser) {
-			void loadSectionDetails(selectedId);
+		if (selectedLibrary && !authStore.isUnlinkedUser) {
+			void loadSectionDetails(selectedLibrary);
 		}
 	});
 
@@ -155,13 +187,22 @@
 		</div>
 	</div>
 
-	{#if authStore.isAdmin && plexStatus?.credentialSource === 'NOT_CONFIGURED'}
+	<ServerFilterBar
+		{selectedServerId}
+		onchange={(serverId) => {
+			selectedServerId = serverId;
+			selectedKey = null;
+			void loadLibraries(serverId);
+		}}
+	/>
+
+	{#if authStore.isAdmin && plexStatus?.credentialSource === 'NOT_CONFIGURED' && !serversStore.servers.some((s) => s.configured)}
 		<div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-cyan/40 bg-cyan-soft/50 px-4 py-3 text-xs">
 			<div class="flex items-center gap-2.5">
 				<Server class="h-4 w-4 shrink-0 text-cyan-hi" />
 				<div>
-					<p class="font-heading font-semibold text-fg-primary">No Plex server connected</p>
-					<p class="text-fg-secondary">Connect Plex via PIN OAuth in Admin before syncing library sections.</p>
+					<p class="font-heading font-semibold text-fg-primary">No media server connected</p>
+					<p class="text-fg-secondary">Connect Plex via PIN OAuth or configure Jellyfin in Admin before syncing library sections.</p>
 				</div>
 			</div>
 			<a
@@ -195,7 +236,7 @@
 	{:else if libraries.length === 0}
 		{#if authStore.isAdmin}
 			<div class="rounded-xl border border-border bg-surface p-10 text-center text-xs text-fg-muted">
-				No library sections synced yet. Trigger a sync once Plex is connected.
+				No library sections synced yet. Trigger a sync once a media server is connected.
 			</div>
 		{:else}
 			<div class="rounded-xl border border-border bg-surface p-10 text-center">
@@ -203,18 +244,19 @@
 					No libraries shared with your account
 				</h2>
 				<p class="mt-1.5 text-xs text-fg-secondary">
-					No Plex libraries are currently shared with your linked Plex user, or library sharing permissions have not synced yet.
+					No media libraries are currently shared with your linked media user, or library sharing permissions have not synced yet.
 				</p>
 			</div>
 		{/if}
 	{:else}
 		<!-- Section Selector Cards -->
 		<section class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 lg:gap-4">
-			{#each libraries as lib (lib.id)}
-				{@const selected = lib.id === selectedId}
+			{#each libraries as lib (libraryKey(lib))}
+				{@const key = libraryKey(lib)}
+				{@const selected = key === selectedKey}
 				<button
 					type="button"
-					onclick={() => (selectedId = lib.id)}
+					onclick={() => (selectedKey = key)}
 					class={cn(
 						'miru-card-hover flex flex-col gap-2 rounded-xl border p-4 text-left active:scale-[0.99] motion-reduce:active:scale-100 cursor-pointer',
 						selected
@@ -224,7 +266,16 @@
 				>
 					<div class="flex items-center justify-between gap-2">
 						<span class="font-heading text-base font-semibold text-fg-primary">{lib.title}</span>
-						<Badge tone={selected ? 'cyan' : 'neutral'} mono>{lib.sectionType.toUpperCase()}</Badge>
+						<div class="flex shrink-0 items-center gap-1.5">
+							{#if serversStore.hasMultipleServers}
+								<ServerBadge
+									serverId={lib.serverId}
+									serverType={lib.serverType}
+									serverName={lib.serverName}
+								/>
+							{/if}
+							<Badge tone={selected ? 'cyan' : 'neutral'} mono>{lib.sectionType.toUpperCase()}</Badge>
+						</div>
 					</div>
 					<div class="flex items-baseline justify-between gap-2">
 						<span class="font-mono text-2xl font-bold text-fg-primary tabular-nums">

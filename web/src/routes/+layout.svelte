@@ -8,6 +8,7 @@
 	import MiruLogo from '$components/layout/MiruLogo.svelte';
 	import { authStore } from '$stores/auth.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
+	import { serversStore } from '$stores/servers.svelte';
 	import { streamsStore } from '$stores/streams.svelte';
 
 	type Props = {
@@ -40,6 +41,7 @@
 		const pathname = page.url.pathname;
 
 		if (authStore.setupRequired && authStore.localEnabled) {
+			serversStore.reset();
 			streamsStore.disconnect();
 			if (pathname !== '/setup') {
 				void goto('/setup');
@@ -49,6 +51,7 @@
 
 		if (authStore.authMode !== 'none' && !authStore.authenticated) {
 			preferencesStore.clearLoadedAccount();
+			serversStore.reset();
 			streamsStore.disconnect();
 			if (pathname !== '/login') {
 				void goto('/login');
@@ -59,6 +62,9 @@
 		const accountKey = authStore.principal?.accountId ?? authStore.authMode;
 		if (preferencesStore.loadedAccountId !== accountKey) {
 			void preferencesStore.loadForAccount(accountKey);
+		}
+		if (!authStore.isUnlinkedUser && !serversStore.loaded) {
+			void serversStore.refresh();
 		}
 
 		if (pathname === '/login' || pathname === '/setup') {

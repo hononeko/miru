@@ -6,16 +6,20 @@
 	import type { UserSummaryDto } from '$api/types';
 	import Badge from '$components/ui/Badge.svelte';
 	import ProxiedImage from '$components/miru/ProxiedImage.svelte';
+	import ServerBadge from '$components/miru/ServerBadge.svelte';
+	import ServerFilterBar from '$components/miru/ServerFilterBar.svelte';
 	import { authStore } from '$stores/auth.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
+	import { serversStore } from '$stores/servers.svelte';
 	import { cn, formatDurationSec, formatRelativeTime } from '$lib/utils';
 
 	let users = $state<UserSummaryDto[]>([]);
+	let selectedServerId = $state<string | null>(null);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let query = $state('');
 
-	async function loadUsers() {
+	async function loadUsers(serverId: string | null = selectedServerId) {
 		if (!authStore.isAdmin) {
 			loading = false;
 			return;
@@ -23,7 +27,9 @@
 		loading = true;
 		error = null;
 		try {
-			const res = unwrap(await api.GET('/api/v1/users'));
+			const res = unwrap(
+				await api.GET('/api/v1/users', serverId ? { params: { query: { serverId } } } : undefined)
+			);
 			users = res.users;
 		} catch (e) {
 			error = e instanceof MiruApiError ? e.detail : 'Failed to load users';
@@ -37,7 +43,7 @@
 			void goto('/');
 			return;
 		}
-		void loadUsers();
+		void loadUsers(selectedServerId);
 	});
 
 	const filteredUsers = $derived.by(() => {
@@ -70,7 +76,7 @@
 				Users
 			</h1>
 			<p class="mt-0.5 text-xs text-fg-secondary sm:text-sm">
-				{users.length} media server users · {streamingCount} streaming now · {totalPlays.toLocaleString()} lifetime plays
+				{users.length} media users · {streamingCount} streaming now · {totalPlays.toLocaleString()} lifetime plays
 			</p>
 		</div>
 
@@ -86,13 +92,21 @@
 		</div>
 	</div>
 
+	<ServerFilterBar
+		{selectedServerId}
+		onchange={(serverId) => {
+			selectedServerId = serverId;
+			void loadUsers(serverId);
+		}}
+	/>
+
 	{#if error}
 		<div class="rounded-xl border border-danger/50 bg-danger-soft px-4 py-3 text-xs text-danger">
 			{error}
 		</div>
 	{:else if loading}
 		<div class="rounded-xl border border-border bg-surface p-10 text-center font-mono text-xs text-fg-muted">
-			Loading media server users…
+			Loading media users…
 		</div>
 	{:else if filteredUsers.length === 0}
 		<div class="rounded-xl border border-border bg-surface p-10 text-center text-xs text-fg-muted">
@@ -131,6 +145,13 @@
 							<Badge tone={user.isAdmin ? 'primary' : 'neutral'}>{user.isAdmin ? 'ADMIN' : 'USER'}</Badge>
 							{#if user.isStreaming}
 								<Badge tone="direct-play" dot pulse>LIVE · {user.activeStreamCount}</Badge>
+							{/if}
+							{#if serversStore.hasMultipleServers}
+								<ServerBadge
+									serverId={user.serverId}
+									serverType={user.serverType}
+									serverName={user.serverName}
+								/>
 							{/if}
 						</div>
 					</div>

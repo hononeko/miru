@@ -118,11 +118,18 @@
 	const startStaleRequest = latestRequest();
 	let staleReportSection: string | null = null;
 
-	async function loadStaleMedia(sectionKey: string, days: number, sort: StaleMediaSort) {
+	async function loadStaleMedia(
+		sectionKey: string,
+		serverId: string | null | undefined,
+		days: number,
+		sort: StaleMediaSort
+	) {
 		if (!sectionKey) return;
+		const normalizedServerId = serverId?.trim() || undefined;
+		const reportScope = `${normalizedServerId ?? ''}:${sectionKey}`;
 		const isLatest = startStaleRequest();
-		if (staleReportSection !== sectionKey) {
-			staleReportSection = sectionKey;
+		if (staleReportSection !== reportScope) {
+			staleReportSection = reportScope;
 			staleReport = null;
 		}
 		loadingStale = true;
@@ -133,6 +140,7 @@
 					params: {
 						path: { id: sectionKey },
 						query: {
+							...(normalizedServerId ? { serverId: normalizedServerId } : {}),
 							unwatchedDays: days,
 							sort,
 							limit: 100
@@ -151,10 +159,11 @@
 
 	$effect(() => {
 		const sectionKey = stats.section.sectionKey;
+		const serverId = stats.section.serverId;
 		const days = unwatchedDays;
 		const sort = staleSort;
 		if (showHygiene && sectionKey) {
-			void loadStaleMedia(sectionKey, days, sort);
+			void loadStaleMedia(sectionKey, serverId, days, sort);
 		}
 	});
 </script>
@@ -311,11 +320,15 @@
 				{#each recentItems as item (item.ratingKey)}
 					<button
 						type="button"
-						onclick={() => void mediaDetailsModal.open(item.ratingKey)}
+						onclick={() => {
+							const sid = item.serverId ?? stats.section.serverId;
+							void mediaDetailsModal.open(item.ratingKey, sid ? { serverId: sid } : undefined);
+						}}
 						class="group flex cursor-pointer flex-col gap-1.5 text-left"
 					>
 						<ProxiedImage
 							src={item.thumbUrl}
+							serverId={item.serverId ?? stats.section.serverId}
 							alt={item.title}
 							fallbackLabel={item.title}
 							variant="poster"
@@ -444,11 +457,15 @@
 					{#each staleReport.items as item (item.ratingKey)}
 						<button
 							type="button"
-							onclick={() => void mediaDetailsModal.open(item.ratingKey)}
+							onclick={() => {
+								const sid = item.serverId ?? stats.section.serverId;
+								void mediaDetailsModal.open(item.ratingKey, sid ? { serverId: sid } : undefined);
+							}}
 							class="group flex w-full cursor-pointer items-center gap-3 rounded-xl border border-border bg-elevated/70 p-3 text-left transition-colors hover:border-cyan/60 hover:bg-elevated"
 						>
 							<ProxiedImage
 								src={item.thumbUrl}
+								serverId={item.serverId ?? stats.section.serverId}
 								alt={item.title}
 								fallbackLabel={item.title}
 								variant="poster"

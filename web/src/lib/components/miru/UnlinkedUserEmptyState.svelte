@@ -17,10 +17,10 @@
 	</div>
 	<div class="flex max-w-md flex-col gap-1">
 		<h2 class="font-heading text-base font-semibold text-fg-primary">
-			No Plex user linked to your account
+			No media user linked to your account
 		</h2>
 		<p class="text-xs text-fg-secondary">
-			An administrator must link your Plex media user in Admin &amp; Access Control before your {context} can appear here.
+			An administrator must link your media user in Admin &amp; Access Control before your {context} can appear here.
 		</p>
 	</div>
 </div>

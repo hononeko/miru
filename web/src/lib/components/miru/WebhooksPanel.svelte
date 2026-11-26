@@ -57,12 +57,12 @@
 		{
 			key: 'server.unreachable',
 			label: 'Server Unreachable',
-			description: 'Plex fails consecutive health/reconciliation checks'
+			description: 'A configured media server fails consecutive health/reconciliation checks'
 		},
 		{
 			key: 'server.recovered',
 			label: 'Server Recovered',
-			description: 'Plex reachability returns after an outage'
+			description: 'Media server reachability returns after an outage'
 		}
 	];
 
@@ -389,7 +389,7 @@
 					Outbound Webhooks &amp; Delivery Log
 				</h2>
 				<p class="mt-0.5 text-[11px] text-fg-muted">
-					Push signed JSON events for transcodes, stream caps, buffering spikes, terminations, and Plex outages
+					Push signed JSON events for transcodes, stream caps, buffering spikes, terminations, and media server outages
 				</p>
 			</div>
 		</div>

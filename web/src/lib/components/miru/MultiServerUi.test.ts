@@ -155,6 +155,42 @@ describe('Multi-server UI components', () => {
 		expect(dotStatus(/Old Plex/)).toBe('not-connected');
 	});
 
+	it('renders Disconnected server badge and keeps filter bar when 1 active + 1 disconnected server remain', () => {
+		serversStore.servers = [
+			{
+				id: 'srv-plex',
+				name: 'Home Plex',
+				serverType: 'plex',
+				configured: true,
+				reachable: true,
+				websocketEnabled: true,
+				websocketState: 'CONNECTED'
+			},
+			{
+				id: 'srv-jf-disc',
+				name: 'Studio Jellyfin',
+				serverType: 'jellyfin',
+				configured: false,
+				reachable: false,
+				websocketEnabled: false,
+				websocketState: 'DISCONNECTED'
+			}
+		];
+		serversStore.loaded = true;
+
+		expect(serversStore.hasMultipleServers).toBe(false);
+		expect(serversStore.isDisconnected('srv-jf-disc')).toBe(true);
+
+		render(ServerBadge, {
+			props: { serverId: 'srv-jf-disc', serverType: 'jellyfin', serverName: 'Studio Jellyfin' }
+		});
+		expect(screen.getByText('JELLYFIN · Studio Jellyfin · Disconnected')).toBeTruthy();
+
+		render(ServerFilterBar, { props: { selectedServerId: null, onchange: vi.fn() } });
+		expect(screen.getByRole('group', { name: 'Filter by media server' })).toBeTruthy();
+		expect(screen.getByRole('button', { name: /Studio Jellyfin \(Disconnected\)/ })).toBeTruthy();
+	});
+
 	it('shows compact server badge on StreamCard and passes serverId to mediaDetailsModal', async () => {
 		makeTwoServers();
 		const openSpy = vi.spyOn(mediaDetailsModal, 'open').mockResolvedValue(undefined);

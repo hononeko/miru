@@ -343,29 +343,60 @@ class JellyfinQuickConnectClient(
         }
     }
 
+    suspend fun deleteApiKey(
+        baseUrl: String,
+        workingApiKey: String,
+        keyToDelete: String,
+        deviceId: String,
+    ): Either<MiruError, Unit> =
+        either {
+            val normalizedBaseUrl = baseUrl.trim().trimEnd('/')
+            val encodedKey = URLEncoder.encode(keyToDelete, StandardCharsets.UTF_8).replace("+", "%20")
+            val secretsToRedact = listOf(workingApiKey, keyToDelete, encodedKey)
+            val response =
+                try {
+                    httpClient.delete("$normalizedBaseUrl/Auth/Keys/$encodedKey") {
+                        header(HttpHeaders.Authorization, buildMediaBrowserAuthHeader(workingApiKey, deviceId, appVersion))
+                        header(HttpHeaders.Accept, ContentType.Application.Json.toString())
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: ResponseException) {
+                    if (e.response.status == HttpStatusCode.NotFound) {
+                        return@either
+                    }
+                    raise(mapErrorStatus(e.response.status, "revoke Jellyfin API key"))
+                } catch (e: Exception) {
+                    raise(
+                        MiruError.UpstreamUnavailable(
+                            provider = JellyfinMediaServerAdapter.PROVIDER_NAME,
+                            message = "Failed to revoke Jellyfin API key: ${sanitizeMessage(e.message, secretsToRedact)}",
+                            cause = e,
+                        ),
+                    )
+                }
+
+            if (!response.status.isSuccess() && response.status != HttpStatusCode.NotFound) {
+                raise(mapErrorStatus(response.status, "revoke Jellyfin API key"))
+            }
+        }
+
     suspend fun deleteApiKeyBestEffort(
         baseUrl: String,
         workingApiKey: String,
         keyToDelete: String,
         deviceId: String,
     ) {
-        val normalizedBaseUrl = baseUrl.trim().trimEnd('/')
-        val encodedKey = URLEncoder.encode(keyToDelete, StandardCharsets.UTF_8).replace("+", "%20")
-        try {
-            val response =
-                httpClient.delete("$normalizedBaseUrl/Auth/Keys/$encodedKey") {
-                    header(HttpHeaders.Authorization, buildMediaBrowserAuthHeader(workingApiKey, deviceId, appVersion))
-                    header(HttpHeaders.Accept, ContentType.Application.Json.toString())
-                }
-            if (!response.status.isSuccess()) {
-                quickConnectLogger.debug("Best-effort Jellyfin old API key deletion returned HTTP {}", response.status.value)
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
+        deleteApiKey(
+            baseUrl = baseUrl,
+            workingApiKey = workingApiKey,
+            keyToDelete = keyToDelete,
+            deviceId = deviceId,
+        ).onLeft { err ->
+            val encodedKey = URLEncoder.encode(keyToDelete, StandardCharsets.UTF_8).replace("+", "%20")
             quickConnectLogger.debug(
-                "Best-effort Jellyfin old API key deletion failed: {}",
-                sanitizeMessage(e.message, listOf(workingApiKey, keyToDelete)),
+                "Best-effort Jellyfin API key deletion failed: {}",
+                sanitizeMessage(err.message, listOf(workingApiKey, keyToDelete, encodedKey)),
             )
         }
     }

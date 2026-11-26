@@ -187,6 +187,58 @@ class SessionStateEngine(
         return result
     }
 
+    /**
+     * Closes all live and persisted active sessions for [serverId] using normal stop semantics
+     * (writing plays meeting [SessionConfig.minPlayDurationSeconds] to history, deleting rows from
+     * `active_sessions`, and emitting [SessionEvent.SessionStopped] events).
+     */
+    suspend fun closeAllSessionsForServer(serverId: String): Either<MiruError, List<SessionEvent.SessionStopped>> {
+        val result =
+            mutex.withLock {
+                either {
+                    val nowMs = clock()
+                    val persisted = activeSessionRepository.findByServer(serverId).bind()
+                    val targets = linkedMapOf<ActiveSessionKey, Pair<ActiveSessionRecord, Long>>()
+                    for (persistedRecord in persisted) {
+                        targets[persistedRecord.key] =
+                            persistedRecord to (persistedRecord.pausedDurationSec * MILLIS_PER_SECOND)
+                    }
+                    for ((key, entry) in tracked) {
+                        if (key.serverId == serverId) {
+                            targets[key] = entry.record to accumulatePauseDurationMs(entry, nowMs)
+                        }
+                    }
+
+                    val stoppedEvents = mutableListOf<SessionEvent.SessionStopped>()
+                    for ((key, target) in targets) {
+                        val (record, pausedDurationMs) = target
+                        val peakTech = tracked[key]?.peakStreamTech ?: record.streamTech
+                        stoppedEvents +=
+                            finalizeSession(
+                                serverId = serverId,
+                                record = record,
+                                pausedDurationMs = pausedDurationMs,
+                                stoppedAtMs = nowMs,
+                                reason = StopReason.EXPLICIT_STOP,
+                                eventTimestampMs = nowMs,
+                                peakStreamTech = peakTech,
+                            )
+                    }
+                    if (tracked.keys.none { it.serverId == serverId }) {
+                        recovered = false
+                    }
+                    stoppedEvents.toList()
+                }
+            }
+
+        result.onRight { events ->
+            for (event in events) {
+                _sessionEvents.emit(event)
+            }
+        }
+        return result
+    }
+
     private suspend fun Raise<MiruError>.ensureRecoveredLocked(): String {
         val serverId = serverIdProvider().bind()
         if (!recovered) {

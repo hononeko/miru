@@ -273,6 +273,19 @@ class MiruMetricsService(
         }
     }
 
+    suspend fun onServerDisconnected() {
+        refreshActiveSessions()
+        refreshWebsocketState(websocketConnected.value)
+    }
+
+    suspend fun onServerRemoved(serverId: String) {
+        stateMutex.withLock {
+            serverNameCache.remove(serverId.trim())
+        }
+        refreshActiveSessions()
+        refreshLibraryStats()
+    }
+
     suspend fun recordWebsocketReconnect() {
         stateMutex.withLock {
             val server = resolveActiveWebsocketServerLabelLocked()

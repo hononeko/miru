@@ -120,7 +120,7 @@
 				<h1 class="font-display text-2xl font-bold tracking-wide text-fg-primary sm:text-3xl">
 					{stats.section.title}
 				</h1>
-				{#if serversStore.hasMultipleServers}
+				{#if serversStore.hasMultipleServers || serversStore.isDisconnected(stats.section.serverId)}
 					<ServerBadge
 						serverId={stats.section.serverId}
 						serverType={stats.section.serverType}

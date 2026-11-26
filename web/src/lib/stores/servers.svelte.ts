@@ -26,6 +26,11 @@ export class ServersStore {
 		return this.servers.find((server) => server.id === id) ?? null;
 	}
 
+	isDisconnected(serverId: string | null | undefined): boolean {
+		const srv = this.byId(serverId);
+		return srv !== null && !srv.configured;
+	}
+
 	async refresh(force = false): Promise<void> {
 		if (!force && this.loaded) return;
 		if (this.inflight) return this.inflight;

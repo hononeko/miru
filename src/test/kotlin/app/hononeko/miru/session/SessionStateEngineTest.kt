@@ -52,6 +52,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.yield
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import java.util.concurrent.atomic.AtomicInteger
@@ -1134,6 +1135,99 @@ class SessionStateEngineTest :
                     val usersAfter = env.users.findByServer(DEFAULT_SERVER_ID).shouldBeRight()
                     usersAfter.none { it.externalUserId == "1" } shouldBe true
                     env.users.findById("tautulli-owner-id").shouldBeRight().shouldNotBeNull().lastSeenAtMs shouldBe 50_000L
+                }
+            }
+        }
+
+        test("closeAllSessionsForServer writes qualifying plays to history, drops short plays, and emits SessionStopped") {
+            runTest {
+                newEnv().use { env ->
+                    env.seedServer()
+                    val engine = env.createEngine(config = SessionConfig(minPlayDurationSeconds = 60))
+                    val collectedEvents = mutableListOf<SessionEvent>()
+                    val collector = launch { engine.sessionEvents.collect { collectedEvents += it } }
+                    yield()
+
+                    // Start long play (will be 120s at disconnect) and short play (will be 20s at disconnect)
+                    env.nowMs = 10_000L
+                    engine
+                        .reconcile(
+                            listOf(sampleSnapshot(sessionKey = "long-1", ratingKey = "mov-long", viewOffsetMs = 100_000L)),
+                            ReconcileTrigger.NOTIFICATION,
+                        ).shouldBeRight()
+                    env.nowMs = 110_000L
+                    engine
+                        .reconcile(
+                            listOf(
+                                sampleSnapshot(sessionKey = "long-1", ratingKey = "mov-long", viewOffsetMs = 200_000L),
+                                sampleSnapshot(sessionKey = "short-1", ratingKey = "mov-short", viewOffsetMs = 20_000L),
+                            ),
+                            ReconcileTrigger.NOTIFICATION,
+                        ).shouldBeRight()
+
+                    env.nowMs = 130_000L
+                    val stopped = engine.closeAllSessionsForServer(DEFAULT_SERVER_ID).shouldBeRight()
+                    yield()
+                    collector.cancel()
+
+                    stopped shouldHaveSize 2
+                    stopped.forEach { it.reason shouldBe StopReason.EXPLICIT_STOP }
+                    val longEvent = stopped.single { it.key.ratingKey == "mov-long" }
+                    val shortEvent = stopped.single { it.key.ratingKey == "mov-short" }
+                    longEvent.historyRecord.shouldNotBeNull().watchedDurationSec shouldBe 120
+                    shortEvent.historyRecord.shouldBeNull()
+
+                    engine.currentSessions().shouldBeEmpty()
+                    env.sessions.findByServer(DEFAULT_SERVER_ID).shouldBeRight().shouldBeEmpty()
+                    env.history.query(HistoryFilter(serverId = DEFAULT_SERVER_ID)).shouldBeRight().totalCount shouldBe 1L
+                    collectedEvents.filterIsInstance<SessionEvent.SessionStopped>() shouldHaveSize 2
+                }
+            }
+        }
+
+        test("closeAllSessionsForServer also closes persisted sessions that have not yet been recovered in memory") {
+            runTest {
+                newEnv().use { env ->
+                    env.seedServer()
+                    env.users.upsert(
+                        UserRecord(
+                            id = "u-unrec",
+                            serverId = DEFAULT_SERVER_ID,
+                            externalUserId = "ext-u",
+                            username = "unrec",
+                            createdAtMs = 1_000L,
+                            updatedAtMs = 1_000L,
+                        ),
+                    ).shouldBeRight()
+                    env.sessions
+                        .upsert(
+                            ActiveSessionRecord(
+                                serverId = DEFAULT_SERVER_ID,
+                                sessionKey = "persisted-only",
+                                sessionId = "sess-persisted",
+                                userId = "u-unrec",
+                                media =
+                                    MediaMetadataRecord(
+                                        ratingKey = "mov-p",
+                                        mediaType = "movie",
+                                        title = "Persisted Film",
+                                        durationMs = 6_000_000L,
+                                    ),
+                                viewOffsetMs = 600_000L,
+                                state = "playing",
+                                streamTech = StreamTechRecord(streamDecision = "direct_play"),
+                                player = PlayerRecord(playerName = "Apple TV"),
+                                startedAtMs = 1_000L,
+                                lastSeenAtMs = 50_000L,
+                            ),
+                        ).shouldBeRight()
+
+                    val freshEngine = env.createEngine(config = SessionConfig(minPlayDurationSeconds = 30))
+                    env.nowMs = 121_000L
+                    val stopped = freshEngine.closeAllSessionsForServer(DEFAULT_SERVER_ID).shouldBeRight()
+                    stopped shouldHaveSize 1
+                    stopped.single().historyRecord.shouldNotBeNull().watchedDurationSec shouldBe 120
+                    env.sessions.findByServer(DEFAULT_SERVER_ID).shouldBeRight().shouldBeEmpty()
                 }
             }
         }

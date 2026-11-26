@@ -21,12 +21,15 @@
 	const resolvedServer = $derived(serversStore.byId(serverId));
 	const resolvedType = $derived((serverType ?? resolvedServer?.serverType ?? '').trim().toLowerCase());
 	const resolvedName = $derived((serverName ?? resolvedServer?.name ?? '').trim());
+	const isDisconnected = $derived(resolvedServer !== null && !resolvedServer.configured);
 
 	const typeLabel = $derived(resolvedType ? resolvedType.toUpperCase() : 'MEDIA');
-	const badgeLabel = $derived(
-		resolvedName && !compact ? `${typeLabel} · ${resolvedName}` : typeLabel
-	);
+	const badgeLabel = $derived.by(() => {
+		const base = resolvedName && !compact ? `${typeLabel} · ${resolvedName}` : typeLabel;
+		return isDisconnected ? `${base} · Disconnected` : base;
+	});
 	const tone = $derived.by(() => {
+		if (isDisconnected) return 'neutral' as const;
 		if (resolvedType === 'jellyfin') return 'cyan' as const;
 		if (resolvedType === 'plex') return 'primary' as const;
 		return 'neutral' as const;

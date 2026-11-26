@@ -583,7 +583,9 @@ describe('Admin console Jellyfin Quick Connect wizard', () => {
 					reachable: options.jellyfinStatus.reachable,
 					websocketEnabled: true,
 					websocketState: options.jellyfinStatus.configured ? 'CONNECTED' : 'DISCONNECTED',
-					statusMessage: options.jellyfinStatus.statusMessage ?? null
+					statusMessage: options.jellyfinStatus.statusMessage ?? null,
+					canDisconnect: options.jellyfinStatus.configured && options.jellyfinStatus.credentialSource !== 'ENV_OVERRIDE',
+					canRemove: false
 				}
 			];
 
@@ -656,7 +658,9 @@ describe('Admin console Jellyfin Quick Connect wizard', () => {
 						reachable: status.reachable,
 						websocketEnabled: true,
 						websocketState: 'CONNECTED',
-						statusMessage: status.statusMessage ?? null
+						statusMessage: status.statusMessage ?? null,
+						canDisconnect: status.configured && status.credentialSource !== 'ENV_OVERRIDE',
+						canRemove: false
 					}
 				];
 			}
@@ -963,6 +967,253 @@ describe('Admin console Jellyfin Quick Connect wizard', () => {
 			expect(screen.getByRole('button', { name: /Copy Code/ })).toBeTruthy();
 			expect(screen.queryByRole('button', { name: /Code Copied/ })).toBeNull();
 			expect(screen.getByRole('link', { name: /Open Jellyfin Quick Connect/ }).getAttribute('href')).toBe(quickConnectUrl);
+		});
+	});
+});
+
+describe('Admin console Server Disconnect & Remove flows', () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+		cleanup();
+		authStore.principal = null;
+		serversStore.reset();
+	});
+
+	function setupMultiServerAdminMocks(initialServers: AdminServerStatusDto[]) {
+		authStore.principal = {
+			accountId: 'acc-1',
+			username: 'admin',
+			email: null,
+			role: 'ADMIN',
+			linkedMediaUserIds: [],
+			authSource: 'SESSION_COOKIE',
+			authProvider: 'LOCAL',
+			avatarUrl: null
+		};
+		serversStore.reset();
+
+		let serversState = [...initialServers];
+
+		vi.spyOn(api, 'GET').mockImplementation((async (url: string) => {
+			if (url === '/api/v1/admin/accounts') {
+				return { data: { accounts: makeAccounts(), emailLinkingEnabled: false }, response: new Response(null, { status: 200 }) };
+			}
+			if (url === '/api/v1/admin/api-keys') return { data: { apiKeys: [] }, response: new Response(null, { status: 200 }) };
+			if (url === '/api/v1/users') return { data: { users: [] }, response: new Response(null, { status: 200 }) };
+			if (url === '/healthz') return { data: { status: 'ok', service: 'miru', version: '1.2.3' }, response: new Response(null, { status: 200 }) };
+			if (url === '/readyz') return { data: { status: 'ready', checks: {} }, response: new Response(null, { status: 200 }) };
+			if (url === '/api/v1/admin/plex/status') {
+				return {
+					data: { configured: true, credentialSource: 'ENV_OVERRIDE', encryptionKeyConfigured: true, reachable: true },
+					response: new Response(null, { status: 200 })
+				};
+			}
+			if (url === '/api/v1/admin/jellyfin/status') {
+				const jf = serversState.find((s) => s.serverType === 'jellyfin');
+				return {
+					data: {
+						configured: jf?.configured ?? false,
+						credentialSource: jf?.credentialSource ?? 'NOT_CONFIGURED',
+						encryptionKeyConfigured: true,
+						reachable: jf?.reachable ?? false
+					},
+					response: new Response(null, { status: 200 })
+				};
+			}
+			if (url === '/api/v1/admin/servers') return { data: { servers: serversState }, response: new Response(null, { status: 200 }) };
+			if (url === '/api/v1/servers') {
+				return {
+					data: {
+						servers: serversState
+							.filter((s) => s.id)
+							.map((s) => ({
+								id: s.id!,
+								name: s.name,
+								serverType: s.serverType,
+								configured: s.configured,
+								reachable: s.reachable,
+								websocketEnabled: s.websocketEnabled,
+								websocketState: s.websocketState
+							}))
+					},
+					response: new Response(null, { status: 200 })
+				};
+			}
+			if (url === '/api/v1/streams') {
+				return {
+					data: { streams: [], totalCount: 0, totalBandwidthKbps: 0, lanBandwidthKbps: 0, wanBandwidthKbps: 0 },
+					response: new Response(null, { status: 200 })
+				};
+			}
+			if (url === '/api/v1/admin/guardrails') return { data: { rules: makeRules() }, response: new Response(null, { status: 200 }) };
+			if (url === '/api/v1/admin/guardrails/audit') {
+				return { data: { items: [], totalCount: 0, limit: 20, offset: 0 }, response: new Response(null, { status: 200 }) };
+			}
+			if (url === '/api/v1/admin/webhooks') {
+				return { data: { targets: [], encryptionKeyConfigured: true }, response: new Response(null, { status: 200 }) };
+			}
+			if (url === '/api/v1/admin/webhooks/deliveries') {
+				return { data: { items: [], totalCount: 0, limit: 20, offset: 0 }, response: new Response(null, { status: 200 }) };
+			}
+			return { data: {}, response: new Response(null, { status: 200 }) };
+		}) as never);
+
+		return {
+			setServers(next: AdminServerStatusDto[]) {
+				serversState = next;
+			}
+		};
+	}
+
+	it('disconnects a UI-configured server keeping history, shows revocation notice, and removes it only after typing exact name', async () => {
+		const initial: AdminServerStatusDto[] = [
+			{
+				id: 'srv-plex-env',
+				name: 'Env Plex',
+				serverType: 'plex',
+				configured: true,
+				credentialSource: 'ENV_OVERRIDE',
+				machineId: 'plex-mid',
+				baseUrl: 'http://plex.local:32400',
+				reachable: true,
+				websocketEnabled: true,
+				websocketState: 'CONNECTED',
+				canDisconnect: false,
+				canRemove: false,
+				dataSummary: { plays: 10, users: 2, libraries: 2 }
+			},
+			{
+				id: 'srv-jf-ui',
+				name: 'Studio Jellyfin',
+				serverType: 'jellyfin',
+				configured: true,
+				credentialSource: 'STORED_ENCRYPTED',
+				machineId: 'jf-mid',
+				baseUrl: 'http://jf.local:8096',
+				reachable: true,
+				websocketEnabled: true,
+				websocketState: 'CONNECTED',
+				canDisconnect: true,
+				canRemove: false,
+				dataSummary: { plays: 42, users: 3, libraries: 2 }
+			}
+		];
+
+		const state = setupMultiServerAdminMocks(initial);
+		const postSpy = vi.spyOn(api, 'POST').mockImplementation((async (url: string) => {
+			if (url === '/api/v1/admin/servers/{id}/disconnect') {
+				state.setServers([
+					initial[0],
+					{
+						...initial[1],
+						configured: false,
+						credentialSource: 'NOT_CONFIGURED',
+						reachable: false,
+						websocketEnabled: false,
+						websocketState: 'DISCONNECTED',
+						canDisconnect: false,
+						canRemove: true
+					}
+				]);
+				return {
+					data: {
+						serverId: 'srv-jf-ui',
+						serverName: 'Studio Jellyfin',
+						serverType: 'jellyfin',
+						disconnected: true,
+						closedSessions: 1,
+						credentialRevoked: false,
+						revocationNotice:
+							'Disconnected locally, but could not revoke the API key on Jellyfin. Delete the "Miru" key manually under Jellyfin Dashboard -> API Keys.'
+					},
+					response: new Response(null, { status: 200 })
+				};
+			}
+			return { data: {}, response: new Response(null, { status: 200 }) };
+		}) as never);
+
+		const deleteSpy = vi.spyOn(api, 'DELETE').mockImplementation((async (url: string) => {
+			if (url === '/api/v1/admin/servers/{id}') {
+				state.setServers([initial[0]]);
+				return {
+					data: {
+						serverId: 'srv-jf-ui',
+						serverName: 'Studio Jellyfin',
+						serverType: 'jellyfin',
+						removed: true,
+						deletedPlays: 42,
+						deletedUsers: 3,
+						deletedLibraries: 2
+					},
+					response: new Response(null, { status: 200 })
+				};
+			}
+			return { data: {}, response: new Response(null, { status: 200 }) };
+		}) as never);
+
+		render(AdminPage);
+
+		await waitFor(() => {
+			expect(screen.getByText('Studio Jellyfin')).toBeTruthy();
+			expect(screen.getByText('Env Plex')).toBeTruthy();
+		});
+
+		// Env-managed card shows ENV MANAGED and only 1 Disconnect button exists (for UI Jellyfin)
+		expect(screen.getAllByText('ENV MANAGED').length).toBeGreaterThanOrEqual(1);
+		const disconnectBtns = screen.getAllByRole('button', { name: 'Disconnect' });
+		expect(disconnectBtns).toHaveLength(1);
+		expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
+
+		// 1. Open Disconnect confirmation sheet
+		await fireEvent.click(disconnectBtns[0]);
+		await waitFor(() => {
+			expect(screen.getByRole('heading', { name: 'Disconnect · Studio Jellyfin' })).toBeTruthy();
+			expect(screen.getByText(/Playback history, users, and libraries are kept/i)).toBeTruthy();
+		});
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Disconnect Server' }));
+
+		await waitFor(() => {
+			expect(postSpy).toHaveBeenCalledWith('/api/v1/admin/servers/{id}/disconnect', {
+				params: { path: { id: 'srv-jf-ui' } }
+			});
+			expect(screen.getByRole('status').textContent).toContain('Playback history, users, and libraries are kept');
+			expect(screen.getByRole('status').textContent).toContain('Jellyfin Dashboard -> API Keys');
+			expect(screen.getByText('DISCONNECTED')).toBeTruthy();
+		});
+
+		// Only 1 configured server remains in serversStore -> multi-server falls back
+		expect(serversStore.hasMultipleServers).toBe(false);
+		expect(serversStore.isDisconnected('srv-jf-ui')).toBe(true);
+
+		// 2. Now Remove button is visible on the disconnected card; test typed confirmation
+		const removeBtn = screen.getByRole('button', { name: 'Remove' });
+		await fireEvent.click(removeBtn);
+
+		await waitFor(() => {
+			expect(screen.getByRole('heading', { name: 'Remove Server & Data · Studio Jellyfin' })).toBeTruthy();
+			expect(screen.getByText(/playback history plays/).textContent).toContain('42');
+			expect(screen.getByText(/synced media users/).textContent).toContain('3');
+		});
+
+		const confirmRemoveBtn = screen.getByRole('button', { name: 'Remove Server & Data' }) as HTMLButtonElement;
+		expect(confirmRemoveBtn.disabled).toBe(true);
+
+		const nameInput = screen.getByPlaceholderText('Studio Jellyfin') as HTMLInputElement;
+		await fireEvent.input(nameInput, { target: { value: 'Wrong Name' } });
+		expect(confirmRemoveBtn.disabled).toBe(true);
+
+		await fireEvent.input(nameInput, { target: { value: 'Studio Jellyfin' } });
+		expect(confirmRemoveBtn.disabled).toBe(false);
+
+		await fireEvent.click(confirmRemoveBtn);
+
+		await waitFor(() => {
+			expect(deleteSpy).toHaveBeenCalledWith('/api/v1/admin/servers/{id}', {
+				params: { path: { id: 'srv-jf-ui' } }
+			});
+			expect(screen.getByRole('status').textContent).toContain("Removed 'Studio Jellyfin'");
+			expect(screen.getByRole('status').textContent).toContain('42 plays');
 		});
 	});
 });

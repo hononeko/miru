@@ -144,6 +144,13 @@
 	});
 
 	$effect(() => {
+		if (selectedServerId && serversStore.loaded && !serversStore.byId(selectedServerId)) {
+			selectedServerId = null;
+			void loadLibraries(null);
+		}
+	});
+
+	$effect(() => {
 		if (selectedLibrary && !authStore.isUnlinkedUser) {
 			void loadSectionDetails(selectedLibrary);
 		}
@@ -267,7 +274,7 @@
 					<div class="flex items-center justify-between gap-2">
 						<span class="font-heading text-base font-semibold text-fg-primary">{lib.title}</span>
 						<div class="flex shrink-0 items-center gap-1.5">
-							{#if serversStore.hasMultipleServers}
+							{#if serversStore.hasMultipleServers || serversStore.isDisconnected(lib.serverId)}
 								<ServerBadge
 									serverId={lib.serverId}
 									serverType={lib.serverType}

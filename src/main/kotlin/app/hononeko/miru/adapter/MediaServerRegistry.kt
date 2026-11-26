@@ -13,11 +13,13 @@ import app.hononeko.miru.http.AdminServersResponse
 import app.hononeko.miru.http.MediaServerSummaryDto
 import app.hononeko.miru.http.MediaServersResponse
 import app.hononeko.miru.http.PlexCredentialSource
+import app.hononeko.miru.http.ServerDataSummaryDto
 import app.hononeko.miru.persistence.model.ActiveSessionKey
 import app.hononeko.miru.persistence.model.ActiveSessionRecord
 import app.hononeko.miru.persistence.model.MediaServerRecord
 import app.hononeko.miru.persistence.model.findActiveStoredServer
 import app.hononeko.miru.persistence.repository.MediaServerRepository
+import app.hononeko.miru.persistence.repository.ServerDataCounts
 import app.hononeko.miru.session.SessionEvent
 import app.hononeko.miru.session.SessionStateEngine
 import app.hononeko.miru.webhook.ReconcileHealthSignal
@@ -58,6 +60,8 @@ interface ManagedMediaServerRuntime : RealtimeLifecycle {
 
     fun websocketEnabled(): Boolean
 
+    fun isEnvConfigured(): Boolean = false
+
     fun connectionState(): ConnectionState
 
     fun lastReconcileHealth(): ReconcileHealthSignal?
@@ -65,6 +69,8 @@ interface ManagedMediaServerRuntime : RealtimeLifecycle {
     suspend fun currentServerSummary(): WebhookServerPayload?
 
     fun setOnReloadLibrarySync(callback: (suspend () -> Unit)?)
+
+    suspend fun disconnect(serverId: String? = null): Either<MiruError, Int> = Either.Right(0)
 }
 
 /**
@@ -204,6 +210,51 @@ class MediaServerRegistry(
         }
     }
 
+    fun runtimeForServerType(serverType: String): ManagedMediaServerRuntime? =
+        runtimes.firstOrNull { it.serverType.equals(serverType, ignoreCase = true) }
+
+    fun isEnvManaged(record: MediaServerRecord): Boolean {
+        val type = record.serverType.lowercase()
+        val matchedRuntime = runtimeForServerType(type)
+        val envActiveForType =
+            when (type) {
+                "plex" -> matchedRuntime?.isEnvConfigured() == true
+                "jellyfin" -> jellyfinConfig.isConfigured || matchedRuntime?.isEnvConfigured() == true
+                else -> matchedRuntime?.isEnvConfigured() == true
+            }
+        if (!envActiveForType) return false
+
+        if (matchedRuntime != null && matchedRuntime.isEnvConfigured() && matchesRuntimeRecord(matchedRuntime, record)) {
+            return true
+        }
+        return type == "jellyfin" &&
+            jellyfinConfig.isConfigured &&
+            record.baseUrl.trimEnd('/') == jellyfinConfig.baseUrl.trimEnd('/')
+    }
+
+    private fun matchesRuntimeRecord(
+        runtime: ManagedMediaServerRuntime,
+        record: MediaServerRecord,
+    ): Boolean {
+        val cachedId = runtime.cachedServerIdOrNull()
+        if (cachedId != null && cachedId == record.id) return true
+        val mid = runtime.currentMachineId()
+        if (mid != null && mid == record.machineId) return true
+        val base = runtime.currentBaseUrl()?.trimEnd('/')
+        return base != null && base == record.baseUrl.trimEnd('/')
+    }
+
+    fun isRuntimeActiveForRecord(record: MediaServerRecord): Boolean {
+        val runtime = runtimeForServerType(record.serverType) ?: return false
+        if (!runtime.isConfigured()) return false
+        val cachedId = runtime.cachedServerIdOrNull()
+        if (cachedId != null) return cachedId == record.id
+        val mid = runtime.currentMachineId()
+        if (mid != null) return mid == record.machineId
+        val base = runtime.currentBaseUrl()?.trimEnd('/')
+        return base != null && base == record.baseUrl.trimEnd('/')
+    }
+
     suspend fun listPublicServers(): MediaServersResponse {
         val dbServers = mediaServerRepository.findAll().getOrNull().orEmpty()
         val matchedIds = linkedSetOf<String>()
@@ -218,18 +269,23 @@ class MediaServerRegistry(
             if (resolvedId != null) {
                 matchedIds += resolvedId
             }
+            val configured = runtime.isConfigured()
             val reachable =
-                runtime.lastReconcileHealth()?.reachable
-                    ?: (runtime.isConfigured() && runtime.connectionState() == ConnectionState.Connected)
+                if (configured) {
+                    runtime.lastReconcileHealth()?.reachable
+                        ?: (runtime.connectionState() == ConnectionState.Connected)
+                } else {
+                    false
+                }
             summaries +=
                 MediaServerSummaryDto(
                     id = resolvedId ?: runtime.serverType,
                     name = matchedRecord?.name ?: defaultDisplayName(runtime.serverType),
                     serverType = runtime.serverType,
-                    configured = runtime.isConfigured(),
+                    configured = configured,
                     reachable = reachable,
-                    websocketEnabled = runtime.websocketEnabled(),
-                    websocketState = runtime.connectionState().toStatusLabel(),
+                    websocketEnabled = if (configured) runtime.websocketEnabled() else false,
+                    websocketState = if (configured) runtime.connectionState().toStatusLabel() else "DISCONNECTED",
                 )
         }
 
@@ -253,6 +309,7 @@ class MediaServerRegistry(
 
     suspend fun listAdminServers(): AdminServersResponse {
         val dbServers = mediaServerRepository.findAll().getOrNull().orEmpty()
+        val dataCounts = mediaServerRepository.countAllServerData().getOrNull().orEmpty()
         val matchedIds = linkedSetOf<String>()
         val items = mutableListOf<AdminServerStatusDto>()
 
@@ -262,68 +319,101 @@ class MediaServerRegistry(
             if (resolvedId != null) {
                 matchedIds += resolvedId
             }
-
-            val credentialSource = resolveCredentialSource(runtime, matchedRecord)
-            val baseUrl = runtime.currentBaseUrl() ?: matchedRecord?.baseUrl
-            val machineId = runtime.currentMachineId() ?: matchedRecord?.machineId
-            val healthResult = if (runtime.isConfigured()) runtime.adapter.checkHealth() else null
-            val lastHealth = runtime.lastReconcileHealth()
-
-            val reachable =
-                when {
-                    healthResult != null -> healthResult.isRight()
-                    else -> false
-                }
-            val statusMessage =
-                when {
-                    !runtime.isConfigured() -> unconfiguredStatusMessage(runtime.serverType, matchedRecord)
-                    healthResult is Either.Left -> healthResult.value.message
-                    lastHealth != null && !lastHealth.reachable -> lastHealth.errorMessage
-                    else -> null
-                }
-            val serverName =
-                healthResult?.getOrNull()?.friendlyName?.takeIf { it.isNotBlank() }
-                    ?: matchedRecord?.name
-                    ?: defaultDisplayName(runtime.serverType)
-
-            items +=
-                AdminServerStatusDto(
-                    id = resolvedId,
-                    name = serverName,
-                    serverType = runtime.serverType,
-                    configured = runtime.isConfigured(),
-                    credentialSource = credentialSource,
-                    machineId = machineId,
-                    baseUrl = baseUrl,
-                    reachable = reachable,
-                    websocketEnabled = runtime.websocketEnabled(),
-                    websocketState = runtime.connectionState().toStatusLabel(),
-                    statusMessage = statusMessage,
-                    lastCheckedAtMs = lastHealth?.timestampMs,
-                )
+            items += buildRuntimeAdminStatus(runtime, matchedRecord, resolvedId, dataCounts)
         }
 
         for (record in dbServers) {
             if (record.id !in matchedIds) {
-                items +=
-                    AdminServerStatusDto(
-                        id = record.id,
-                        name = record.name,
-                        serverType = record.serverType.lowercase(),
-                        configured = false,
-                        credentialSource = PlexCredentialSource.NOT_CONFIGURED,
-                        machineId = record.machineId,
-                        baseUrl = record.baseUrl,
-                        reachable = false,
-                        websocketEnabled = false,
-                        websocketState = "DISCONNECTED",
-                        statusMessage = "Historical or unconfigured server record",
-                    )
+                items += buildUnmatchedAdminStatus(record, dataCounts)
             }
         }
 
         return AdminServersResponse(servers = items)
     }
+
+    private suspend fun buildRuntimeAdminStatus(
+        runtime: ManagedMediaServerRuntime,
+        matchedRecord: MediaServerRecord?,
+        resolvedId: String?,
+        dataCounts: Map<String, ServerDataCounts>,
+    ): AdminServerStatusDto {
+        val configured = runtime.isConfigured()
+        val credentialSource = resolveCredentialSource(runtime, matchedRecord)
+        val baseUrl = runtime.currentBaseUrl() ?: matchedRecord?.baseUrl
+        val machineId = runtime.currentMachineId() ?: matchedRecord?.machineId
+        val healthResult = if (configured) runtime.adapter.checkHealth() else null
+        val lastHealth = runtime.lastReconcileHealth()
+
+        val reachable = healthResult?.isRight() ?: false
+        val statusMessage =
+            when {
+                !configured -> unconfiguredStatusMessage(runtime.serverType, matchedRecord)
+                healthResult is Either.Left -> healthResult.value.message
+                lastHealth != null && !lastHealth.reachable -> lastHealth.errorMessage
+                else -> null
+            }
+        val serverName =
+            healthResult?.getOrNull()?.friendlyName?.takeIf { it.isNotBlank() }
+                ?: matchedRecord?.name
+                ?: defaultDisplayName(runtime.serverType)
+
+        val envManaged =
+            (matchedRecord != null && isEnvManaged(matchedRecord)) ||
+                credentialSource == PlexCredentialSource.ENV_OVERRIDE
+        val hasStoredToken = matchedRecord != null && !matchedRecord.encryptedToken.isNullOrBlank()
+        val canDisconnect = matchedRecord != null && !envManaged && (configured || hasStoredToken)
+        val canRemove = matchedRecord != null && !envManaged && !configured && !hasStoredToken
+
+        return AdminServerStatusDto(
+            id = resolvedId,
+            name = serverName,
+            serverType = runtime.serverType,
+            configured = configured,
+            credentialSource = credentialSource,
+            machineId = machineId,
+            baseUrl = baseUrl,
+            reachable = reachable,
+            websocketEnabled = if (configured) runtime.websocketEnabled() else false,
+            websocketState = if (configured) runtime.connectionState().toStatusLabel() else "DISCONNECTED",
+            statusMessage = statusMessage,
+            lastCheckedAtMs = lastHealth?.timestampMs,
+            canDisconnect = canDisconnect,
+            canRemove = canRemove,
+            dataSummary = resolvedId?.let { (dataCounts[it] ?: ServerDataCounts()).toSummaryDto() },
+        )
+    }
+
+    private fun buildUnmatchedAdminStatus(
+        record: MediaServerRecord,
+        dataCounts: Map<String, ServerDataCounts>,
+    ): AdminServerStatusDto {
+        val envManaged = isEnvManaged(record)
+        val hasStoredToken = !record.encryptedToken.isNullOrBlank()
+        return AdminServerStatusDto(
+            id = record.id,
+            name = record.name,
+            serverType = record.serverType.lowercase(),
+            configured = false,
+            credentialSource =
+                when {
+                    envManaged -> PlexCredentialSource.ENV_OVERRIDE
+                    hasStoredToken -> PlexCredentialSource.STORED_ENCRYPTED
+                    else -> PlexCredentialSource.NOT_CONFIGURED
+                },
+            machineId = record.machineId,
+            baseUrl = record.baseUrl,
+            reachable = false,
+            websocketEnabled = false,
+            websocketState = "DISCONNECTED",
+            statusMessage = "Historical or unconfigured server record",
+            canDisconnect = !envManaged && hasStoredToken,
+            canRemove = !envManaged && !hasStoredToken,
+            dataSummary = (dataCounts[record.id] ?: ServerDataCounts()).toSummaryDto(),
+        )
+    }
+
+    private fun ServerDataCounts.toSummaryDto(): ServerDataSummaryDto =
+        ServerDataSummaryDto(plays = plays, users = users, libraries = libraries)
 
     private fun findRuntimeByCachedId(serverId: String): ManagedMediaServerRuntime? =
         runtimes.firstOrNull { it.isConfigured() && it.cachedServerIdOrNull() == serverId }
@@ -357,7 +447,13 @@ class MediaServerRegistry(
                 }
             }
             ?: dbServers.findActiveStoredServer(type)
-            ?: dbServers.firstOrNull { it.serverType.equals(type, ignoreCase = true) }
+            ?: dbServers
+                .filter { it.serverType.equals(type, ignoreCase = true) }
+                .maxWithOrNull(
+                    compareBy<MediaServerRecord> { it.updatedAtMs }
+                        .thenBy { it.createdAtMs }
+                        .thenBy { it.id },
+                )
     }
 
     private fun resolveCredentialSource(
@@ -392,17 +488,17 @@ class MediaServerRegistry(
     ): String =
         when (serverType.lowercase()) {
             "plex" ->
-                if (matchedRecord != null && !matchedRecord.encryptedToken.isNullOrBlank()) {
-                    "Plex adapter is not active"
-                } else {
-                    "No Plex server configured"
+                when {
+                    matchedRecord != null && !matchedRecord.encryptedToken.isNullOrBlank() -> "Plex adapter is not active"
+                    matchedRecord != null -> "Disconnected — playback history, users, and libraries are kept"
+                    else -> "No Plex server configured"
                 }
 
             "jellyfin" ->
-                if (matchedRecord != null && !matchedRecord.encryptedToken.isNullOrBlank()) {
-                    "Jellyfin adapter is not active"
-                } else {
-                    "No Jellyfin server configured"
+                when {
+                    matchedRecord != null && !matchedRecord.encryptedToken.isNullOrBlank() -> "Jellyfin adapter is not active"
+                    matchedRecord != null -> "Disconnected — playback history, users, and libraries are kept"
+                    else -> "No Jellyfin server configured"
                 }
             else -> "Server is not configured"
         }

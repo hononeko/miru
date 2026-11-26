@@ -683,6 +683,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/servers/{id}/disconnect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Disconnect a UI-configured media server while preserving its playback history, users, and libraries (admin only) */
+        post: operations["disconnectAdminServer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/servers/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Permanently delete a disconnected media server and its cascaded data (admin only) */
+        delete: operations["removeAdminServer"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/media/{ratingKey}": {
         parameters: {
             query?: never;
@@ -2169,6 +2203,14 @@ export interface components {
         MediaServersResponse: {
             servers: components["schemas"]["MediaServerSummaryDto"][];
         };
+        ServerDataSummaryDto: {
+            /** Format: int64 */
+            plays: number;
+            /** Format: int64 */
+            users: number;
+            /** Format: int64 */
+            libraries: number;
+        };
         AdminServerStatusDto: {
             id?: string | null;
             name: string;
@@ -2183,9 +2225,34 @@ export interface components {
             statusMessage?: string | null;
             /** Format: int64 */
             lastCheckedAtMs?: number | null;
+            canDisconnect: boolean;
+            canRemove: boolean;
+            dataSummary?: components["schemas"]["ServerDataSummaryDto"] | null;
         };
         AdminServersResponse: {
             servers: components["schemas"]["AdminServerStatusDto"][];
+        };
+        DisconnectServerResponse: {
+            serverId: string;
+            serverName: string;
+            serverType: string;
+            disconnected: boolean;
+            /** Format: int32 */
+            closedSessions: number;
+            credentialRevoked: boolean;
+            revocationNotice?: string | null;
+        };
+        RemoveServerResponse: {
+            serverId: string;
+            serverName: string;
+            serverType: string;
+            removed: boolean;
+            /** Format: int64 */
+            deletedPlays: number;
+            /** Format: int64 */
+            deletedUsers: number;
+            /** Format: int64 */
+            deletedLibraries: number;
         };
         MediaDetailsResponse: {
             serverId?: string | null;
@@ -4465,6 +4532,140 @@ export interface operations {
             };
             /** @description Administrator role required */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    disconnectAdminServer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Server disconnected cleanly while preserving historical data */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DisconnectServerResponse"];
+                };
+            };
+            /** @description Invalid server ID */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Media server not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Server is env-managed or already disconnected */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    removeAdminServer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Disconnected server and its cascaded data removed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemoveServerResponse"];
+                };
+            };
+            /** @description Invalid server ID */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Media server not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Server is env-managed or still connected */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

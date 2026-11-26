@@ -90,8 +90,11 @@ export type TautulliImportResponse = Schemas['TautulliImportResponse'];
 
 export type MediaServerSummaryDto = Schemas['MediaServerSummaryDto'];
 export type MediaServersResponse = Schemas['MediaServersResponse'];
+export type ServerDataSummaryDto = Schemas['ServerDataSummaryDto'];
 export type AdminServerStatusDto = Schemas['AdminServerStatusDto'];
 export type AdminServersResponse = Schemas['AdminServersResponse'];
+export type DisconnectServerResponse = Schemas['DisconnectServerResponse'];
+export type RemoveServerResponse = Schemas['RemoveServerResponse'];
 
 export type PlexCredentialSource = Schemas['PlexCredentialSource'];
 export type PlexOAuthPinStatus = Schemas['PlexOAuthPinStatus'];

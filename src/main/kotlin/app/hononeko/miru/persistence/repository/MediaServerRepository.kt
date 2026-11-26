@@ -4,21 +4,32 @@ import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.persistence.DatabaseHandle
 import app.hononeko.miru.persistence.exposedQuery
 import app.hononeko.miru.persistence.model.MediaServerRecord
+import app.hononeko.miru.persistence.table.LibrarySectionsTable
 import app.hononeko.miru.persistence.table.MediaServersTable
+import app.hononeko.miru.persistence.table.PlaybackHistoryTable
+import app.hononeko.miru.persistence.table.UsersTable
 import arrow.core.Either
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.coalesce
+import org.jetbrains.exposed.v1.core.count
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.isNotNull
 import org.jetbrains.exposed.v1.core.lowerCase
 import org.jetbrains.exposed.v1.core.neq
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
+import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.update
 import org.jetbrains.exposed.v1.jdbc.upsert
 import java.sql.SQLException
+
+data class ServerDataCounts(
+    val plays: Long = 0L,
+    val users: Long = 0L,
+    val libraries: Long = 0L,
+)
 
 interface MediaServerRepository {
     suspend fun upsert(server: MediaServerRecord): Either<MiruError.PersistenceError, MediaServerRecord>
@@ -37,6 +48,19 @@ interface MediaServerRepository {
         clientIdentifier: String?,
         updatedAtMs: Long = System.currentTimeMillis(),
     ): Either<MiruError.PersistenceError, MediaServerRecord?>
+
+    /**
+     * Clears [MediaServerRecord.encryptedToken] for [id] while preserving the server row and all
+     * child history, users, and libraries so disconnecting keeps historical telemetry intact.
+     */
+    suspend fun clearCredentials(
+        id: String,
+        updatedAtMs: Long = System.currentTimeMillis(),
+    ): Either<MiruError.PersistenceError, MediaServerRecord?>
+
+    suspend fun countServerData(id: String): Either<MiruError.PersistenceError, ServerDataCounts>
+
+    suspend fun countAllServerData(): Either<MiruError.PersistenceError, Map<String, ServerDataCounts>>
 
     suspend fun findById(id: String): Either<MiruError.PersistenceError, MediaServerRecord?>
 
@@ -153,6 +177,69 @@ class ExposedMediaServerRepository(
                     ?.toMediaServerRecord()
             } else {
                 null
+            }
+        }
+
+    override suspend fun clearCredentials(
+        id: String,
+        updatedAtMs: Long,
+    ): Either<MiruError.PersistenceError, MediaServerRecord?> =
+        database.exposedQuery("media_server_clear_credentials") {
+            val updatedRows =
+                MediaServersTable.update({ MediaServersTable.id eq id }) {
+                    it[MediaServersTable.encryptedToken] = null
+                    it[MediaServersTable.updatedAtMs] = updatedAtMs
+                }
+            if (updatedRows > 0) {
+                MediaServersTable
+                    .selectAll()
+                    .where { MediaServersTable.id eq id }
+                    .singleOrNull()
+                    ?.toMediaServerRecord()
+            } else {
+                null
+            }
+        }
+
+    override suspend fun countServerData(id: String): Either<MiruError.PersistenceError, ServerDataCounts> =
+        database.exposedQuery("media_server_count_data") {
+            ServerDataCounts(
+                plays = PlaybackHistoryTable.selectAll().where { PlaybackHistoryTable.serverId eq id }.count(),
+                users = UsersTable.selectAll().where { UsersTable.serverId eq id }.count(),
+                libraries = LibrarySectionsTable.selectAll().where { LibrarySectionsTable.serverId eq id }.count(),
+            )
+        }
+
+    override suspend fun countAllServerData(): Either<MiruError.PersistenceError, Map<String, ServerDataCounts>> =
+        database.exposedQuery("media_server_count_all_data") {
+            val playCountExpr = PlaybackHistoryTable.id.count()
+            val playsByServer =
+                PlaybackHistoryTable
+                    .select(PlaybackHistoryTable.serverId, playCountExpr)
+                    .groupBy(PlaybackHistoryTable.serverId)
+                    .associate { row -> row[PlaybackHistoryTable.serverId] to row[playCountExpr] }
+
+            val userCountExpr = UsersTable.id.count()
+            val usersByServer =
+                UsersTable
+                    .select(UsersTable.serverId, userCountExpr)
+                    .groupBy(UsersTable.serverId)
+                    .associate { row -> row[UsersTable.serverId] to row[userCountExpr] }
+
+            val libCountExpr = LibrarySectionsTable.sectionKey.count()
+            val librariesByServer =
+                LibrarySectionsTable
+                    .select(LibrarySectionsTable.serverId, libCountExpr)
+                    .groupBy(LibrarySectionsTable.serverId)
+                    .associate { row -> row[LibrarySectionsTable.serverId] to row[libCountExpr] }
+
+            val allIds = playsByServer.keys + usersByServer.keys + librariesByServer.keys
+            allIds.associateWith { sid ->
+                ServerDataCounts(
+                    plays = playsByServer[sid] ?: 0L,
+                    users = usersByServer[sid] ?: 0L,
+                    libraries = librariesByServer[sid] ?: 0L,
+                )
             }
         }
 

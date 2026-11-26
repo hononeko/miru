@@ -74,6 +74,7 @@ import app.hononeko.miru.service.LibraryQueryService
 import app.hononeko.miru.service.LibrarySyncTrigger
 import app.hononeko.miru.service.MediaDetailsService
 import app.hononeko.miru.service.MediaSectionAccessChecker
+import app.hononeko.miru.service.MediaServerManagementService
 import app.hononeko.miru.service.PlexUserSyncService
 import app.hononeko.miru.service.StreamControlService
 import app.hononeko.miru.service.StreamGuardrailRunner
@@ -162,6 +163,7 @@ internal data class CoreServiceWiring(
     val plexOAuthHttpClient: LazyCloseableHttpClient,
     val plexOAuthService: PlexOAuthService,
     val jellyfinQuickConnectHttpClient: LazyCloseableHttpClient,
+    val jellyfinQuickConnectClient: JellyfinQuickConnectClient,
     val jellyfinQuickConnectService: JellyfinQuickConnectService,
     val artworkProxyService: ArtworkProxyService,
     val streamsAndUsersService: StreamsAndUsersService,
@@ -220,6 +222,18 @@ private fun runServer() {
             mediaServerRegistry = wiring.mediaServerRegistry,
             librarySyncEvents = mergedLibrarySyncEvents,
         )
+    val mediaServerManagementService =
+        MediaServerManagementService(
+            mediaServerRegistry = wiring.mediaServerRegistry,
+            mediaServerRepository = mediaServerRepository,
+            encryptionKey = appConfig.plex.encryptionKey,
+            jellyfinRevokeApiKey = { baseUrl, apiKey, deviceId ->
+                wiring.jellyfinQuickConnectClient.deleteApiKey(baseUrl, apiKey, apiKey, deviceId)
+            },
+            jellyfinDefaultDeviceId = appConfig.jellyfin.clientIdentifier ?: "miru",
+            onServerDisconnected = { metricsRuntime?.service?.onServerDisconnected() },
+            onServerRemoved = { serverId -> metricsRuntime?.service?.onServerRemoved(serverId) },
+        )
 
     val server =
         embeddedServer(factory = Netty, port = appConfig.server.port, host = appConfig.server.host) {
@@ -255,6 +269,7 @@ private fun runServer() {
                 jellyfinQuickConnectService = wiring.jellyfinQuickConnectService,
                 metricsService = metricsRuntime?.service,
                 mediaServerRegistry = wiring.mediaServerRegistry,
+                mediaServerManagementService = mediaServerManagementService,
             )
         }
     try {
@@ -302,13 +317,14 @@ internal fun createCoreServiceWiring(
     val plexOAuthService =
         createPlexOAuthService(appConfig, plexOAuthHttpClient, appVersion, mediaServerRepository, plexRuntimeManager)
     val jellyfinQuickConnectHttpClient = LazyCloseableHttpClient { createJellyfinHttpClient() }
+    val jellyfinQuickConnectClient = JellyfinQuickConnectClient({ jellyfinQuickConnectHttpClient.client }, appVersion)
     val jellyfinQuickConnectService =
-        createJellyfinQuickConnectService(
-            appConfig,
-            jellyfinQuickConnectHttpClient,
-            appVersion,
-            mediaServerRepository,
-            jellyfinRuntimeManager,
+        JellyfinQuickConnectService(
+            jellyfinConfig = appConfig.jellyfin,
+            encryptionKey = appConfig.plex.encryptionKey,
+            quickConnectClient = jellyfinQuickConnectClient,
+            mediaServerRepository = mediaServerRepository,
+            runtimeManager = jellyfinRuntimeManager,
         )
     val artworkProxyService =
         createArtworkProxyService(
@@ -380,6 +396,7 @@ internal fun createCoreServiceWiring(
         plexOAuthHttpClient = plexOAuthHttpClient,
         plexOAuthService = plexOAuthService,
         jellyfinQuickConnectHttpClient = jellyfinQuickConnectHttpClient,
+        jellyfinQuickConnectClient = jellyfinQuickConnectClient,
         jellyfinQuickConnectService = jellyfinQuickConnectService,
         artworkProxyService = artworkProxyService,
         streamsAndUsersService = streamsAndUsersService,
@@ -452,21 +469,6 @@ private fun createPlexOAuthService(
         oauthClient = PlexOAuthClient({ plexOAuthHttpClient.client }, appConfig.plex.plexTvBaseUrl, appVersion),
         mediaServerRepository = mediaServerRepository,
         runtimeManager = plexRuntimeManager,
-    )
-
-private fun createJellyfinQuickConnectService(
-    appConfig: AppConfig,
-    jellyfinQuickConnectHttpClient: LazyCloseableHttpClient,
-    appVersion: String,
-    mediaServerRepository: ExposedMediaServerRepository,
-    jellyfinRuntimeManager: JellyfinRuntimeManager,
-): JellyfinQuickConnectService =
-    JellyfinQuickConnectService(
-        jellyfinConfig = appConfig.jellyfin,
-        encryptionKey = appConfig.plex.encryptionKey,
-        quickConnectClient = JellyfinQuickConnectClient({ jellyfinQuickConnectHttpClient.client }, appVersion),
-        mediaServerRepository = mediaServerRepository,
-        runtimeManager = jellyfinRuntimeManager,
     )
 
 internal data class WebhookServicesBundle(
@@ -1123,6 +1125,7 @@ fun Application.miruModule(
     authRateLimiter: AuthRateLimiter = AuthRateLimiter(config.auth.rateLimit),
     metricsService: MiruMetricsService? = null,
     mediaServerRegistry: MediaServerRegistry? = null,
+    mediaServerManagementService: MediaServerManagementService? = null,
 ) {
     if (realtime != null) {
         monitor.subscribe(ApplicationStarted) {
@@ -1179,6 +1182,7 @@ fun Application.miruModule(
                 jellyfinQuickConnectService = jellyfinQuickConnectService,
                 authRateLimiter = authRateLimiter,
                 mediaServerRegistry = mediaServerRegistry,
+                mediaServerManagementService = mediaServerManagementService,
             )
         }
         if (metricsService != null && config.metrics.enabled && config.metrics.port == config.server.port) {
@@ -1210,6 +1214,7 @@ private fun io.ktor.server.routing.Routing.registerAuthenticatedRoutes(
     jellyfinQuickConnectService: JellyfinQuickConnectService?,
     authRateLimiter: AuthRateLimiter,
     mediaServerRegistry: MediaServerRegistry?,
+    mediaServerManagementService: MediaServerManagementService?,
 ) {
     authRoutes(
         authService = authService,
@@ -1238,6 +1243,7 @@ private fun io.ktor.server.routing.Routing.registerAuthenticatedRoutes(
             mediaServerRegistry = mediaServerRegistry,
             authService = authService,
             authMode = config.auth.mode,
+            mediaServerManagementService = mediaServerManagementService,
         )
     }
     if (artworkProxyService != null) {

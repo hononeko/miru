@@ -22,7 +22,9 @@ const ADMIN_SERVERS: AdminServerStatusDto[] = [
 		baseUrl: 'http://plex.local:32400',
 		reachable: true,
 		websocketEnabled: true,
-		websocketState: 'CONNECTED'
+		websocketState: 'CONNECTED',
+		canDisconnect: false,
+		canRemove: false
 	},
 	{
 		id: 'srv-jf',
@@ -34,7 +36,9 @@ const ADMIN_SERVERS: AdminServerStatusDto[] = [
 		baseUrl: 'http://jellyfin.local:8096',
 		reachable: true,
 		websocketEnabled: true,
-		websocketState: 'RECONNECTING'
+		websocketState: 'RECONNECTING',
+		canDisconnect: false,
+		canRemove: false
 	}
 ];
 

@@ -11,7 +11,7 @@ COPY web/ ./
 RUN bun run build
 
 # Bytecode is platform-independent: build natively, even for a cross-platform image
-FROM --platform=$BUILDPLATFORM eclipse-temurin:25.0.5_8-jdk-noble AS build
+FROM --platform=$BUILDPLATFORM eclipse-temurin:25.0.5.1_2-jdk-noble AS build
 WORKDIR /src
 
 # Copy only the build scripts and version catalog, then download every jar the build needs. This layer changes only
@@ -32,7 +32,7 @@ RUN ./gradlew --no-daemon shadowJar \
 # Pre-extract the target architecture's SQLite native library into a read-only directory and strip
 # unused cross-platform native libraries (other OS/arches + Netty HTTP/3 Quiche) from the container JAR.
 # This lets runtime containers mount /tmp with noexec,nosuid,nodev while shrinking the image.
-FROM --platform=$BUILDPLATFORM eclipse-temurin:25.0.5_8-jdk-noble AS app-prepare
+FROM --platform=$BUILDPLATFORM eclipse-temurin:25.0.5.1_2-jdk-noble AS app-prepare
 ARG TARGETARCH
 WORKDIR /work
 COPY --from=build /miru-all.jar /in/miru-all.jar
@@ -53,7 +53,7 @@ RUN set -eu; \
     chmod 0444 /out/miru-all.jar; \
     rm -rf /work/* /in /tmp/MANIFEST.MF
 
-FROM eclipse-temurin:25.0.5_8-jdk-noble AS jre-build
+FROM eclipse-temurin:25.0.5.1_2-jdk-noble AS jre-build
 RUN jlink \
     --add-modules java.base,java.logging,java.management,java.naming,java.net.http,java.security.jgss,java.security.sasl,java.sql,java.xml,jdk.charsets,jdk.crypto.ec,jdk.management,jdk.unsupported,jdk.zipfs \
     --strip-debug \

@@ -192,6 +192,16 @@ test.describe.serial('Multi-server Plex + Jellyfin E2E (live SSE, artwork proxy,
 		await expect(detailsDialog).toContainText('JELLYFIN');
 		await page.keyboard.press('Escape');
 
+		// Also verify Jellyfin Episode media details modal (exercises GET /Items?Ids=... for episode, season, and series)
+		await expect(libFilter.getByRole('button', { name: /Studio Jellyfin/i })).toBeVisible();
+		await page.getByRole('button', { name: /Jellyfin Series/i }).click();
+		await expect(page.getByRole('button', { name: /Dulcinea/i }).first()).toBeVisible();
+		await page.getByRole('button', { name: /Dulcinea/i }).first().click();
+		await expect(detailsDialog).toBeVisible();
+		await expect(detailsDialog).toContainText('Dulcinea');
+		await expect(detailsDialog).toContainText('The Expanse');
+		await page.keyboard.press('Escape');
+
 		// 3. Users server filtering (both Plex alice and Jellyfin alice present and disambiguated)
 		await nav.getByRole('link', { name: 'Users' }).click();
 		await expect(page).toHaveURL(`${miru.baseUrl}/users`);

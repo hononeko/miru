@@ -618,6 +618,20 @@ export async function startMockJellyfinServer(options: MockJellyfinOptions = {})
 		}
 
 		if (pathname === '/Items') {
+			const idsParam = url.searchParams.get('Ids');
+			if (idsParam !== null) {
+				const items = idsParam
+					.split(',')
+					.map((id) => catalog.byId.get(id.trim()))
+					.filter((item): item is MockJfItem => item !== undefined);
+				sendJson(res, 200, {
+					TotalRecordCount: items.length,
+					StartIndex: 0,
+					Items: items
+				});
+				return;
+			}
+
 			const parentId = url.searchParams.get('ParentId');
 			const startIndex = Number(url.searchParams.get('StartIndex') ?? '0');
 			const limitParam = url.searchParams.get('Limit');
@@ -655,12 +669,8 @@ export async function startMockJellyfinServer(options: MockJellyfinOptions = {})
 
 		const itemMatch = pathname.match(/^\/Items\/([^/]+)$/);
 		if (itemMatch) {
-			const item = catalog.byId.get(decodeURIComponent(itemMatch[1]));
-			if (!item) {
-				sendJson(res, 404, { error: 'Not found' });
-				return;
-			}
-			sendJson(res, 200, item);
+			// Real Jellyfin servers reject GET /Items/{id} without user context (405/400)
+			sendJson(res, 405, { error: 'Use /Items?Ids=... instead of /Items/{id}' });
 			return;
 		}
 

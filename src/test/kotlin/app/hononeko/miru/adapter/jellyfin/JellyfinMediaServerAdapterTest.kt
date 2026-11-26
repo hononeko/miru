@@ -462,56 +462,79 @@ class JellyfinMediaServerAdapterTest :
             seenTypes shouldContainExactly listOf("Movie", "Movie")
         }
 
-        test("fetchMediaDetails and fetchMediaSectionKey resolve season, series, and library ancestor") {
-            val (adapter, _) =
+        test("fetchMediaDetails and fetchMediaSectionKey resolve season, series, and library ancestor via /Items?Ids") {
+            val (adapter, requests) =
                 adapterWithMock { request ->
                     when (request.url.encodedPath) {
-                        "/Items/ep-1" ->
-                            respondJson(
-                                """
-                                {
-                                  "Id": "ep-1",
-                                  "Name": "Pilot",
-                                  "Type": "Episode",
-                                  "SeriesId": "show-1",
-                                  "SeriesName": "Andor",
-                                  "SeasonId": "season-1",
-                                  "SeasonName": "Season 1",
-                                  "ParentIndexNumber": 1,
-                                  "IndexNumber": 1,
-                                  "RunTimeTicks": 25000000000,
-                                  "Genres": ["Sci-Fi"],
-                                  "People": [{ "Name": "Toby Haynes", "Type": "Director" }],
-                                  "ImageTags": { "Primary": "p1" },
-                                  "BackdropImageTags": ["b1"]
-                                }
-                                """.trimIndent(),
-                            )
+                        "/Items" -> {
+                            val requestedIds = request.url.parameters["Ids"]
+                            when (requestedIds) {
+                                "ep-1" ->
+                                    respondJson(
+                                        """
+                                        {
+                                          "TotalRecordCount": 1,
+                                          "Items": [
+                                            {
+                                              "Id": "ep-1",
+                                              "Name": "Pilot",
+                                              "Type": "Episode",
+                                              "SeriesId": "show-1",
+                                              "SeriesName": "Andor",
+                                              "SeasonId": "season-1",
+                                              "SeasonName": "Season 1",
+                                              "ParentIndexNumber": 1,
+                                              "IndexNumber": 1,
+                                              "RunTimeTicks": 25000000000,
+                                              "Genres": ["Sci-Fi"],
+                                              "People": [{ "Name": "Toby Haynes", "Type": "Director" }],
+                                              "ImageTags": { "Primary": "p1" },
+                                              "BackdropImageTags": ["b1"]
+                                            }
+                                          ]
+                                        }
+                                        """.trimIndent(),
+                                    )
 
-                        "/Items/season-1" ->
-                            respondJson("""{"Id":"season-1","Name":"Season 1","IndexNumber":1,"RecursiveItemCount":12}""")
+                                "season-1" ->
+                                    respondJson(
+                                        """{"TotalRecordCount":1,"Items":[{"Id":"season-1","Name":"Season 1",""" +
+                                            """"IndexNumber":1,"RecursiveItemCount":12}]}""",
+                                    )
 
-                        "/Items/show-1" ->
-                            respondJson(
-                                """
-                                {
-                                  "Id": "show-1",
-                                  "Name": "Andor",
-                                  "Type": "Series",
-                                  "ChildCount": 2,
-                                  "RecursiveItemCount": 24,
-                                  "Genres": ["Sci-Fi", "Drama"],
-                                  "Studios": [{ "Name": "Lucasfilm" }],
-                                  "ImageTags": { "Primary": "sp1" }
-                                }
-                                """.trimIndent(),
-                            )
+                                "show-1" ->
+                                    respondJson(
+                                        """
+                                        {
+                                          "TotalRecordCount": 1,
+                                          "Items": [
+                                            {
+                                              "Id": "show-1",
+                                              "Name": "Andor",
+                                              "Type": "Series",
+                                              "ChildCount": 2,
+                                              "RecursiveItemCount": 24,
+                                              "Genres": ["Sci-Fi", "Drama"],
+                                              "Studios": [{ "Name": "Lucasfilm" }],
+                                              "ImageTags": { "Primary": "sp1" }
+                                            }
+                                          ]
+                                        }
+                                        """.trimIndent(),
+                                    )
+
+                                else -> respondJson("""{"TotalRecordCount":0,"Items":[]}""")
+                            }
+                        }
 
                         "/Items/ep-1/Ancestors" ->
                             respondJson(
                                 """[{"Id":"season-1","Type":"Season"},""" +
                                     """{"Id":"lib-tv","Name":"TV Shows","Type":"CollectionFolder"}]""",
                             )
+
+                        "/Items/ep-1", "/Items/season-1", "/Items/show-1" ->
+                            respond("", status = HttpStatusCode.MethodNotAllowed)
 
                         else -> error("Unexpected path ${request.url.encodedPath}")
                     }
@@ -528,6 +551,12 @@ class JellyfinMediaServerAdapterTest :
             details.season?.currentEpisodeIndex shouldBe 1
 
             adapter.fetchMediaSectionKey("ep-1").shouldBeRight() shouldBe "lib-tv"
+            adapter.fetchMediaDetails("missing-item").shouldBeLeft().shouldBeInstanceOf<MiruError.NotFound>()
+            requests.none {
+                it.url.encodedPath == "/Items/ep-1" ||
+                    it.url.encodedPath == "/Items/season-1" ||
+                    it.url.encodedPath == "/Items/show-1"
+            } shouldBe true
         }
 
         test("fetchArtwork enforces safe paths and terminateSession sends message and stop") {
@@ -698,23 +727,38 @@ class JellyfinMediaServerAdapterTest :
                 adapterWithMock { request ->
                     when (request.url.encodedPath) {
                         "/Items" -> {
-                            seenIncludeTypes += request.url.parameters["IncludeItemTypes"]
-                            seenIsFolder += request.url.parameters["IsFolder"]
-                            respondJson("""{"TotalRecordCount":7,"Items":[]}""")
+                            val requestedIds = request.url.parameters["Ids"]
+                            when (requestedIds) {
+                                "season-5" ->
+                                    respondJson(
+                                        """{"TotalRecordCount":1,"Items":[{"Id":"season-5","Name":"Season 5","Type":"Season",""" +
+                                            """"ParentId":"show-5","SeriesName":"Expanse"}]}""",
+                                    )
+
+                                "show-5" ->
+                                    respondJson(
+                                        """{"TotalRecordCount":1,"Items":[{"Id":"show-5","Name":"Expanse",""" +
+                                            """"Type":"Series","ChildCount":6}]}""",
+                                    )
+
+                                "movie-fallback" ->
+                                    respondJson(
+                                        """{"TotalRecordCount":1,"Items":[{"Id":"movie-fallback","Name":"Solo Film",""" +
+                                            """"Type":"Movie","ParentId":"lib-movies"}]}""",
+                                    )
+
+                                else -> {
+                                    seenIncludeTypes += request.url.parameters["IncludeItemTypes"]
+                                    seenIsFolder += request.url.parameters["IsFolder"]
+                                    respondJson("""{"TotalRecordCount":7,"Items":[]}""")
+                                }
+                            }
                         }
 
-                        "/Items/season-5" ->
-                            respondJson(
-                                """{"Id":"season-5","Name":"Season 5","Type":"Season","ParentId":"show-5","SeriesName":"Expanse"}""",
-                            )
-
-                        "/Items/show-5" ->
-                            respondJson("""{"Id":"show-5","Name":"Expanse","Type":"Series","ChildCount":6}""")
+                        "/Items/season-5", "/Items/show-5", "/Items/movie-fallback" ->
+                            respond("", status = HttpStatusCode.MethodNotAllowed)
 
                         "/Items/season-5/Ancestors" -> respond("", status = HttpStatusCode.InternalServerError)
-
-                        "/Items/movie-fallback" ->
-                            respondJson("""{"Id":"movie-fallback","Name":"Solo Film","Type":"Movie","ParentId":"lib-movies"}""")
 
                         "/Items/movie-fallback/Ancestors" -> respond("", status = HttpStatusCode.NotFound)
 

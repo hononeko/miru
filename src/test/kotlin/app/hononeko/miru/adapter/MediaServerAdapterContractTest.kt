@@ -275,37 +275,47 @@ private object JellyfinContractHarness : MediaServerAdapterContractSpec.Harness 
                         """{"ItemId":"jf-lib-photos","Name":"Photos","CollectionType":"photos"}]""",
                 )
 
-            "/Items" ->
-                if (req.url.parameters["Limit"] == "0") {
-                    respondJson("""{"TotalRecordCount":25,"Items":[]}""")
-                } else {
-                    respondJson(JF_CONTRACT_ITEMS_PAGE_JSON)
-                }
+            "/Items" -> {
+                val ids = req.url.parameters["Ids"]
+                when {
+                    ids != null -> {
+                        val matched =
+                            when (ids) {
+                                "jf-movie-101" -> JF_CONTRACT_MOVIE_DETAILS_JSON
+                                "jf-ep-202" -> JF_CONTRACT_EPISODE_DETAILS_JSON
+                                "jf-season-201" -> if (missingParents) null else JF_CONTRACT_SEASON_DETAILS_JSON
+                                "jf-show-200" -> if (missingParents) null else JF_CONTRACT_SHOW_DETAILS_JSON
+                                else -> null
+                            }
+                        if (matched == null) {
+                            respondJson("""{"TotalRecordCount":0,"Items":[]}""")
+                        } else {
+                            respondJson("""{"TotalRecordCount":1,"Items":[$matched]}""")
+                        }
+                    }
 
-            "/Items/jf-movie-101" -> respondJson(JF_CONTRACT_MOVIE_DETAILS_JSON)
+                    req.url.parameters["Limit"] == "0" ->
+                        respondJson("""{"TotalRecordCount":25,"Items":[]}""")
+
+                    else ->
+                        respondJson(JF_CONTRACT_ITEMS_PAGE_JSON)
+                }
+            }
+
+            "/Items/jf-movie-101",
+            "/Items/jf-ep-202",
+            "/Items/jf-season-201",
+            "/Items/jf-show-200",
+            -> respond("", status = HttpStatusCode.MethodNotAllowed)
+
             "/Items/jf-movie-101/Ancestors" ->
                 respondJson("""[{"Id":"jf-lib-movies","Name":"Movies","Type":"CollectionFolder"}]""")
 
-            "/Items/jf-ep-202" -> respondJson(JF_CONTRACT_EPISODE_DETAILS_JSON)
             "/Items/jf-ep-202/Ancestors" ->
                 respondJson("""[{"Id":"jf-lib-shows","Name":"TV Shows","Type":"CollectionFolder"}]""")
 
-            "/Items/jf-season-201" ->
-                if (missingParents) {
-                    respond("", status = HttpStatusCode.NotFound)
-                } else {
-                    respondJson(JF_CONTRACT_SEASON_DETAILS_JSON)
-                }
-
             "/Items/jf-season-201/Ancestors" ->
                 respondJson("""[{"Id":"jf-lib-shows","Name":"TV Shows","Type":"CollectionFolder"}]""")
-
-            "/Items/jf-show-200" ->
-                if (missingParents) {
-                    respond("", status = HttpStatusCode.NotFound)
-                } else {
-                    respondJson(JF_CONTRACT_SHOW_DETAILS_JSON)
-                }
 
             "/Items/jf-show-200/Ancestors" ->
                 respondJson("""[{"Id":"jf-lib-shows","Name":"TV Shows","Type":"CollectionFolder"}]""")

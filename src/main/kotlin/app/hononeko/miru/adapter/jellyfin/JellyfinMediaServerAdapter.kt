@@ -252,15 +252,8 @@ class JellyfinMediaServerAdapter(
     override suspend fun fetchMediaDetails(ratingKey: String): Either<MiruError, MediaItemDetails> =
         either {
             validateId(ratingKey, "ratingKey").bind()
-            val item =
-                executeJsonGet<JellyfinBaseItemDto>(
-                    url = "$baseUrl/Items/$ratingKey",
-                    operation = "fetch media details",
-                    notFoundResource = "Media",
-                    notFoundId = ratingKey,
-                ) {
-                    parameter("Fields", DETAILS_QUERY_FIELDS)
-                }.bind()
+            val normalizedKey = ratingKey.trim()
+            val item = fetchItemById(normalizedKey, "fetch media details").bind()
 
             val mediaType = JellyfinMapper.mapMediaType(item)
             val (parentSeason, grandparentSeries, ancestors) =
@@ -277,7 +270,7 @@ class JellyfinMediaServerAdapter(
                             MediaType.SEASON -> async { fetchOptionalItem(item.seriesId ?: item.parentId) }
                             else -> null
                         }
-                    val ancestorsDeferred = async { fetchOptionalAncestors(ratingKey) }
+                    val ancestorsDeferred = async { fetchOptionalAncestors(normalizedKey) }
                     Triple(seasonDeferred?.await(), seriesDeferred?.await(), ancestorsDeferred.await())
                 }
 
@@ -402,14 +395,7 @@ class JellyfinMediaServerAdapter(
 
     private suspend fun fetchOptionalItem(itemId: String?): JellyfinBaseItemDto? {
         val key = itemId?.trim()?.takeIf { it.isNotEmpty() && ID_REGEX.matches(it) } ?: return null
-        return executeJsonGet<JellyfinBaseItemDto>(
-            url = "$baseUrl/Items/$key",
-            operation = "fetch parent media details",
-            notFoundResource = "Media",
-            notFoundId = key,
-        ) {
-            parameter("Fields", DETAILS_QUERY_FIELDS)
-        }.fold(
+        return fetchItemById(key, "fetch parent media details").fold(
             ifLeft = { error ->
                 logger.debug("Optional Jellyfin item lookup for '{}' failed: {}", key, sanitizeMessage(error.message))
                 null
@@ -417,6 +403,28 @@ class JellyfinMediaServerAdapter(
             ifRight = { it },
         )
     }
+
+    private suspend fun fetchItemById(
+        itemId: String,
+        operation: String,
+    ): Either<MiruError, JellyfinBaseItemDto> =
+        either {
+            val response =
+                executeJsonGet<JellyfinItemsQueryResponse>(
+                    url = "$baseUrl/Items",
+                    operation = operation,
+                    notFoundResource = "Media",
+                    notFoundId = itemId,
+                ) {
+                    parameter("Ids", itemId)
+                    parameter("Fields", DETAILS_QUERY_FIELDS)
+                }.bind()
+
+            val items = response.items.orEmpty()
+            items.firstOrNull { it.id.equals(itemId, ignoreCase = true) }
+                ?: items.firstOrNull()
+                ?: raise(MiruError.NotFound(resource = "Media", id = itemId))
+        }
 
     private suspend fun fetchOptionalAncestors(itemId: String): List<JellyfinBaseItemDto> =
         executeJsonGet<List<JellyfinBaseItemDto>>(

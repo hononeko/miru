@@ -336,6 +336,19 @@ internal class EmbeddedJellyfinTestServer(
             call.respondText("Down", status = HttpStatusCode.ServiceUnavailable)
             return
         }
+        val idsParam = call.request.queryParameters["Ids"]
+        if (idsParam != null) {
+            val matched =
+                idsParam
+                    .split(',')
+                    .map { it.trim() }
+                    .mapNotNull { JF_IT_ITEMS_BY_ID[it] }
+            call.respondText(
+                """{"TotalRecordCount":${matched.size},"StartIndex":0,"Items":[${matched.joinToString(",")}]}""",
+                ContentType.Application.Json,
+            )
+            return
+        }
         val parentId = call.request.queryParameters["ParentId"]
         val start = call.request.queryParameters["StartIndex"]?.toIntOrNull() ?: 0
         val limit = call.request.queryParameters["Limit"]?.toIntOrNull() ?: 50
@@ -360,12 +373,8 @@ internal class EmbeddedJellyfinTestServer(
 
     private suspend fun handleItemDetails(call: RoutingCall) {
         if (!checkAuth(call)) return
-        val item = JF_IT_ITEMS_BY_ID[call.parameters["id"]]
-        if (item == null) {
-            call.respondText("Not found", status = HttpStatusCode.NotFound)
-        } else {
-            call.respondText(item, ContentType.Application.Json)
-        }
+        // Real Jellyfin servers reject GET /Items/{id} without user context (405/400); details must use GET /Items?Ids=...
+        call.respondText("Use /Items?Ids=...", status = HttpStatusCode.MethodNotAllowed)
     }
 
     private suspend fun handleAncestors(call: RoutingCall) {

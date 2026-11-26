@@ -129,11 +129,14 @@ private fun createJellyfinMockEngine(): MockEngine =
                     """{"Id":"jf-mid","ServerName":"Studio Jellyfin","Version":"10.10.3","OperatingSystem":"Linux"}""",
                     headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
                 )
-            req.url.encodedPath == "/Items/jf-m1" ->
+            req.url.encodedPath == "/Items" && req.url.parameters["Ids"] == "jf-m1" ->
                 respond(
-                    """{"Id":"jf-m1","Name":"Jellyfin Movie","Type":"Movie","ParentId":"jf-lib1","ImageTags":{"Primary":"p1"}}""",
+                    """{"TotalRecordCount":1,"Items":[{"Id":"jf-m1","Name":"Jellyfin Movie","Type":"Movie",""" +
+                        """"ParentId":"jf-lib1","ImageTags":{"Primary":"p1"}}]}""",
                     headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
                 )
+            req.url.encodedPath == "/Items/jf-m1" ->
+                respond("", status = HttpStatusCode.MethodNotAllowed)
             req.url.encodedPath == "/Items/jf-m1/Ancestors" ->
                 respond(
                     """[{"Id":"jf-lib1","Name":"JF Movies","Type":"CollectionFolder"}]""",

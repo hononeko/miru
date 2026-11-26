@@ -1,16 +1,24 @@
 import { api, MiruApiError, unwrap } from '$api/client';
 import type { MediaDetailsResponse } from '$api/types';
 
-export type MediaDetailsFetcher = (ratingKey: string) => Promise<MediaDetailsResponse>;
+export type MediaDetailsFetcher = (ratingKey: string, serverId?: string | null) => Promise<MediaDetailsResponse>;
 
 export interface MediaDetailsOpenOptions {
 	preferSeries?: boolean;
+	serverId?: string | null;
 }
 
-async function defaultFetchMediaDetails(ratingKey: string): Promise<MediaDetailsResponse> {
+async function defaultFetchMediaDetails(
+	ratingKey: string,
+	serverId?: string | null
+): Promise<MediaDetailsResponse> {
+	const normalizedServerId = serverId?.trim() || undefined;
 	return unwrap(
 		await api.GET('/api/v1/media/{ratingKey}', {
-			params: { path: { ratingKey } }
+			params: {
+				path: { ratingKey },
+				...(normalizedServerId ? { query: { serverId: normalizedServerId } } : {})
+			}
 		})
 	);
 }
@@ -18,6 +26,7 @@ async function defaultFetchMediaDetails(ratingKey: string): Promise<MediaDetails
 export class MediaDetailsModalStore {
 	isOpen = $state(false);
 	ratingKey = $state<string | null>(null);
+	serverId = $state<string | null>(null);
 	loading = $state(false);
 	error = $state<string | null>(null);
 	data = $state<MediaDetailsResponse | null>(null);
@@ -33,16 +42,19 @@ export class MediaDetailsModalStore {
 		const trimmed = ratingKey.trim();
 		if (!trimmed) return;
 
+		const requestedServerId = options?.serverId?.trim() || null;
 		const token = ++this.requestToken;
 		this.isOpen = true;
 		this.ratingKey = trimmed;
+		this.serverId = requestedServerId;
 		this.loading = true;
 		this.error = null;
 		this.data = null;
 
 		try {
-			const response = await this.fetcher(trimmed);
+			const response = await this.fetcher(trimmed, requestedServerId);
 			if (token !== this.requestToken) return;
+			const resolvedServerId = response.serverId?.trim() || requestedServerId;
 			const seriesKey = response.series?.ratingKey?.trim();
 			if (
 				options?.preferSeries &&
@@ -51,15 +63,18 @@ export class MediaDetailsModalStore {
 				seriesKey !== response.ratingKey
 			) {
 				try {
-					const seriesResponse = await this.fetcher(seriesKey);
+					const seriesResponse = await this.fetcher(seriesKey, resolvedServerId);
 					if (token !== this.requestToken) return;
 					this.ratingKey = seriesResponse.ratingKey;
+					this.serverId = seriesResponse.serverId?.trim() || resolvedServerId;
 					this.data = seriesResponse;
 				} catch {
 					if (token !== this.requestToken) return;
+					this.serverId = resolvedServerId;
 					this.data = response;
 				}
 			} else {
+				this.serverId = resolvedServerId;
 				this.data = response;
 			}
 		} catch (err) {

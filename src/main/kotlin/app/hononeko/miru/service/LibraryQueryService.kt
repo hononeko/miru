@@ -9,9 +9,11 @@ import app.hononeko.miru.persistence.model.LibraryGrowthDayRecord
 import app.hononeko.miru.persistence.model.LibrarySectionRecord
 import app.hononeko.miru.persistence.model.LibrarySnapshotRecord
 import app.hononeko.miru.persistence.model.MediaItemCacheRecord
+import app.hononeko.miru.persistence.model.MediaServerRecord
 import app.hononeko.miru.persistence.model.StaleMediaReportRecord
 import app.hononeko.miru.persistence.model.StaleMediaSort
 import app.hononeko.miru.persistence.repository.LibraryRepository
+import app.hononeko.miru.persistence.repository.MediaServerRepository
 import arrow.core.Either
 import arrow.core.raise.either
 import arrow.core.raise.ensure
@@ -23,6 +25,12 @@ fun interface LibrarySyncTrigger {
         deep: Boolean,
         sectionKey: String?,
     ): Either<MiruError, LibrarySyncSummary>
+
+    suspend fun triggerSync(
+        deep: Boolean,
+        sectionKey: String?,
+        serverId: String?,
+    ): Either<MiruError, LibrarySyncSummary> = triggerSync(deep = deep, sectionKey = sectionKey)
 }
 
 data class LibraryStatsResult(
@@ -47,8 +55,16 @@ data class LibraryStaleResult(
 class LibraryQueryService(
     private val libraryRepository: LibraryRepository,
     private val clock: () -> Long = System::currentTimeMillis,
+    private val mediaServerRepository: MediaServerRepository? = null,
 ) {
     private val logger = LoggerFactory.getLogger(LibraryQueryService::class.java)
+
+    suspend fun loadServersById(): Map<String, MediaServerRecord> =
+        mediaServerRepository
+            ?.findAll()
+            ?.getOrNull()
+            .orEmpty()
+            .associateBy { it.id }
 
     suspend fun listLibraries(
         principal: MiruPrincipal,

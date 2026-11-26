@@ -36,6 +36,8 @@ tags:
 
   - name: Libraries
     description: Library section statistics, growth snapshots, recently added media, and manual sync triggers
+  - name: Servers
+    description: Configured media server metadata, connection health, and WebSocket readiness
   - name: Tautulli
     description: The part of Tautulli's API that Kometa and similar tools use (ENABLE_TAUTULLI_COMPAT_API)
 paths:
@@ -1556,6 +1558,58 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /api/v1/servers:
+    get:
+      tags: [Servers]
+      operationId: listServers
+      summary: List configured media servers and their connection/WebSocket status
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Configured media servers summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaServersResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/admin/servers:
+    get:
+      tags: [Admin, Servers]
+      operationId: listAdminServers
+      summary: List all media server runtimes with connection details and WebSocket readiness (admin only)
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Detailed media server connection statuses
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminServersResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
   /api/v1/media/{ratingKey}:
     get:
       tags: [Media]
@@ -1572,6 +1626,12 @@ paths:
           schema:
             type: string
             pattern: '^[A-Za-z0-9_-]+$'
+        - name: serverId
+          in: query
+          required: false
+          description: Optional media server ID to target when multiple servers are configured
+          schema:
+            type: string
       responses:
         '200':
           description: Media item details with optional series/season context and RBAC-scoped play summary
@@ -1626,6 +1686,12 @@ paths:
           schema:
             type: string
             pattern: '^[A-Za-z0-9_-]+$'
+        - name: serverId
+          in: query
+          required: false
+          description: Optional media server ID
+          schema:
+            type: string
         - name: w
           in: query
           required: false
@@ -1718,6 +1784,12 @@ paths:
           schema:
             type: string
             pattern: '^[A-Za-z0-9_-]+$'
+        - name: serverId
+          in: query
+          required: false
+          description: Optional media server ID
+          schema:
+            type: string
         - name: w
           in: query
           required: false
@@ -1881,6 +1953,12 @@ paths:
         - CookieAuth: []
         - ApiKeyAuth: []
         - BearerAuth: []
+      parameters:
+        - name: serverId
+          in: query
+          required: false
+          schema:
+            type: string
       responses:
         '200':
           description: Active streams list
@@ -1908,6 +1986,12 @@ paths:
         - CookieAuth: []
         - ApiKeyAuth: []
         - BearerAuth: []
+      parameters:
+        - name: serverId
+          in: query
+          required: false
+          schema:
+            type: string
       responses:
         '200':
           description: Server-Sent Events stream
@@ -1940,7 +2024,12 @@ paths:
         - name: sessionId
           in: path
           required: true
-          description: Plex session ID or Miru session key of the active stream
+          description: Media server session ID or Miru session key of the active stream
+          schema:
+            type: string
+        - name: serverId
+          in: query
+          required: false
           schema:
             type: string
       requestBody:
@@ -2002,6 +2091,12 @@ paths:
         - CookieAuth: []
         - ApiKeyAuth: []
         - BearerAuth: []
+      parameters:
+        - name: serverId
+          in: query
+          required: false
+          schema:
+            type: string
       responses:
         '200':
           description: List of media users
@@ -2073,6 +2168,11 @@ paths:
         - ApiKeyAuth: []
         - BearerAuth: []
       parameters:
+        - name: serverId
+          in: query
+          required: false
+          schema:
+            type: string
         - name: userId
           in: query
           required: false
@@ -2222,6 +2322,11 @@ paths:
         - ApiKeyAuth: []
         - BearerAuth: []
       parameters:
+        - name: serverId
+          in: query
+          required: false
+          schema:
+            type: string
         - name: range
           in: query
           required: false
@@ -2267,6 +2372,11 @@ paths:
         - ApiKeyAuth: []
         - BearerAuth: []
       parameters:
+        - name: serverId
+          in: query
+          required: false
+          schema:
+            type: string
         - name: range
           in: query
           required: false
@@ -2323,6 +2433,11 @@ paths:
         - ApiKeyAuth: []
         - BearerAuth: []
       parameters:
+        - name: serverId
+          in: query
+          required: false
+          schema:
+            type: string
         - name: range
           in: query
           required: false
@@ -2386,6 +2501,11 @@ paths:
             type: integer
             minimum: 1970
             maximum: 2100
+        - name: serverId
+          in: query
+          required: false
+          schema:
+            type: string
         - name: userId
           in: query
           required: false
@@ -2829,6 +2949,11 @@ paths:
             type: boolean
             default: true
         - name: sectionKey
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: serverId
           in: query
           required: false
           schema:
@@ -3516,6 +3641,12 @@ components:
       properties:
         serverId:
           type: string
+        serverName:
+          type: string
+          nullable: true
+        serverType:
+          type: string
+          nullable: true
         sessionKey:
           type: string
         sessionId:
@@ -3750,6 +3881,12 @@ components:
           type: string
         serverId:
           type: string
+        serverName:
+          type: string
+          nullable: true
+        serverType:
+          type: string
+          nullable: true
         externalUserId:
           type: string
         username:
@@ -3801,6 +3938,12 @@ components:
           type: string
         serverId:
           type: string
+        serverName:
+          type: string
+          nullable: true
+        serverType:
+          type: string
+          nullable: true
         ratingKey:
           type: string
         mediaType:
@@ -4017,6 +4160,12 @@ components:
           type: string
         serverId:
           type: string
+        serverName:
+          type: string
+          nullable: true
+        serverType:
+          type: string
+          nullable: true
         userId:
           type: string
         username:
@@ -4229,6 +4378,12 @@ components:
           type: string
         serverId:
           type: string
+        serverName:
+          type: string
+          nullable: true
+        serverType:
+          type: string
+          nullable: true
         userId:
           type: string
         username:
@@ -4755,6 +4910,12 @@ components:
           description: Opaque identifier of the section, for use as `{id}` in paths
         serverId:
           type: string
+        serverName:
+          type: string
+          nullable: true
+        serverType:
+          type: string
+          nullable: true
         sectionKey:
           type: string
         title:
@@ -4867,6 +5028,15 @@ components:
       properties:
         ratingKey:
           type: string
+        serverId:
+          type: string
+          nullable: true
+        serverName:
+          type: string
+          nullable: true
+        serverType:
+          type: string
+          nullable: true
         sectionKey:
           type: string
         mediaType:
@@ -4923,6 +5093,15 @@ components:
       properties:
         ratingKey:
           type: string
+        serverId:
+          type: string
+          nullable: true
+        serverName:
+          type: string
+          nullable: true
+        serverType:
+          type: string
+          nullable: true
         sectionKey:
           type: string
         mediaType:
@@ -5332,10 +5511,91 @@ components:
           type: integer
           format: int64
 
+    MediaServerSummaryDto:
+      type: object
+      required: [id, name, serverType, configured, reachable, websocketEnabled, websocketState]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        serverType:
+          type: string
+        configured:
+          type: boolean
+        reachable:
+          type: boolean
+        websocketEnabled:
+          type: boolean
+        websocketState:
+          type: string
+
+    MediaServersResponse:
+      type: object
+      required: [servers]
+      properties:
+        servers:
+          type: array
+          items:
+            $ref: '#/components/schemas/MediaServerSummaryDto'
+
+    AdminServerStatusDto:
+      type: object
+      required: [name, serverType, configured, credentialSource, reachable, websocketEnabled, websocketState]
+      properties:
+        id:
+          type: string
+          nullable: true
+        name:
+          type: string
+        serverType:
+          type: string
+        configured:
+          type: boolean
+        credentialSource:
+          $ref: '#/components/schemas/PlexCredentialSource'
+        machineId:
+          type: string
+          nullable: true
+        baseUrl:
+          type: string
+          nullable: true
+        reachable:
+          type: boolean
+        websocketEnabled:
+          type: boolean
+        websocketState:
+          type: string
+        statusMessage:
+          type: string
+          nullable: true
+        lastCheckedAtMs:
+          type: integer
+          format: int64
+          nullable: true
+
+    AdminServersResponse:
+      type: object
+      required: [servers]
+      properties:
+        servers:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminServerStatusDto'
+
     MediaDetailsResponse:
       type: object
       required: [ratingKey, mediaType, title, genres, directors, playSummary]
       properties:
+        serverId:
+          type: string
+          nullable: true
+        serverName:
+          type: string
+          nullable: true
+        serverType:
+          type: string
+          nullable: true
         ratingKey:
           type: string
         mediaType:

@@ -69,6 +69,7 @@ class StreamControlService(
     private val evaluator: StreamGuardrailEvaluator = StreamGuardrailEvaluator(),
     private val clock: () -> Long = System::currentTimeMillis,
     private val idGenerator: () -> String = { UUID.randomUUID().toString() },
+    private val adapterForServer: (suspend (String) -> MediaServerAdapter?)? = null,
 ) {
     private val logger = LoggerFactory.getLogger(StreamControlService::class.java)
     private val _terminatedEvents =
@@ -82,10 +83,12 @@ class StreamControlService(
         principal: MiruPrincipal,
         sessionId: String,
         reason: String?,
+        serverId: String? = null,
     ): Either<MiruError, TerminateStreamResponse> =
         either {
             principal.requireAdmin().bind()
             val trimmedSessionId = validateSessionId(sessionId).bind()
+            val normalizedServerId = serverId?.trim()?.takeIf { it.isNotEmpty() }
             val effectiveReason =
                 if (reason == null) {
                     DEFAULT_MANUAL_TERMINATION_REASON
@@ -108,7 +111,11 @@ class StreamControlService(
                         ?: DEFAULT_MANUAL_TERMINATION_REASON
                 }
 
-            val sessions = activeSessionRepository.findAll().bind()
+            val sessions =
+                activeSessionRepository
+                    .findAll()
+                    .bind()
+                    .filter { normalizedServerId == null || it.serverId == normalizedServerId }
             val session =
                 sessions.firstOrNull { it.sessionId == trimmedSessionId }
                     ?: sessions.firstOrNull { it.sessionKey == trimmedSessionId }
@@ -381,9 +388,16 @@ class StreamControlService(
         either {
             val sessionId =
                 ensureNotNull(session.sessionId?.takeIf { it.isNotBlank() }) {
-                    MiruError.Conflict("Plex has not reported a session ID for this stream, so it cannot be stopped")
+                    MiruError.Conflict("The media server has not reported a session ID for this stream, so it cannot be stopped")
                 }
-            adapter.terminateSession(sessionId, reason).bind()
+            val targetAdapter =
+                if (adapterForServer != null) {
+                    adapterForServer(session.serverId)
+                        ?: raise(MiruError.UpstreamUnavailable("server", "No active adapter for server '${session.serverId}'"))
+                } else {
+                    adapter
+                }
+            targetAdapter.terminateSession(sessionId, reason).bind()
         }
 
     /** [outcome] is null for a dry run, which does not ask the media server for anything. */

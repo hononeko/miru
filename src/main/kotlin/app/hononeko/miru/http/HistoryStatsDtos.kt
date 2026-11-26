@@ -1,16 +1,20 @@
 package app.hononeko.miru.http
 
+import app.hononeko.miru.persistence.model.MediaServerRecord
 import app.hononeko.miru.persistence.model.PlaybackHistoryRecord
 import app.hononeko.miru.persistence.model.UserRecord
 import kotlinx.serialization.Serializable
 
 private val LIBRARY_ARTWORK_PATH =
     Regex("^/library/metadata/([A-Za-z0-9_-]+)/(thumb|art)(?:/[^/?#]+)?/?(?:\\?.*)?$")
+private val JELLYFIN_ARTWORK_PATH =
+    Regex("^/Items/([A-Za-z0-9_-]+)/Images/(Primary|Backdrop)(?:/[^/?#]+)?/?(?:\\?.*)?$")
 
 /**
- * Proxy URL for a media item's artwork (`thumb` or `art`). Plex points child items (episodes, seasons,
- * music tracks) at their parent's artwork path (`/library/metadata/<parentKey>/<kind>/...`), so the
- * rating key comes from the path when it names one for the requested kind.
+ * Proxy URL for a media item's artwork (`thumb` or `art`). Media servers often point child items
+ * (episodes, seasons, music tracks) at their parent's artwork path (`/library/metadata/<parentKey>/<kind>/...`
+ * for Plex or `/Items/<parentKey>/Images/(Primary|Backdrop)` for Jellyfin), so the rating key comes
+ * from the path when it names one for the requested kind.
  */
 internal fun buildMediaArtworkUrl(
     ratingKey: String,
@@ -18,12 +22,18 @@ internal fun buildMediaArtworkUrl(
     kind: String,
 ): String? {
     val path = artworkPath?.trim()?.takeIf { it.isNotEmpty() } ?: return null
-    val match = LIBRARY_ARTWORK_PATH.matchEntire(path)
+    val plexMatch = LIBRARY_ARTWORK_PATH.matchEntire(path)
     val targetKey =
-        if (match != null && match.groupValues[2] == kind) {
-            match.groupValues[1]
+        if (plexMatch != null && plexMatch.groupValues[2] == kind) {
+            plexMatch.groupValues[1]
         } else {
-            ratingKey
+            val jfMatch = JELLYFIN_ARTWORK_PATH.matchEntire(path)
+            val jfKind = jfMatch?.groupValues?.getOrNull(2)?.let { if (it == "Primary") "thumb" else "art" }
+            if (jfMatch != null && jfKind == kind) {
+                jfMatch.groupValues[1]
+            } else {
+                ratingKey
+            }
         }
     return "/api/v1/media/$targetKey/$kind"
 }
@@ -39,6 +49,8 @@ internal fun String?.normalizedDisplayName(): String? = this?.trim()?.takeIf { i
 data class HistoryItemDto(
     val id: String,
     val serverId: String,
+    val serverName: String? = null,
+    val serverType: String? = null,
     val userId: String,
     val username: String? = null,
     /** The user's name from the media server (e.g. a Plex friend's first name), when it has one. */
@@ -124,6 +136,8 @@ data class HistoryPlayerDto(
 data class HistoryDetailResponse(
     val id: String,
     val serverId: String,
+    val serverName: String? = null,
+    val serverType: String? = null,
     val userId: String,
     val username: String? = null,
     /** The user's name from the media server (e.g. a Plex friend's first name), when it has one. */
@@ -334,10 +348,15 @@ data class UserStatsResponse(
     val libraryBreakdown: List<LibraryBreakdownDto>,
 )
 
-internal fun PlaybackHistoryRecord.toHistoryItemDto(user: UserRecord?): HistoryItemDto =
+internal fun PlaybackHistoryRecord.toHistoryItemDto(
+    user: UserRecord?,
+    server: MediaServerRecord? = null,
+): HistoryItemDto =
     HistoryItemDto(
         id = id,
         serverId = serverId,
+        serverName = server?.name?.normalizedDisplayName(),
+        serverType = server?.serverType?.lowercase(),
         userId = userId,
         username = user?.username,
         displayName = user?.displayName.normalizedDisplayName(),
@@ -367,10 +386,15 @@ internal fun PlaybackHistoryRecord.toHistoryItemDto(user: UserRecord?): HistoryI
         stoppedAtMs = stoppedAtMs,
     )
 
-internal fun PlaybackHistoryRecord.toHistoryDetailResponse(user: UserRecord?): HistoryDetailResponse =
+internal fun PlaybackHistoryRecord.toHistoryDetailResponse(
+    user: UserRecord?,
+    server: MediaServerRecord? = null,
+): HistoryDetailResponse =
     HistoryDetailResponse(
         id = id,
         serverId = serverId,
+        serverName = server?.name?.normalizedDisplayName(),
+        serverType = server?.serverType?.lowercase(),
         userId = userId,
         username = user?.username,
         displayName = user?.displayName.normalizedDisplayName(),

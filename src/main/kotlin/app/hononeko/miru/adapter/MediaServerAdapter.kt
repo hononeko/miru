@@ -47,6 +47,11 @@ interface MediaServerAdapter {
         height: Int? = null,
     ): Either<MiruError, ArtworkData>
 
+    fun mediaArtworkPath(
+        ratingKey: String,
+        isBackdrop: Boolean,
+    ): String = "/library/metadata/$ratingKey/${if (isBackdrop) "art" else "thumb"}"
+
     suspend fun terminateSession(
         sessionId: String,
         reason: String,

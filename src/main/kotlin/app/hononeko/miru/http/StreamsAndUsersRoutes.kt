@@ -43,15 +43,17 @@ fun Route.streamsAndUsersRoutes(
     authenticated(authService = authService, authMode = authMode) {
         route("/api/v1/streams") {
             get {
+                val serverId = call.request.queryParameters["serverId"]
                 val result =
                     either {
                         val principal = call.requireMiruPrincipal().bind()
-                        streamsAndUsersService.listActiveStreams(principal).bind()
+                        streamsAndUsersService.listActiveStreams(principal, serverId = serverId).bind()
                     }
                 call.respondEither(result)
             }
 
             sse("/events") {
+                val serverId = call.request.queryParameters["serverId"]?.trim()?.takeIf { it.isNotEmpty() }
                 val principal =
                     call.requireMiruPrincipal().fold(
                         ifLeft = { error ->
@@ -65,6 +67,7 @@ fun Route.streamsAndUsersRoutes(
                     streamsAndUsersService = streamsAndUsersService,
                     sessionEvents = sessionEvents,
                     keepaliveInterval = keepaliveInterval,
+                    serverId = serverId,
                 )
             }
         }
@@ -85,10 +88,11 @@ fun Route.streamsAndUsersRoutes(
     authenticated(authService = authService, authMode = authMode, requiredRole = MiruRole.ADMIN) {
         route("/api/v1/users") {
             get {
+                val serverId = call.request.queryParameters["serverId"]
                 val result =
                     either {
                         val principal = call.requireMiruPrincipal().bind()
-                        streamsAndUsersService.listUsers(principal).bind()
+                        streamsAndUsersService.listUsers(principal, serverId = serverId).bind()
                     }
                 call.respondEither(result)
             }
@@ -101,9 +105,10 @@ private suspend fun ServerSSESession.streamEventsSse(
     streamsAndUsersService: StreamsAndUsersService,
     sessionEvents: SharedFlow<SessionEvent>?,
     keepaliveInterval: Duration,
+    serverId: String? = null,
 ) {
     val snapshot =
-        streamsAndUsersService.listActiveStreams(principal).fold(
+        streamsAndUsersService.listActiveStreams(principal, serverId = serverId).fold(
             ifLeft = { error ->
                 logger.warn("Failed to build initial stream snapshot for SSE: {}", error.message)
                 return
@@ -125,7 +130,9 @@ private suspend fun ServerSSESession.streamEventsSse(
                     awaitCancellation()
                 } else {
                     sessionEvents.collect { event ->
-                        if (principal.canAccessMediaUser(event.sessionUserId())) {
+                        if (principal.canAccessMediaUser(event.sessionUserId()) &&
+                            (serverId == null || event.serverId == serverId)
+                        ) {
                             val sseEvent = buildSseEvent(event, streamsAndUsersService)
                             if (sseEvent != null && !trySendEvent(sseEvent)) {
                                 pingJob.cancel()

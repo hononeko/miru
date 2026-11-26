@@ -8,10 +8,13 @@
 	import Button from '$components/ui/Button.svelte';
 	import Sheet from '$components/ui/Sheet.svelte';
 	import PlayDetailContent from '$components/miru/PlayDetailContent.svelte';
+	import ServerBadge from '$components/miru/ServerBadge.svelte';
+	import ServerFilterBar from '$components/miru/ServerFilterBar.svelte';
 	import UnlinkedUserEmptyState from '$components/miru/UnlinkedUserEmptyState.svelte';
 	import { authStore } from '$stores/auth.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
 	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
+	import { serversStore } from '$stores/servers.svelte';
 	import { latestRequest } from '$lib/latestRequest';
 	import {
 		cn,
@@ -55,6 +58,7 @@
 
 	let searchInput = $state('');
 	let q = $state('');
+	let selectedServerId = $state<string | null>(null);
 	let userId = $state('');
 	let mediaType = $state<MediaFilter>('');
 	let decision = $state<DecisionFilter>('');
@@ -93,19 +97,22 @@
 		if (debounceTimer) clearTimeout(debounceTimer);
 		searchInput = '';
 		q = '';
+		selectedServerId = null;
 		userId = '';
 		mediaType = '';
 		decision = '';
 		pageNum = 1;
 	}
 
-	async function loadUsers() {
+	async function loadUsers(serverId: string | null = selectedServerId) {
 		if (!authStore.isAdmin) {
 			users = [];
 			return;
 		}
 		try {
-			const res = unwrap(await api.GET('/api/v1/users'));
+			const res = unwrap(
+				await api.GET('/api/v1/users', serverId ? { params: { query: { serverId } } } : undefined)
+			);
 			users = res.users;
 		} catch {
 			// Optional user filter dropdown
@@ -133,6 +140,7 @@
 					params: {
 						query: {
 							q: q || undefined,
+							serverId: selectedServerId || undefined,
 							userId: authStore.isAdmin ? userId || undefined : undefined,
 							mediaType: mediaType || undefined,
 							decision: decision || undefined,
@@ -179,17 +187,19 @@
 	}
 
 	/** The sheet closes first: its focus trap and dismiss handling do not work around a dialog on top of it. */
-	async function openMediaFromDetail(ratingKey: string) {
+	async function openMediaFromDetail(ratingKey: string, serverId?: string | null) {
 		detailOpen = false;
 		await tick();
-		void mediaDetailsModal.open(ratingKey);
+		const sid = serverId?.trim();
+		void mediaDetailsModal.open(ratingKey, sid ? { serverId: sid } : undefined);
 	}
 
 	onMount(() => {
-		void loadUsers();
+		void loadUsers(selectedServerId);
 	});
 
 	let lastUrlQ = $state<string | null>(null);
+	let lastUrlServerId = $state<string | null>(null);
 	$effect(() => {
 		const paramQ = page.url.searchParams.get('q')?.trim() ?? '';
 		if (paramQ !== lastUrlQ) {
@@ -200,12 +210,21 @@
 				pageNum = 1;
 			}
 		}
+		const paramServerId = page.url.searchParams.get('serverId')?.trim() || null;
+		if (paramServerId !== lastUrlServerId) {
+			lastUrlServerId = paramServerId;
+			if (paramServerId) {
+				selectedServerId = paramServerId;
+				pageNum = 1;
+			}
+		}
 	});
 
 	$effect(() => {
 		// Re-run whenever query inputs change
 		void authStore.isUnlinkedUser;
 		void q;
+		void selectedServerId;
 		void userId;
 		void mediaType;
 		void decision;
@@ -217,7 +236,9 @@
 	});
 
 	// The text as typed, so that Reset is there before the search is applied and for blank searches too
-	const hasActiveFilters = $derived(Boolean(searchInput || q || userId || mediaType || decision));
+	const hasActiveFilters = $derived(
+		Boolean(searchInput || q || selectedServerId || userId || mediaType || decision)
+	);
 </script>
 
 <svelte:head>
@@ -243,6 +264,16 @@
 	{#if authStore.isUnlinkedUser}
 		<UnlinkedUserEmptyState context="playback history" />
 	{:else}
+	<ServerFilterBar
+		{selectedServerId}
+		onchange={(serverId) => {
+			selectedServerId = serverId;
+			userId = '';
+			pageNum = 1;
+			void loadUsers(serverId);
+		}}
+	/>
+
 	<!-- Filter Toolbar -->
 	<div class="flex flex-col gap-2.5 lg:flex-row lg:items-center">
 		<div class="relative flex-1">
@@ -423,7 +454,8 @@
 										type="button"
 										onclick={(e) => {
 											e.stopPropagation();
-											void mediaDetailsModal.open(item.ratingKey);
+											const sid = item.serverId?.trim();
+											void mediaDetailsModal.open(item.ratingKey, sid ? { serverId: sid } : undefined);
 										}}
 										class="block max-w-full cursor-pointer text-left hover:text-cyan-hi hover:underline"
 									>
@@ -431,7 +463,16 @@
 											{titles.primary}
 										</p>
 									</button>
-									<p class="truncate text-[11px] text-fg-muted">{titles.secondary}</p>
+									<div class="flex flex-wrap items-center gap-1.5">
+										<p class="truncate text-[11px] text-fg-muted">{titles.secondary}</p>
+										{#if serversStore.hasMultipleServers}
+											<ServerBadge
+												serverId={item.serverId}
+												serverType={item.serverType}
+												serverName={item.serverName}
+											/>
+										{/if}
+									</div>
 								</td>
 								<td class="whitespace-nowrap px-4 py-3 text-fg-secondary">
 									{item.playerName || item.playerProduct || item.playerPlatform || '—'}
@@ -485,7 +526,10 @@
 						<div class="min-w-0">
 							<button
 								type="button"
-								onclick={() => void mediaDetailsModal.open(item.ratingKey)}
+								onclick={() => {
+									const sid = item.serverId?.trim();
+									void mediaDetailsModal.open(item.ratingKey, sid ? { serverId: sid } : undefined);
+								}}
 								class="block max-w-full cursor-pointer text-left hover:text-cyan-hi hover:underline"
 							>
 								<p class="truncate font-heading text-sm font-semibold text-fg-primary">
@@ -495,6 +539,15 @@
 							<p class="truncate text-[11px] text-fg-secondary">
 								{titles.secondary} · {item.displayName || item.username || item.userId}
 							</p>
+							{#if serversStore.hasMultipleServers}
+								<div class="mt-1">
+									<ServerBadge
+										serverId={item.serverId}
+										serverType={item.serverType}
+										serverName={item.serverName}
+									/>
+								</div>
+							{/if}
 						</div>
 						<span
 							class={cn(
@@ -570,6 +623,9 @@
 			{detailError}
 		</div>
 	{:else if detail}
-		<PlayDetailContent {detail} onopenMedia={(ratingKey) => void openMediaFromDetail(ratingKey)} />
+		<PlayDetailContent
+			{detail}
+			onopenMedia={(ratingKey, serverId) => void openMediaFromDetail(ratingKey, serverId)}
+		/>
 	{/if}
 </Sheet>

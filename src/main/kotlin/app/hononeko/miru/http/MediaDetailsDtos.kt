@@ -5,6 +5,7 @@ import app.hononeko.miru.adapter.MediaTechnicalSpecs
 import app.hononeko.miru.adapter.SeasonDetailsInfo
 import app.hononeko.miru.adapter.SeriesOverviewInfo
 import app.hononeko.miru.persistence.model.MediaPlaySummary
+import app.hononeko.miru.persistence.model.MediaServerRecord
 import kotlinx.serialization.Serializable
 
 private const val MILLIS_PER_SECOND = 1_000L
@@ -72,6 +73,9 @@ data class MediaPlaySummaryDto(
 
 @Serializable
 data class MediaDetailsResponse(
+    val serverId: String? = null,
+    val serverName: String? = null,
+    val serverType: String? = null,
     val ratingKey: String,
     val mediaType: String,
     val title: String,
@@ -159,8 +163,12 @@ internal fun MediaPlaySummary.toDto(): MediaPlaySummaryDto =
 internal fun MediaItemDetails.toResponse(
     playSummary: MediaPlaySummary,
     seriesPlaySummary: MediaPlaySummary? = null,
+    server: MediaServerRecord? = null,
 ): MediaDetailsResponse =
     MediaDetailsResponse(
+        serverId = server?.id,
+        serverName = server?.name?.normalizedDisplayName(),
+        serverType = server?.serverType?.lowercase(),
         ratingKey = ratingKey,
         mediaType = mediaType.name.lowercase(),
         title = title,

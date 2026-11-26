@@ -68,6 +68,21 @@ data class PlexConfig(
     }
 }
 
+data class JellyfinConfig(
+    val baseUrl: String = "",
+    val apiKey: String = "",
+    val pollIntervalSeconds: Int = 20,
+    val websocketEnabled: Boolean = true,
+    val clientIdentifier: String? = null,
+) {
+    val isConfigured: Boolean
+        get() = baseUrl.isNotBlank() && apiKey.isNotBlank()
+
+    override fun toString(): String =
+        "JellyfinConfig(baseUrl=$baseUrl, apiKey=***, pollIntervalSeconds=$pollIntervalSeconds, " +
+            "websocketEnabled=$websocketEnabled, clientIdentifier=$clientIdentifier)"
+}
+
 data class SessionConfig(
     val minPlayDurationSeconds: Int = 120,
     val resumeMergeWindowSeconds: Int = 120,
@@ -192,6 +207,7 @@ data class AppConfig(
     val guardrails: GuardrailsConfig = GuardrailsConfig(),
     val tautulliCompat: TautulliCompatConfig = TautulliCompatConfig(),
     val metrics: MetricsConfig = MetricsConfig(),
+    val jellyfin: JellyfinConfig = JellyfinConfig(),
 )
 
 data class DatabaseAndSessionConfig(
@@ -216,6 +232,7 @@ object AppConfigLoader {
             val server = parseServerConfig(get, errors)
             val database = parseDatabaseConfig(get, errors)
             val plex = parsePlexConfig(get, errors)
+            val jellyfin = parseJellyfinConfig(get, errors)
             val session = parseSessionConfig(get, errors)
             val auth = parseAuthConfig(get, errors)
             val guardrails = parseGuardrailsConfig(get, errors)
@@ -238,6 +255,7 @@ object AppConfigLoader {
                 guardrails = guardrails,
                 tautulliCompat = tautulliCompat,
                 metrics = metrics,
+                jellyfin = jellyfin,
             )
         }
 
@@ -412,6 +430,45 @@ object AppConfigLoader {
             encryptionKey = encryptionKey,
             clientIdentifier = clientIdentifier,
             plexTvBaseUrl = plexTvBaseUrl,
+        )
+    }
+
+    private fun parseJellyfinConfig(
+        get: (String, String, String?) -> String?,
+        errors: MutableMap<String, String>,
+    ): JellyfinConfig {
+        val baseUrl = get("JELLYFIN_URL", "miru.jellyfin.url", null).orEmpty().trimEnd('/')
+        val apiKey = get("JELLYFIN_API_KEY", "miru.jellyfin.apiKey", null).orEmpty()
+
+        if (baseUrl.isNotBlank() && !isValidHttpUrl(baseUrl)) {
+            errors["JELLYFIN_URL"] = "must be a valid http:// or https:// URL"
+        }
+        if (baseUrl.isNotBlank() && apiKey.isBlank()) {
+            errors["JELLYFIN_API_KEY"] = "is required when JELLYFIN_URL is set"
+        } else if (baseUrl.isBlank() && apiKey.isNotBlank()) {
+            errors["JELLYFIN_URL"] = "is required when JELLYFIN_API_KEY is set"
+        }
+
+        val pollRaw = get("JELLYFIN_POLL_INTERVAL_SECONDS", "miru.jellyfin.pollIntervalSeconds", null) ?: "20"
+        val pollSeconds = pollRaw.toIntOrNull()
+        if (pollSeconds == null || pollSeconds < MIN_POLL_INTERVAL_SECONDS) {
+            errors["JELLYFIN_POLL_INTERVAL_SECONDS"] = "must be an integer >= $MIN_POLL_INTERVAL_SECONDS"
+        }
+
+        val wsRaw = get("JELLYFIN_WEBSOCKET_ENABLED", "miru.jellyfin.websocketEnabled", null) ?: "true"
+        val wsEnabled = wsRaw.toBooleanStrictOrNull()
+        if (wsEnabled == null) {
+            errors["JELLYFIN_WEBSOCKET_ENABLED"] = "must be 'true' or 'false'"
+        }
+
+        val clientIdentifier = get("JELLYFIN_CLIENT_IDENTIFIER", "miru.jellyfin.clientIdentifier", null)
+
+        return JellyfinConfig(
+            baseUrl = baseUrl,
+            apiKey = apiKey,
+            pollIntervalSeconds = pollSeconds ?: 20,
+            websocketEnabled = wsEnabled ?: true,
+            clientIdentifier = clientIdentifier,
         )
     }
 

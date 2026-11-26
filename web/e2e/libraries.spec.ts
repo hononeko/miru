@@ -145,6 +145,6 @@ test.describe('Libraries browsing, admin-triggered deep sync & media details', (
 		await loginViaUi(page, miru.baseUrl, 'unlinked_viewer', VIEWER_PASSWORD);
 		await page.getByRole('navigation', { name: 'Primary navigation' }).getByRole('link', { name: 'Libraries' }).click();
 		await expect(page).toHaveURL(`${miru.baseUrl}/libraries`);
-		await expect(page.getByText('No Plex user linked to your account')).toBeVisible();
+		await expect(page.getByText('No media user linked to your account')).toBeVisible();
 	});
 });

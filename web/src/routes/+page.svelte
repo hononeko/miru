@@ -16,6 +16,7 @@
 	import RangeTabs from '$components/ui/RangeTabs.svelte';
 	import KpiCard from '$components/miru/KpiCard.svelte';
 	import StreamCard from '$components/miru/StreamCard.svelte';
+	import ServerFilterBar from '$components/miru/ServerFilterBar.svelte';
 	import TerminateStreamSheet from '$components/miru/TerminateStreamSheet.svelte';
 	import UnlinkedUserEmptyState from '$components/miru/UnlinkedUserEmptyState.svelte';
 	import BarChart, { type BarPoint, type BarSegment } from '$components/miru/BarChart.svelte';
@@ -25,6 +26,7 @@
 	import { authStore } from '$stores/auth.svelte';
 	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
+	import { serversStore } from '$stores/servers.svelte';
 	import { streamsStore } from '$stores/streams.svelte';
 	import { TerminationTracker } from '$stores/terminations.svelte';
 	import {
@@ -50,6 +52,7 @@
 	let loadingHeatmap = $state(true);
 	let statsError = $state<string | null>(null);
 	let plexStatus = $state<PlexConnectionStatus | null>(null);
+	let selectedServerId = $state<string | null>(null);
 	let terminateTarget = $state<ActiveStreamDto | null>(null);
 	let terminateSheetOpen = $state(false);
 	const terminations = new TerminationTracker();
@@ -92,7 +95,11 @@
 	const startOverviewRequest = latestRequest();
 	const startHeatmapRequest = latestRequest();
 
-	async function loadOverview(selectedRange: StatsRange, selectedMetric: AnalyticsMetricPreference) {
+	async function loadOverview(
+		selectedRange: StatsRange,
+		selectedMetric: AnalyticsMetricPreference,
+		serverId: string | null
+	) {
 		const isLatest = startOverviewRequest();
 		if (authStore.isUnlinkedUser) {
 			overview = null;
@@ -103,14 +110,15 @@
 		}
 		loadingStats = true;
 		statsError = null;
+		const query = {
+			range: selectedRange,
+			metric: selectedMetric,
+			...(serverId ? { serverId } : {})
+		};
 		try {
 			const [overviewRes, clientsRes] = await Promise.all([
-				api.GET('/api/v1/stats/overview', {
-					params: { query: { range: selectedRange, metric: selectedMetric } }
-				}),
-				api.GET('/api/v1/stats/clients', {
-					params: { query: { range: selectedRange, metric: selectedMetric } }
-				})
+				api.GET('/api/v1/stats/overview', { params: { query } }),
+				api.GET('/api/v1/stats/clients', { params: { query } })
 			]);
 			if (!isLatest()) return;
 			overview = unwrap(overviewRes);
@@ -125,7 +133,8 @@
 
 	async function loadHeatmap(
 		selectedHeatmapRange: HeatmapRange,
-		selectedMetric: AnalyticsMetricPreference
+		selectedMetric: AnalyticsMetricPreference,
+		serverId: string | null
 	) {
 		const isLatest = startHeatmapRequest();
 		if (authStore.isUnlinkedUser) {
@@ -137,7 +146,13 @@
 		try {
 			const res = unwrap(
 				await api.GET('/api/v1/stats/heatmap', {
-					params: { query: { range: selectedHeatmapRange, metric: selectedMetric } }
+					params: {
+						query: {
+							range: selectedHeatmapRange,
+							metric: selectedMetric,
+							...(serverId ? { serverId } : {})
+						}
+					}
 				})
 			);
 			if (isLatest()) heatmap = res;
@@ -150,19 +165,43 @@
 
 	$effect(() => {
 		void authStore.isUnlinkedUser;
-		void loadOverview(range, analyticsMetric);
+		void loadOverview(range, analyticsMetric, selectedServerId);
 	});
 
 	$effect(() => {
 		void authStore.isUnlinkedUser;
-		void loadHeatmap(heatmapRange, analyticsMetric);
+		void loadHeatmap(heatmapRange, analyticsMetric, selectedServerId);
 	});
 
+	const visibleStreams = $derived(
+		selectedServerId
+			? streamsStore.streams.filter((s) => s.serverId === selectedServerId)
+			: streamsStore.streams
+	);
+	const visibleTotalBandwidthKbps = $derived(
+		selectedServerId
+			? visibleStreams.reduce((sum, s) => sum + (s.technical.bandwidthKbps ?? 0), 0)
+			: streamsStore.totalBandwidthKbps
+	);
+	const visibleLanBandwidthKbps = $derived(
+		selectedServerId
+			? visibleStreams
+					.filter((s) => (s.player.location ?? 'lan').toLowerCase() !== 'wan')
+					.reduce((sum, s) => sum + (s.technical.bandwidthKbps ?? 0), 0)
+			: streamsStore.lanBandwidthKbps
+	);
+	const visibleWanBandwidthKbps = $derived(
+		selectedServerId
+			? visibleStreams
+					.filter((s) => (s.player.location ?? 'lan').toLowerCase() === 'wan')
+					.reduce((sum, s) => sum + (s.technical.bandwidthKbps ?? 0), 0)
+			: streamsStore.wanBandwidthKbps
+	);
 	const playingCount = $derived(
-		streamsStore.streams.filter((s) => s.state.toLowerCase() === 'playing').length
+		visibleStreams.filter((s) => s.state.toLowerCase() === 'playing').length
 	);
 	const pausedCount = $derived(
-		streamsStore.streams.filter((s) => s.state.toLowerCase() === 'paused').length
+		visibleStreams.filter((s) => s.state.toLowerCase() === 'paused').length
 	);
 
 	let nowMs = $state(Date.now());
@@ -189,7 +228,7 @@
 		let hwKbps = 0;
 		let swCount = 0;
 		let swKbps = 0;
-		for (const s of streamsStore.streams) {
+		for (const s of visibleStreams) {
 			const bw = s.technical.bandwidthKbps ?? 0;
 			const dec = s.technical.streamDecision.toLowerCase();
 			if (dec === 'direct_play') {
@@ -206,7 +245,7 @@
 				swKbps += bw;
 			}
 		}
-		const total = Math.max(1, streamsStore.totalBandwidthKbps);
+		const total = Math.max(1, visibleTotalBandwidthKbps);
 		return [
 			{ label: 'Direct Play', count: dpCount, kbps: dpKbps, pct: (dpKbps / total) * 100, barClass: 'bg-direct-play' },
 			{ label: 'Direct Stream', count: dsCount, kbps: dsKbps, pct: (dsKbps / total) * 100, barClass: 'bg-direct-stream' },
@@ -385,14 +424,15 @@
 	{#if authStore.isUnlinkedUser}
 		<UnlinkedUserEmptyState context="live streams and playback telemetry" />
 	{:else}
+		<ServerFilterBar {selectedServerId} onchange={(id) => (selectedServerId = id)} />
 		<!-- KPI Strip -->
-		{#if authStore.isAdmin && plexStatus?.credentialSource === 'NOT_CONFIGURED'}
+		{#if authStore.isAdmin && plexStatus?.credentialSource === 'NOT_CONFIGURED' && !serversStore.servers.some((s) => s.configured)}
 		<div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-cyan/40 bg-cyan-soft/50 px-4 py-3 text-xs">
 			<div class="flex items-center gap-2.5">
 				<Server class="h-4 w-4 shrink-0 text-cyan-hi" />
 				<div>
-					<p class="font-heading font-semibold text-fg-primary">Connect your Plex Media Server</p>
-					<p class="text-fg-secondary">Sign in with Plex PIN OAuth in Admin to start tracking live streams and history.</p>
+					<p class="font-heading font-semibold text-fg-primary">Connect your Media Server</p>
+					<p class="text-fg-secondary">Sign in with Plex PIN OAuth in Admin or configure Jellyfin environment variables to start tracking live streams.</p>
 				</div>
 			</div>
 			<a
@@ -408,14 +448,14 @@
 	<section class="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4" aria-label="Key telemetry metrics">
 		<KpiCard
 			label="Active Streams"
-			value={String(streamsStore.totalCount)}
+			value={String(selectedServerId ? visibleStreams.length : streamsStore.totalCount)}
 			subtitle={`${playingCount} playing · ${pausedCount} paused`}
 			dotClass="bg-direct-play"
 		/>
 		<KpiCard
 			label="Total Bandwidth"
-			value={formatBandwidthKbps(streamsStore.totalBandwidthKbps)}
-			subtitle={`LAN ${formatBandwidthKbps(streamsStore.lanBandwidthKbps)} · WAN ${formatBandwidthKbps(streamsStore.wanBandwidthKbps)}`}
+			value={formatBandwidthKbps(visibleTotalBandwidthKbps)}
+			subtitle={`LAN ${formatBandwidthKbps(visibleLanBandwidthKbps)} · WAN ${formatBandwidthKbps(visibleWanBandwidthKbps)}`}
 			dotClass="bg-cyan"
 		/>
 		<KpiCard
@@ -459,7 +499,7 @@
 	<section class="flex flex-col gap-3">
 		<div class="flex items-center justify-between gap-2">
 			<h2 class="font-heading text-base font-semibold text-fg-primary">
-				Active Streams ({streamsStore.totalCount})
+				Active Streams ({selectedServerId ? visibleStreams.length : streamsStore.totalCount})
 			</h2>
 			{#if showLastUpdated && streamsStore.lastUpdatedAtMs}
 				<span class="font-mono text-[11px] text-fg-muted">
@@ -489,10 +529,10 @@
 						</p>
 						<p class="mt-0.5 text-[11px] text-fg-secondary">
 							{#if notice.overdue}
-								Plex accepted the termination, but the stream has not stopped. You can terminate it again.
+								The media server accepted the termination, but the stream has not stopped. You can terminate it again.
 							{:else}
 								Viewer message: &ldquo;{notice.reason}&rdquo; · Buffered content can keep playing for a few
-								seconds until the app checks in with Plex.
+								seconds until the app checks in with the server.
 							{/if}
 						</p>
 					</div>
@@ -508,7 +548,7 @@
 			</div>
 		{/each}
 
-		{#if streamsStore.streams.length === 0}
+		{#if visibleStreams.length === 0}
 			<div
 				class="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border-strong bg-surface/60 px-6 py-12 text-center"
 			>
@@ -521,9 +561,9 @@
 				</p>
 			</div>
 		{:else}
-			{@const isEvenStreams = streamsStore.streams.length % 2 === 0}
+			{@const isEvenStreams = visibleStreams.length % 2 === 0}
 			<div class="grid grid-cols-1 gap-4 xl:grid-cols-2">
-				{#each streamsStore.streams as stream (`${stream.serverId}:${stream.sessionKey}:${stream.media.ratingKey}`)}
+				{#each visibleStreams as stream (`${stream.serverId}:${stream.sessionKey}:${stream.media.ratingKey}`)}
 					<StreamCard
 						{stream}
 						onTerminate={authStore.isAdmin ? openTerminateSheet : undefined}
@@ -659,7 +699,8 @@
 													onclick={() => {
 														close();
 														void mediaDetailsModal.open(item.ratingKey, {
-															preferSeries: item.mediaType === 'show'
+															preferSeries: item.mediaType === 'show',
+															...(selectedServerId ? { serverId: selectedServerId } : {})
 														});
 													}}
 													class="group flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg bg-elevated px-2.5 py-1.5 text-left transition-colors hover:bg-subtle/80 focus-visible:outline-1 focus-visible:outline-cyan"
@@ -699,7 +740,8 @@
 								type="button"
 								onclick={() =>
 									void mediaDetailsModal.open(item.ratingKey, {
-										preferSeries: item.kind === 'TV Show'
+										preferSeries: item.kind === 'TV Show',
+										...(selectedServerId ? { serverId: selectedServerId } : {})
 									})}
 								class="group flex w-full cursor-pointer items-center justify-between gap-3 rounded-lg border border-transparent bg-elevated px-3 py-2 text-left transition-[background-color,border-color,transform] duration-150 ease-[var(--ease-out-quart)] hover:border-cyan/50 hover:bg-subtle/60 active:scale-[0.99] motion-reduce:active:scale-100 focus-visible:border-cyan focus-visible:outline-none"
 							>

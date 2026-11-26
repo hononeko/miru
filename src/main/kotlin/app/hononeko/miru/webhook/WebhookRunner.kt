@@ -1,5 +1,6 @@
 package app.hononeko.miru.webhook
 
+import app.hononeko.miru.persistence.model.ActiveSessionRecord
 import app.hononeko.miru.persistence.repository.UserRepository
 import app.hononeko.miru.persistence.repository.WebhookTargetRepository
 import app.hononeko.miru.session.SessionEvent
@@ -15,12 +16,13 @@ import kotlinx.coroutines.supervisorScope
 import org.slf4j.LoggerFactory
 
 /**
- * Listens to live session events, stream terminations, and Plex reconcile health transitions,
+ * Listens to live session events, stream terminations, and media server reconcile health transitions,
  * evaluates subscribed webhook targets, and enqueues non-blocking deliveries on [WebhookDispatcher].
  */
 @Suppress("LongParameterList")
 class WebhookRunner(
-    private val sessionEngine: SessionStateEngine,
+    private val sessionEvents: SharedFlow<SessionEvent>,
+    private val currentSessionsProvider: suspend () -> List<ActiveSessionRecord>,
     private val terminatedEvents: SharedFlow<StreamTerminatedEvent>,
     private val reconcileHealthSignals: SharedFlow<ReconcileHealthSignal>,
     private val targetRepository: WebhookTargetRepository,
@@ -29,7 +31,32 @@ class WebhookRunner(
     private val evaluator: WebhookEventEvaluator,
     private val dispatcher: WebhookDispatcher,
     private val scope: CoroutineScope,
+    private val serverInfoByIdProvider: suspend (String) -> WebhookServerPayload? = { serverInfoProvider() },
 ) {
+    @Suppress("LongParameterList")
+    constructor(
+        sessionEngine: SessionStateEngine,
+        terminatedEvents: SharedFlow<StreamTerminatedEvent>,
+        reconcileHealthSignals: SharedFlow<ReconcileHealthSignal>,
+        targetRepository: WebhookTargetRepository,
+        userRepository: UserRepository,
+        serverInfoProvider: suspend () -> WebhookServerPayload?,
+        evaluator: WebhookEventEvaluator,
+        dispatcher: WebhookDispatcher,
+        scope: CoroutineScope,
+    ) : this(
+        sessionEvents = sessionEngine.sessionEvents,
+        currentSessionsProvider = { sessionEngine.currentSessions() },
+        terminatedEvents = terminatedEvents,
+        reconcileHealthSignals = reconcileHealthSignals,
+        targetRepository = targetRepository,
+        userRepository = userRepository,
+        serverInfoProvider = serverInfoProvider,
+        evaluator = evaluator,
+        dispatcher = dispatcher,
+        scope = scope,
+    )
+
     private val logger = LoggerFactory.getLogger(WebhookRunner::class.java)
     private val lock = Any()
     private var job: Job? = null
@@ -48,7 +75,7 @@ class WebhookRunner(
     private suspend fun run() {
         supervisorScope {
             launch(CoroutineName("webhook-runner-sessions")) {
-                sessionEngine.sessionEvents.collect { event ->
+                sessionEvents.collect { event ->
                     handleSessionEvent(event)
                 }
             }
@@ -68,7 +95,7 @@ class WebhookRunner(
     private suspend fun handleSessionEvent(event: SessionEvent) {
         try {
             val targets = loadEnabledTargets()
-            val activeSessions = sessionEngine.currentSessions()
+            val activeSessions = currentSessionsProvider()
             val server = if (targets.isNotEmpty()) resolveServerPayload(event.serverId) else null
             val user =
                 if (targets.isNotEmpty() && event !is SessionEvent.SessionStopped) {
@@ -113,7 +140,12 @@ class WebhookRunner(
     private suspend fun handleReconcileHealth(signal: ReconcileHealthSignal) {
         try {
             val targets = loadEnabledTargets()
-            val server = if (targets.isNotEmpty()) serverInfoProvider() else null
+            val server =
+                if (targets.isNotEmpty()) {
+                    signal.serverId?.let { serverInfoByIdProvider(it) } ?: serverInfoProvider()
+                } else {
+                    null
+                }
             val matches = evaluator.onReconcileHealth(signal, targets, server)
             for (match in matches) {
                 dispatcher.enqueue(match.target, match.payload)
@@ -135,11 +167,15 @@ class WebhookRunner(
         )
 
     private suspend fun resolveServerPayload(fallbackServerId: String): WebhookServerPayload {
+        val resolved = serverInfoByIdProvider(fallbackServerId)
+        if (resolved != null && resolved.id == fallbackServerId) {
+            return resolved
+        }
         val current = serverInfoProvider()
         return if (current != null && current.id == fallbackServerId) {
             current
         } else {
-            WebhookServerPayload(id = fallbackServerId, name = current?.name)
+            WebhookServerPayload(id = fallbackServerId, name = resolved?.name ?: current?.name)
         }
     }
 }

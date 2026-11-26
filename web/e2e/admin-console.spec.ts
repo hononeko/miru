@@ -54,14 +54,15 @@ test.describe('Admin console: Plex PIN OAuth, Tautulli import, local accounts & 
 
 		await loginViaUi(page, miru.baseUrl, E2E_ADMIN_USERNAME, E2E_ADMIN_PASSWORD);
 
-		// Zero-config banner appears on / before Plex is connected
-		await expect(page.getByText('Connect your Plex Media Server')).toBeVisible();
+		// Zero-config banner appears on / before Plex or Jellyfin is connected
+		await expect(page.getByText('Connect your Media Server')).toBeVisible();
 		await page.getByRole('link', { name: 'Connect in Admin' }).click();
 		await expect(page).toHaveURL(`${miru.baseUrl}/admin`);
 		await expect(page.getByRole('heading', { name: 'Admin & Access Control' })).toBeVisible();
 
 		// --- 1. Plex PIN OAuth Wizard ---
-		const plexSection = page.locator('section').filter({ hasText: 'Media Server · Plex Connection' });
+		const serversSection = page.locator('section').filter({ hasText: 'Media Servers & Readiness' });
+		const plexSection = serversSection.locator('> div > div').filter({ hasText: 'PLEX' });
 		await expect(plexSection).toContainText('NOT CONFIGURED');
 		await plexSection.getByRole('button', { name: 'Connect with Plex' }).click();
 

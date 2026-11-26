@@ -17,9 +17,11 @@
 	import KpiCard from '$components/miru/KpiCard.svelte';
 	import BarChart, { type BarPoint } from '$components/miru/BarChart.svelte';
 	import ProxiedImage from '$components/miru/ProxiedImage.svelte';
+	import ServerBadge from '$components/miru/ServerBadge.svelte';
 	import { authStore } from '$stores/auth.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
 	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
+	import { serversStore } from '$stores/servers.svelte';
 	import {
 		cn,
 		formatCalendarDate,
@@ -55,6 +57,7 @@
 	});
 
 	const userId = $derived(page.params.id ?? '');
+	const userServerId = $derived(detail?.user.serverId?.trim() || null);
 	const analyticsMetric = $derived<AnalyticsMetricPreference>(
 		preferencesStore.prefs.analyticsMetric
 	);
@@ -219,6 +222,13 @@
 						{#if detail.user.isAdmin}
 							<Badge tone="primary">ADMIN</Badge>
 						{/if}
+						{#if serversStore.hasMultipleServers}
+							<ServerBadge
+								serverId={detail.user.serverId}
+								serverType={detail.user.serverType}
+								serverName={detail.user.serverName}
+							/>
+						{/if}
 						{#if detail.activeStreams.length > 0}
 							<Badge tone="direct-play" dot pulse>
 								WATCHING {detail.activeStreams[0].media.title}
@@ -314,7 +324,8 @@
 												onclick={() => {
 													close();
 													void mediaDetailsModal.open(item.ratingKey, {
-														preferSeries: item.mediaType === 'show'
+														preferSeries: item.mediaType === 'show',
+														...(userServerId ? { serverId: userServerId } : {})
 													});
 												}}
 												class="group flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg bg-elevated px-2.5 py-1.5 text-left transition-colors hover:bg-subtle/80 focus-visible:outline-1 focus-visible:outline-cyan"
@@ -349,7 +360,10 @@
 							{#each stats.mostRewatched.slice(0, 4) as item, idx (item.ratingKey)}
 								<button
 									type="button"
-									onclick={() => void mediaDetailsModal.open(item.ratingKey)}
+									onclick={() => {
+										const sid = detail?.user.serverId?.trim();
+										void mediaDetailsModal.open(item.ratingKey, sid ? { serverId: sid } : undefined);
+									}}
 									class="group flex w-full cursor-pointer items-center justify-between gap-2.5 rounded-lg bg-elevated px-3 py-2 text-left transition-colors hover:bg-subtle/60"
 								>
 									<div class="flex min-w-0 items-center gap-2.5">
@@ -538,7 +552,10 @@
 							<div class="min-w-0">
 								<button
 									type="button"
-									onclick={() => void mediaDetailsModal.open(play.ratingKey)}
+									onclick={() => {
+										const sid = (play.serverId ?? detail?.user.serverId)?.trim();
+										void mediaDetailsModal.open(play.ratingKey, sid ? { serverId: sid } : undefined);
+									}}
 									class="block max-w-full cursor-pointer text-left hover:text-cyan-hi hover:underline"
 								>
 									<p class="truncate font-heading text-xs font-semibold text-fg-primary hover:text-cyan-hi">

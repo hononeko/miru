@@ -6,6 +6,7 @@ import app.hononeko.miru.persistence.model.LibraryGrowthDayRecord
 import app.hononeko.miru.persistence.model.LibrarySectionRecord
 import app.hononeko.miru.persistence.model.LibrarySnapshotRecord
 import app.hononeko.miru.persistence.model.MediaItemCacheRecord
+import app.hononeko.miru.persistence.model.MediaServerRecord
 import app.hononeko.miru.persistence.model.StaleMediaItemRecord
 import app.hononeko.miru.service.LibraryRecentResult
 import app.hononeko.miru.service.LibraryStaleResult
@@ -17,6 +18,8 @@ import java.time.LocalDate
 data class LibrarySectionResponse(
     val id: String,
     val serverId: String,
+    val serverName: String? = null,
+    val serverType: String? = null,
     val sectionKey: String,
     val title: String,
     val sectionType: String,
@@ -68,6 +71,9 @@ data class LibraryStatsResponse(
 @Serializable
 data class RecentMediaItemResponse(
     val ratingKey: String,
+    val serverId: String? = null,
+    val serverName: String? = null,
+    val serverType: String? = null,
     val sectionKey: String,
     val mediaType: String,
     val title: String,
@@ -92,6 +98,9 @@ data class RecentMediaListResponse(
 @Serializable
 data class StaleMediaItemResponse(
     val ratingKey: String,
+    val serverId: String? = null,
+    val serverName: String? = null,
+    val serverType: String? = null,
     val sectionKey: String,
     val mediaType: String,
     val title: String,
@@ -131,10 +140,12 @@ data class LibrarySyncResponse(
     val syncedAtMs: Long,
 )
 
-internal fun LibrarySectionRecord.toResponse(): LibrarySectionResponse =
+internal fun LibrarySectionRecord.toResponse(server: MediaServerRecord? = null): LibrarySectionResponse =
     LibrarySectionResponse(
         id = sectionKey,
         serverId = serverId,
+        serverName = server?.name?.normalizedDisplayName(),
+        serverType = server?.serverType?.lowercase(),
         sectionKey = sectionKey,
         title = title,
         sectionType = sectionType,
@@ -166,9 +177,9 @@ internal fun LibraryGrowthDayRecord.toResponse(): LibraryGrowthDayResponse =
         sizeDeltaBytes = sizeDeltaBytes,
     )
 
-internal fun LibraryStatsResult.toResponse(): LibraryStatsResponse =
+internal fun LibraryStatsResult.toResponse(server: MediaServerRecord? = null): LibraryStatsResponse =
     LibraryStatsResponse(
-        section = section.toResponse(),
+        section = section.toResponse(server),
         byResolution = aggregates.byResolution,
         byVideoCodec = aggregates.byVideoCodec,
         byAudioCodec = aggregates.byAudioCodec,
@@ -176,9 +187,12 @@ internal fun LibraryStatsResult.toResponse(): LibraryStatsResponse =
         growth = growth.map { it.toResponse() },
     )
 
-internal fun MediaItemCacheRecord.toRecentResponse(): RecentMediaItemResponse =
+internal fun MediaItemCacheRecord.toRecentResponse(server: MediaServerRecord? = null): RecentMediaItemResponse =
     RecentMediaItemResponse(
         ratingKey = ratingKey,
+        serverId = serverId,
+        serverName = server?.name?.normalizedDisplayName(),
+        serverType = server?.serverType?.lowercase(),
         sectionKey = sectionKey,
         mediaType = mediaType,
         title = title,
@@ -194,15 +208,18 @@ internal fun MediaItemCacheRecord.toRecentResponse(): RecentMediaItemResponse =
         addedAtMs = addedAtMs,
     )
 
-internal fun LibraryRecentResult.toResponse(): RecentMediaListResponse =
+internal fun LibraryRecentResult.toResponse(server: MediaServerRecord? = null): RecentMediaListResponse =
     RecentMediaListResponse(
         sectionKey = section.sectionKey,
-        items = items.map { it.toRecentResponse() },
+        items = items.map { it.toRecentResponse(server) },
     )
 
-internal fun StaleMediaItemRecord.toResponse(): StaleMediaItemResponse =
+internal fun StaleMediaItemRecord.toResponse(server: MediaServerRecord? = null): StaleMediaItemResponse =
     StaleMediaItemResponse(
         ratingKey = item.ratingKey,
+        serverId = item.serverId,
+        serverName = server?.name?.normalizedDisplayName(),
+        serverType = server?.serverType?.lowercase(),
         sectionKey = item.sectionKey,
         mediaType = item.mediaType,
         title = item.title,
@@ -220,7 +237,7 @@ internal fun StaleMediaItemRecord.toResponse(): StaleMediaItemResponse =
         playCount = playCount,
     )
 
-internal fun LibraryStaleResult.toResponse(): StaleMediaListResponse =
+internal fun LibraryStaleResult.toResponse(server: MediaServerRecord? = null): StaleMediaListResponse =
     StaleMediaListResponse(
         sectionKey = section.sectionKey,
         unwatchedDays = unwatchedDays,
@@ -228,7 +245,7 @@ internal fun LibraryStaleResult.toResponse(): StaleMediaListResponse =
         totalStaleCount = report.totalStaleCount,
         totalReclaimableBytes = report.totalReclaimableBytes,
         neverPlayedCount = report.neverPlayedCount,
-        items = report.items.map { it.toResponse() },
+        items = report.items.map { it.toResponse(server) },
     )
 
 internal fun LibrarySyncSummary.toResponse(): LibrarySyncResponse =

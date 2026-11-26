@@ -42,10 +42,11 @@ fun Route.streamControlRoutes(
                     },
                     ifRight = { it },
                 )
+            val serverId = call.request.queryParameters["serverId"]
             val result =
                 either {
                     val principal = call.requireMiruPrincipal().bind()
-                    streamControlService.terminateStream(principal, sessionId, request.reason).bind()
+                    streamControlService.terminateStream(principal, sessionId, request.reason, serverId = serverId).bind()
                 }
             call.respondEither(result)
         }

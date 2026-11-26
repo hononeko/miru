@@ -1,5 +1,8 @@
 package app.hononeko.miru
 
+import app.hononeko.miru.adapter.ManagedMediaServerRuntime
+import app.hononeko.miru.adapter.MediaServerRegistry
+import app.hononeko.miru.adapter.jellyfin.JellyfinRuntimeManager
 import app.hononeko.miru.adapter.plex.PlexOAuthClient
 import app.hononeko.miru.adapter.plex.PlexOAuthService
 import app.hononeko.miru.adapter.plex.PlexRuntimeManager
@@ -33,6 +36,7 @@ import app.hononeko.miru.http.openApiRoutes
 import app.hononeko.miru.http.plexOAuthRoutes
 import app.hononeko.miru.http.resolveWebContentSecurityPolicy
 import app.hononeko.miru.http.respondError
+import app.hononeko.miru.http.serverRoutes
 import app.hononeko.miru.http.staticWebRoutes
 import app.hononeko.miru.http.streamControlRoutes
 import app.hononeko.miru.http.streamsAndUsersRoutes
@@ -41,6 +45,8 @@ import app.hononeko.miru.http.webhookRoutes
 import app.hononeko.miru.importer.TautulliCli
 import app.hononeko.miru.importer.TautulliImporterService
 import app.hononeko.miru.library.LibraryStatsCollector
+import app.hononeko.miru.library.LibrarySyncMode
+import app.hononeko.miru.library.LibrarySyncSummary
 import app.hononeko.miru.metrics.MiruMetricsService
 import app.hononeko.miru.persistence.DatabaseFactory
 import app.hononeko.miru.persistence.DatabaseHandle
@@ -107,7 +113,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
@@ -142,6 +150,22 @@ fun main(args: Array<String>) {
     runServer()
 }
 
+internal data class CoreServiceWiring(
+    val plexRuntimeManager: PlexRuntimeManager,
+    val mediaServerRegistry: MediaServerRegistry,
+    val libraryRepository: ExposedLibraryRepository,
+    val plexOAuthHttpClient: LazyCloseableHttpClient,
+    val plexOAuthService: PlexOAuthService,
+    val artworkProxyService: ArtworkProxyService,
+    val streamsAndUsersService: StreamsAndUsersService,
+    val streamControlService: StreamControlService,
+    val libraryQueryService: LibraryQueryService,
+    val webhookBundle: WebhookServicesBundle,
+    val mediaDetailsService: MediaDetailsService,
+    val tautulliCompatService: TautulliCompatService,
+    val syncServices: SyncServices,
+)
+
 private fun runServer() {
     val appVersion = resolveAppVersion()
     val appConfig = loadStartupConfig()
@@ -156,10 +180,105 @@ private fun runServer() {
     val (oidcClient, oidcAuthService) =
         initOidcServices(appConfig, authService, accountRepository, emailLinker)
     val historyAndStatsService =
-        HistoryAndStatsService(playbackHistoryRepository = playbackHistoryRepository, userRepository = userRepository)
+        HistoryAndStatsService(
+            playbackHistoryRepository = playbackHistoryRepository,
+            userRepository = userRepository,
+            mediaServerRepository = mediaServerRepository,
+        )
     val tautulliImporterService =
         createTautulliImporterService(mediaServerRepository, userRepository, playbackHistoryRepository, appConfig)
+    val wiring =
+        createCoreServiceWiring(
+            appConfig = appConfig,
+            appVersion = appVersion,
+            databaseHandle = databaseHandle,
+            mediaServerRepository = mediaServerRepository,
+            userRepository = userRepository,
+            playbackHistoryRepository = playbackHistoryRepository,
+            sessionRepository = sessionRepository,
+            emailLinker = emailLinker,
+        )
+    val readinessChecks = listOf(NamedReadinessCheck("database", DatabaseReadinessCheck(databaseHandle)))
+    val mergedLibrarySyncEvents =
+        (listOf(wiring.syncServices.libraryStatsCollector) + wiring.syncServices.additionalLibraryCollectors)
+            .map { it.syncEvents }
+            .merge()
+    val metricsRuntime =
+        createMetricsRuntime(
+            appConfig = appConfig,
+            plexRuntimeManager = wiring.plexRuntimeManager,
+            libraryRepository = wiring.libraryRepository,
+            mediaServerRepository = mediaServerRepository,
+            libraryStatsCollector = wiring.syncServices.libraryStatsCollector,
+            mediaServerRegistry = wiring.mediaServerRegistry,
+            librarySyncEvents = mergedLibrarySyncEvents,
+        )
 
+    val server =
+        embeddedServer(factory = Netty, port = appConfig.server.port, host = appConfig.server.host) {
+            registerLifecycleHandlers(
+                wiring.syncServices,
+                databaseHandle,
+                metricsRuntime,
+                wiring.plexOAuthHttpClient,
+                wiring.webhookBundle.httpClient,
+                oidcClient,
+            )
+            miruModule(
+                config = appConfig,
+                readinessChecks = readinessChecks,
+                appVersion = appVersion,
+                realtime = wiring.mediaServerRegistry,
+                authService = authService,
+                oidcAuthService = oidcAuthService,
+                artworkProxyService = wiring.artworkProxyService,
+                streamsAndUsersService = wiring.streamsAndUsersService,
+                streamControlService = wiring.streamControlService,
+                webhookService = wiring.webhookBundle.service,
+                sessionEvents = wiring.mediaServerRegistry.sessionEvents,
+                sseKeepaliveInterval = DEFAULT_SSE_KEEPALIVE_INTERVAL,
+                historyAndStatsService = historyAndStatsService,
+                libraryQueryService = wiring.libraryQueryService,
+                librarySyncTrigger = wiring.syncServices.compositeLibrarySyncTrigger,
+                mediaDetailsService = wiring.mediaDetailsService,
+                tautulliImporterService = tautulliImporterService,
+                tautulliCompatService = wiring.tautulliCompatService,
+                plexOAuthService = wiring.plexOAuthService,
+                metricsService = metricsRuntime?.service,
+                mediaServerRegistry = wiring.mediaServerRegistry,
+            )
+        }
+    try {
+        metricsRuntime?.dedicatedServer?.let { dedicatedMetricsServer ->
+            logger.info("Starting Prometheus metrics listener on {}:{}", appConfig.metrics.host, appConfig.metrics.port)
+            dedicatedMetricsServer.start(wait = false)
+        }
+        server.start(wait = true)
+    } catch (e: Throwable) {
+        cleanupOnStartupFailure(
+            wiring.syncServices,
+            wiring.mediaServerRegistry,
+            databaseHandle,
+            metricsRuntime,
+            wiring.plexOAuthHttpClient,
+            wiring.webhookBundle.httpClient,
+            oidcClient,
+        )
+        throw e
+    }
+}
+
+@Suppress("LongParameterList")
+internal fun createCoreServiceWiring(
+    appConfig: AppConfig,
+    appVersion: String,
+    databaseHandle: DatabaseHandle,
+    mediaServerRepository: ExposedMediaServerRepository,
+    userRepository: ExposedUserRepository,
+    playbackHistoryRepository: ExposedPlaybackHistoryRepository,
+    sessionRepository: ExposedAuthSessionRepository,
+    emailLinker: EmailMediaUserLinker,
+): CoreServiceWiring {
     val plexRuntimeManager =
         PlexRuntimeManager(
             plexConfig = appConfig.plex,
@@ -167,21 +286,71 @@ private fun runServer() {
             sessionConfig = appConfig.session,
             mediaServerRepository = mediaServerRepository,
         )
+    val jellyfinRuntimeManager =
+        JellyfinRuntimeManager(
+            jellyfinConfig = appConfig.jellyfin,
+            databaseHandle = databaseHandle,
+            sessionConfig = appConfig.session,
+            mediaServerRepository = mediaServerRepository,
+        )
+    val mediaServerRegistry =
+        MediaServerRegistry(
+            runtimes = listOf(plexRuntimeManager, jellyfinRuntimeManager),
+            mediaServerRepository = mediaServerRepository,
+            jellyfinConfig = appConfig.jellyfin,
+        )
     val libraryRepository = ExposedLibraryRepository(databaseHandle)
-    val sectionAccessChecker = MediaSectionAccessChecker(libraryRepository = libraryRepository, adapter = plexRuntimeManager.adapter)
+    val sectionAccessChecker =
+        MediaSectionAccessChecker(
+            libraryRepository = libraryRepository,
+            adapter = plexRuntimeManager.adapter,
+            adapterForServer = { sid -> mediaServerRegistry.adapterForServer(sid) },
+        )
     val plexOAuthHttpClient = LazyCloseableHttpClient { createPlexHttpClient() }
     val plexOAuthService = createPlexOAuthService(appConfig, plexOAuthHttpClient, appVersion, mediaServerRepository, plexRuntimeManager)
-    val artworkProxyService = createArtworkProxyService(plexRuntimeManager, userRepository, libraryRepository, sectionAccessChecker)
+    val artworkProxyService =
+        createArtworkProxyService(
+            plexRuntimeManager = plexRuntimeManager,
+            userRepository = userRepository,
+            libraryRepository = libraryRepository,
+            sectionAccessChecker = sectionAccessChecker,
+            mediaServerRegistry = mediaServerRegistry,
+        )
     val activeSessionRepository = ExposedActiveSessionRepository(databaseHandle)
     val streamsAndUsersService =
-        createStreamsAndUsersService(activeSessionRepository, userRepository, playbackHistoryRepository, plexRuntimeManager)
+        createStreamsAndUsersService(
+            activeSessionRepository = activeSessionRepository,
+            userRepository = userRepository,
+            playbackHistoryRepository = playbackHistoryRepository,
+            mediaServerRepository = mediaServerRepository,
+            mediaServerRegistry = mediaServerRegistry,
+        )
     val streamControlService =
-        createStreamControlService(plexRuntimeManager, activeSessionRepository, userRepository, databaseHandle, appConfig)
-    val libraryQueryService = LibraryQueryService(libraryRepository = libraryRepository)
+        createStreamControlService(
+            plexRuntimeManager = plexRuntimeManager,
+            activeSessionRepository = activeSessionRepository,
+            userRepository = userRepository,
+            databaseHandle = databaseHandle,
+            appConfig = appConfig,
+            mediaServerRegistry = mediaServerRegistry,
+        )
+    val libraryQueryService =
+        LibraryQueryService(
+            libraryRepository = libraryRepository,
+            mediaServerRepository = mediaServerRepository,
+        )
     val webhookBundle =
-        createWebhookServices(databaseHandle, plexRuntimeManager, streamControlService, userRepository, appConfig, appVersion)
+        createWebhookServices(databaseHandle, mediaServerRegistry, streamControlService, userRepository, appConfig, appVersion)
     val mediaDetailsService =
-        MediaDetailsService(plexRuntimeManager.adapter, playbackHistoryRepository, libraryRepository, sectionAccessChecker)
+        MediaDetailsService(
+            mediaServerAdapter = plexRuntimeManager.adapter,
+            playbackHistoryRepository = playbackHistoryRepository,
+            libraryRepository = libraryRepository,
+            sectionAccessChecker = sectionAccessChecker,
+            adapterForServer = { sid -> mediaServerRegistry.adapterForServer(sid) },
+            allServerAdaptersProvider = { mediaServerRegistry.activeServerAdapters() },
+            mediaServerRepository = mediaServerRepository,
+        )
     val tautulliCompatService =
         TautulliCompatService(
             playbackHistoryRepository = playbackHistoryRepository,
@@ -199,66 +368,28 @@ private fun runServer() {
             webhookDispatcher = webhookBundle.dispatcher,
             webhookScope = webhookBundle.scope,
             sessionRepository = sessionRepository,
+            mediaServerRegistry = mediaServerRegistry,
+            additionalRuntimes = listOf(jellyfinRuntimeManager),
         ) {
             emailLinker.relinkAll().onLeft { error ->
                 logger.warn("Linking SSO accounts by email after the user sync failed: {}", error.message)
             }
         }
-    val readinessChecks = listOf(NamedReadinessCheck("database", DatabaseReadinessCheck(databaseHandle)))
-    val metricsRuntime =
-        createMetricsRuntime(appConfig, plexRuntimeManager, libraryRepository, mediaServerRepository, syncServices.libraryStatsCollector)
-
-    val server =
-        embeddedServer(factory = Netty, port = appConfig.server.port, host = appConfig.server.host) {
-            registerLifecycleHandlers(
-                syncServices,
-                databaseHandle,
-                metricsRuntime,
-                plexOAuthHttpClient,
-                webhookBundle.httpClient,
-                oidcClient,
-            )
-            miruModule(
-                config = appConfig,
-                readinessChecks = readinessChecks,
-                appVersion = appVersion,
-                realtime = plexRuntimeManager,
-                authService = authService,
-                oidcAuthService = oidcAuthService,
-                artworkProxyService = artworkProxyService,
-                streamsAndUsersService = streamsAndUsersService,
-                streamControlService = streamControlService,
-                webhookService = webhookBundle.service,
-                sessionEvents = plexRuntimeManager.sessionEngine.sessionEvents,
-                sseKeepaliveInterval = DEFAULT_SSE_KEEPALIVE_INTERVAL,
-                historyAndStatsService = historyAndStatsService,
-                libraryQueryService = libraryQueryService,
-                librarySyncTrigger = syncServices.libraryStatsCollector,
-                mediaDetailsService = mediaDetailsService,
-                tautulliImporterService = tautulliImporterService,
-                tautulliCompatService = tautulliCompatService,
-                plexOAuthService = plexOAuthService,
-                metricsService = metricsRuntime?.service,
-            )
-        }
-    try {
-        metricsRuntime?.dedicatedServer?.let { dedicatedMetricsServer ->
-            logger.info("Starting Prometheus metrics listener on {}:{}", appConfig.metrics.host, appConfig.metrics.port)
-            dedicatedMetricsServer.start(wait = false)
-        }
-        server.start(wait = true)
-    } catch (e: Throwable) {
-        cleanupOnStartupFailure(
-            syncServices,
-            plexRuntimeManager,
-            databaseHandle,
-            metricsRuntime,
-            plexOAuthHttpClient,
-            webhookBundle.httpClient,
-            oidcClient,
-        )
-        throw e
-    }
+    return CoreServiceWiring(
+        plexRuntimeManager = plexRuntimeManager,
+        mediaServerRegistry = mediaServerRegistry,
+        libraryRepository = libraryRepository,
+        plexOAuthHttpClient = plexOAuthHttpClient,
+        plexOAuthService = plexOAuthService,
+        artworkProxyService = artworkProxyService,
+        streamsAndUsersService = streamsAndUsersService,
+        streamControlService = streamControlService,
+        libraryQueryService = libraryQueryService,
+        webhookBundle = webhookBundle,
+        mediaDetailsService = mediaDetailsService,
+        tautulliCompatService = tautulliCompatService,
+        syncServices = syncServices,
+    )
 }
 
 private fun createPlexOAuthService(
@@ -275,7 +406,7 @@ private fun createPlexOAuthService(
         runtimeManager = plexRuntimeManager,
     )
 
-private data class WebhookServicesBundle(
+internal data class WebhookServicesBundle(
     val httpClient: LazyCloseableHttpClient,
     val scope: CoroutineScope,
     val dispatcher: WebhookDispatcher,
@@ -286,7 +417,7 @@ private data class WebhookServicesBundle(
 @Suppress("LongParameterList")
 private fun createWebhookServices(
     databaseHandle: DatabaseHandle,
-    plexRuntimeManager: PlexRuntimeManager,
+    mediaServerRegistry: MediaServerRegistry,
     streamControlService: StreamControlService,
     userRepository: ExposedUserRepository,
     appConfig: AppConfig,
@@ -307,15 +438,19 @@ private fun createWebhookServices(
         )
     val runner =
         WebhookRunner(
-            sessionEngine = plexRuntimeManager.sessionEngine,
+            sessionEvents = mediaServerRegistry.sessionEvents,
+            currentSessionsProvider = { mediaServerRegistry.currentSessions() },
             terminatedEvents = streamControlService.terminatedEvents,
-            reconcileHealthSignals = plexRuntimeManager.reconcileHealth,
+            reconcileHealthSignals = mediaServerRegistry.reconcileHealth,
             targetRepository = targetRepository,
             userRepository = userRepository,
-            serverInfoProvider = { plexRuntimeManager.currentServerSummary() },
+            serverInfoProvider = {
+                mediaServerRegistry.runtimes.firstNotNullOfOrNull { it.currentServerSummary() }
+            },
             evaluator = evaluator,
             dispatcher = dispatcher,
             scope = scope,
+            serverInfoByIdProvider = { sid -> mediaServerRegistry.serverSummaryById(sid) },
         )
     val service =
         WebhookService(
@@ -324,7 +459,9 @@ private fun createWebhookServices(
             dispatcher = dispatcher,
             evaluator = evaluator,
             encryptionKey = appConfig.plex.encryptionKey,
-            serverInfoProvider = { plexRuntimeManager.currentServerSummary() },
+            serverInfoProvider = {
+                mediaServerRegistry.runtimes.firstNotNullOfOrNull { it.currentServerSummary() }
+            },
         )
     return WebhookServicesBundle(
         httpClient = httpClient,
@@ -340,6 +477,7 @@ internal fun createArtworkProxyService(
     userRepository: ExposedUserRepository,
     libraryRepository: ExposedLibraryRepository,
     sectionAccessChecker: MediaSectionAccessChecker,
+    mediaServerRegistry: MediaServerRegistry? = null,
 ): ArtworkProxyService =
     ArtworkProxyService(
         adapter = plexRuntimeManager.adapter,
@@ -347,6 +485,9 @@ internal fun createArtworkProxyService(
         plexBaseUrlProvider = { plexRuntimeManager.currentBaseUrl() },
         libraryRepository = libraryRepository,
         sectionAccessChecker = sectionAccessChecker,
+        adapterForServer = mediaServerRegistry?.let { reg -> { sid -> reg.adapterForServer(sid) } },
+        allServerAdaptersProvider = mediaServerRegistry?.let { reg -> { reg.activeServerAdapters() } },
+        serverBaseUrlsProvider = mediaServerRegistry?.let { reg -> { reg.configuredBaseUrls() } },
     )
 
 private fun createTautulliImporterService(
@@ -367,14 +508,16 @@ private fun createStreamsAndUsersService(
     activeSessionRepository: ExposedActiveSessionRepository,
     userRepository: ExposedUserRepository,
     playbackHistoryRepository: ExposedPlaybackHistoryRepository,
-    plexRuntimeManager: PlexRuntimeManager,
+    mediaServerRepository: ExposedMediaServerRepository,
+    mediaServerRegistry: MediaServerRegistry,
 ): StreamsAndUsersService =
     StreamsAndUsersService(
         activeSessionRepository = activeSessionRepository,
         userRepository = userRepository,
         playbackHistoryRepository = playbackHistoryRepository,
-        liveTechnicalProvider = { plexRuntimeManager.sessionEngine.currentLiveTechnical() },
-        serverNameProvider = { plexRuntimeManager.currentServerName() },
+        liveTechnicalProvider = { mediaServerRegistry.currentLiveTechnical() },
+        serverNameProvider = { mediaServerRegistry.currentDefaultServerName() },
+        mediaServerRepository = mediaServerRepository,
     )
 
 private fun createStreamControlService(
@@ -383,6 +526,7 @@ private fun createStreamControlService(
     userRepository: ExposedUserRepository,
     databaseHandle: DatabaseHandle,
     appConfig: AppConfig,
+    mediaServerRegistry: MediaServerRegistry,
 ): StreamControlService =
     StreamControlService(
         adapter = plexRuntimeManager.adapter,
@@ -391,13 +535,16 @@ private fun createStreamControlService(
         guardrailRuleRepository = ExposedGuardrailRuleRepository(databaseHandle),
         auditRepository = ExposedStreamTerminationAuditRepository(databaseHandle),
         guardrailsConfig = appConfig.guardrails,
+        adapterForServer = { sid -> mediaServerRegistry.adapterForServer(sid) },
     )
 
 internal data class SyncServices(
     val libraryCollectorScope: CoroutineScope,
     val libraryStatsCollector: LibraryStatsCollector,
+    val additionalLibraryCollectors: List<LibraryStatsCollector> = emptyList(),
     val userSyncScope: CoroutineScope,
     val plexUserSyncService: PlexUserSyncService,
+    val additionalUserSyncServices: List<PlexUserSyncService> = emptyList(),
     val guardrailScope: CoroutineScope? = null,
     val streamGuardrailRunner: StreamGuardrailRunner? = null,
     val webhookScope: CoroutineScope? = null,
@@ -405,6 +552,7 @@ internal data class SyncServices(
     val webhookRunner: WebhookRunner? = null,
     val sessionCleanupScope: CoroutineScope? = null,
     val sessionCleanupService: SessionCleanupService? = null,
+    val compositeLibrarySyncTrigger: LibrarySyncTrigger = libraryStatsCollector,
 )
 
 @Suppress("LongParameterList")
@@ -417,6 +565,8 @@ internal fun createSyncServices(
     webhookDispatcher: WebhookDispatcher? = null,
     webhookScope: CoroutineScope? = null,
     sessionRepository: AuthSessionRepository? = null,
+    mediaServerRegistry: MediaServerRegistry? = null,
+    additionalRuntimes: List<ManagedMediaServerRuntime> = emptyList(),
     afterUserSync: suspend () -> Unit = {},
 ): SyncServices {
     val libraryCollectorScope =
@@ -429,7 +579,7 @@ internal fun createSyncServices(
             scope = libraryCollectorScope,
         )
     val userSyncScope =
-        CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("plex-user-sync"))
+        CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("media-user-sync"))
     val plexUserSyncService =
         PlexUserSyncService(
             adapter = plexRuntimeManager.adapter,
@@ -438,17 +588,57 @@ internal fun createSyncServices(
             scope = userSyncScope,
             onUsersSynced = afterUserSync,
         )
+
+    val extraCollectors = mutableListOf<Pair<ManagedMediaServerRuntime, LibraryStatsCollector>>()
+    val extraUserSyncs = mutableListOf<PlexUserSyncService>()
+    for (runtime in additionalRuntimes) {
+        val collector =
+            LibraryStatsCollector(
+                adapter = runtime.adapter,
+                serverIdProvider = runtime.serverIdProvider,
+                libraryRepository = libraryRepository,
+                scope = libraryCollectorScope,
+            )
+        val userSync =
+            PlexUserSyncService(
+                adapter = runtime.adapter,
+                serverIdProvider = runtime.serverIdProvider,
+                userRepository = userRepository,
+                scope = userSyncScope,
+                onUsersSynced = afterUserSync,
+            )
+        runtime.setOnReloadLibrarySync {
+            collector.syncInitial().onLeft { error ->
+                logger.warn("Post-reload library sync ({}) failed: {}", runtime.serverType, error.message)
+            }
+            userSync.syncOnce().onLeft { error ->
+                logger.warn("Post-reload user sync ({}) failed: {}", runtime.serverType, error.message)
+            }
+        }
+        extraCollectors += runtime to collector
+        extraUserSyncs += userSync
+    }
+
     val guardrailScope =
         streamControlService?.let {
             CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("stream-guardrail-runner"))
         }
     val streamGuardrailRunner =
         if (streamControlService != null && guardrailScope != null) {
-            StreamGuardrailRunner(
-                sessionEngine = plexRuntimeManager.sessionEngine,
-                streamControlService = streamControlService,
-                scope = guardrailScope,
-            )
+            if (mediaServerRegistry != null) {
+                StreamGuardrailRunner(
+                    sessionEvents = mediaServerRegistry.sessionEvents,
+                    currentSessionsProvider = { mediaServerRegistry.currentSessions() },
+                    streamControlService = streamControlService,
+                    scope = guardrailScope,
+                )
+            } else {
+                StreamGuardrailRunner(
+                    sessionEngine = plexRuntimeManager.sessionEngine,
+                    streamControlService = streamControlService,
+                    scope = guardrailScope,
+                )
+            }
         } else {
             null
         }
@@ -473,11 +663,19 @@ internal fun createSyncServices(
             logger.warn("Post-reload user sync failed: {}", error.message)
         }
     }
+
+    val runtimeCollectorPairs: List<Pair<ManagedMediaServerRuntime, LibraryStatsCollector>> =
+        listOf(plexRuntimeManager to libraryStatsCollector) + extraCollectors
+    val compositeLibrarySyncTrigger =
+        createCompositeLibrarySyncTrigger(runtimeCollectorPairs)
+
     return SyncServices(
         libraryCollectorScope = libraryCollectorScope,
         libraryStatsCollector = libraryStatsCollector,
+        additionalLibraryCollectors = extraCollectors.map { it.second },
         userSyncScope = userSyncScope,
         plexUserSyncService = plexUserSyncService,
+        additionalUserSyncServices = extraUserSyncs,
         guardrailScope = guardrailScope,
         streamGuardrailRunner = streamGuardrailRunner,
         webhookScope = webhookScope,
@@ -485,6 +683,7 @@ internal fun createSyncServices(
         webhookRunner = webhookRunner,
         sessionCleanupScope = sessionCleanupScope,
         sessionCleanupService = sessionCleanupService,
+        compositeLibrarySyncTrigger = compositeLibrarySyncTrigger,
     )
 }
 
@@ -494,27 +693,34 @@ internal data class MetricsRuntime(
     val dedicatedServer: EmbeddedServer<NettyApplicationEngine, NettyApplicationEngine.Configuration>? = null,
 )
 
+@Suppress("LongParameterList")
 internal fun createMetricsRuntime(
     appConfig: AppConfig,
     plexRuntimeManager: PlexRuntimeManager,
     libraryRepository: app.hononeko.miru.persistence.repository.LibraryRepository,
     mediaServerRepository: app.hononeko.miru.persistence.repository.MediaServerRepository,
     libraryStatsCollector: LibraryStatsCollector,
+    mediaServerRegistry: MediaServerRegistry? = null,
+    librarySyncEvents: Flow<LibrarySyncSummary> = libraryStatsCollector.syncEvents,
 ): MetricsRuntime? {
     if (!appConfig.metrics.enabled) return null
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("miru-metrics"))
     val service =
         MiruMetricsService(
-            sessionEvents = plexRuntimeManager.sessionEngine.sessionEvents,
-            activeSessionsProvider = { plexRuntimeManager.sessionEngine.currentSessions() },
+            sessionEvents = mediaServerRegistry?.sessionEvents ?: plexRuntimeManager.sessionEngine.sessionEvents,
+            activeSessionsProvider = {
+                mediaServerRegistry?.currentSessions() ?: plexRuntimeManager.sessionEngine.currentSessions()
+            },
             librarySectionsProvider = { libraryRepository.findAllSections() },
-            librarySyncEvents = libraryStatsCollector.syncEvents,
+            librarySyncEvents = librarySyncEvents,
             websocketConnected = plexRuntimeManager.websocketConnected,
             websocketReconnected = plexRuntimeManager.websocketReconnected,
             serverNameByIdProvider = { serverId ->
                 mediaServerRepository.findById(serverId).getOrNull()?.name
             },
-            activeWebsocketServerLabelProvider = { plexRuntimeManager.currentServerName() },
+            activeWebsocketServerLabelProvider = {
+                plexRuntimeManager.currentServerName() ?: mediaServerRegistry?.currentDefaultServerName()
+            },
             scope = scope,
         )
     val dedicatedServer =
@@ -529,6 +735,58 @@ internal fun createMetricsRuntime(
         }
     return MetricsRuntime(scope = scope, service = service, dedicatedServer = dedicatedServer)
 }
+
+internal fun createCompositeLibrarySyncTrigger(
+    collectors: List<Pair<ManagedMediaServerRuntime, LibraryStatsCollector>>,
+): LibrarySyncTrigger =
+    object : LibrarySyncTrigger {
+        override suspend fun triggerSync(
+            deep: Boolean,
+            sectionKey: String?,
+        ): arrow.core.Either<MiruError, LibrarySyncSummary> =
+            triggerSync(deep = deep, sectionKey = sectionKey, serverId = null)
+
+        override suspend fun triggerSync(
+            deep: Boolean,
+            sectionKey: String?,
+            serverId: String?,
+        ): arrow.core.Either<MiruError, LibrarySyncSummary> {
+            val normalizedServerId = serverId?.trim()?.takeIf { it.isNotEmpty() }
+            if (normalizedServerId != null) {
+                val match =
+                    collectors.firstOrNull { (runtime, _) ->
+                        runtime.isConfigured() &&
+                            (runtime.cachedServerIdOrNull() == normalizedServerId ||
+                                runtime.serverIdProvider().getOrNull() == normalizedServerId)
+                    }
+                        ?: return arrow.core.Either.Left(
+                            MiruError.NotFound(resource = "Media server", id = normalizedServerId),
+                        )
+                return match.second.triggerSync(deep = deep, sectionKey = sectionKey)
+            }
+
+            val active = collectors.filter { (runtime, _) -> runtime.isConfigured() }
+            if (active.isEmpty()) {
+                return collectors.first().second.triggerSync(deep = deep, sectionKey = sectionKey)
+            }
+            val results = active.map { (_, collector) -> collector.triggerSync(deep = deep, sectionKey = sectionKey) }
+            if (results.size == 1) return results.first()
+
+            val successes = results.mapNotNull { it.getOrNull() }
+            if (successes.isEmpty()) return results.first()
+            return arrow.core.Either.Right(
+                LibrarySyncSummary(
+                    mode = if (deep) LibrarySyncMode.DEEP else LibrarySyncMode.FAST,
+                    syncedSections = successes.sumOf { it.syncedSections },
+                    failedSections = successes.sumOf { it.failedSections },
+                    totalItemsSynced = successes.sumOf { it.totalItemsSynced },
+                    snapshotsCreated = successes.sumOf { it.snapshotsCreated },
+                    prunedItems = successes.sumOf { it.prunedItems },
+                    syncedAtMs = successes.maxOf { it.syncedAtMs },
+                ),
+            )
+        }
+    }
 
 internal fun Application.registerLifecycleHandlers(
     syncServices: SyncServices,
@@ -549,10 +807,12 @@ internal fun Application.registerLifecycleHandlers(
     metricsRuntime: MetricsRuntime?,
     vararg clients: AutoCloseable?,
 ) {
+    val allCollectors = listOf(syncServices.libraryStatsCollector) + syncServices.additionalLibraryCollectors
+    val allUserSyncs = listOf(syncServices.plexUserSyncService) + syncServices.additionalUserSyncServices
     monitor.subscribe(ApplicationStarted) {
-        logger.info("Starting library stats collector, Plex user sync, webhooks, and session cleanup")
-        syncServices.libraryStatsCollector.start()
-        syncServices.plexUserSyncService.start()
+        logger.info("Starting library stats collectors, media user sync, webhooks, and session cleanup")
+        allCollectors.forEach { collector -> collector.start() }
+        allUserSyncs.forEach { userSync -> userSync.start() }
         syncServices.streamGuardrailRunner?.start()
         syncServices.webhookDispatcher?.start()
         syncServices.webhookRunner?.start()
@@ -560,12 +820,16 @@ internal fun Application.registerLifecycleHandlers(
         metricsRuntime?.service?.start()
     }
     monitor.subscribe(ApplicationStopping) {
-        logger.info("Stopping library stats collector, Plex user sync, webhooks, and session cleanup")
+        logger.info("Stopping library stats collectors, media user sync, webhooks, and session cleanup")
         runBlocking {
-            withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { syncServices.libraryStatsCollector.stop() }
-                ?: logger.warn("Library stats collector did not stop within {}", REALTIME_SHUTDOWN_TIMEOUT)
-            withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { syncServices.plexUserSyncService.stop() }
-                ?: logger.warn("Plex user sync did not stop within {}", REALTIME_SHUTDOWN_TIMEOUT)
+            allCollectors.forEach { collector ->
+                withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { collector.stop() }
+                    ?: logger.warn("Library stats collector did not stop within {}", REALTIME_SHUTDOWN_TIMEOUT)
+            }
+            allUserSyncs.forEach { userSync ->
+                withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { userSync.stop() }
+                    ?: logger.warn("Media user sync did not stop within {}", REALTIME_SHUTDOWN_TIMEOUT)
+            }
             syncServices.streamGuardrailRunner?.let { runner ->
                 withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { runner.stop() }
                     ?: logger.warn("Stream guardrail runner did not stop within {}", REALTIME_SHUTDOWN_TIMEOUT)
@@ -617,7 +881,7 @@ internal fun Application.registerLifecycleHandlers(
 
 internal fun cleanupOnStartupFailure(
     syncServices: SyncServices,
-    plexRuntimeManager: PlexRuntimeManager,
+    plexRuntimeManager: RealtimeLifecycle,
     databaseHandle: DatabaseHandle,
     vararg clients: AutoCloseable?,
 ) {
@@ -632,14 +896,20 @@ internal fun cleanupOnStartupFailure(
 
 internal fun cleanupOnStartupFailure(
     syncServices: SyncServices,
-    plexRuntimeManager: PlexRuntimeManager,
+    plexRuntimeManager: RealtimeLifecycle,
     databaseHandle: DatabaseHandle,
     metricsRuntime: MetricsRuntime?,
     vararg clients: AutoCloseable?,
 ) {
+    val allCollectors = listOf(syncServices.libraryStatsCollector) + syncServices.additionalLibraryCollectors
+    val allUserSyncs = listOf(syncServices.plexUserSyncService) + syncServices.additionalUserSyncServices
     runBlocking {
-        withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { syncServices.libraryStatsCollector.stop() }
-        withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { syncServices.plexUserSyncService.stop() }
+        allCollectors.forEach { collector ->
+            withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { collector.stop() }
+        }
+        allUserSyncs.forEach { userSync ->
+            withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { userSync.stop() }
+        }
         syncServices.streamGuardrailRunner?.let { runner ->
             withTimeoutOrNull(REALTIME_SHUTDOWN_TIMEOUT) { runner.stop() }
         }
@@ -788,6 +1058,7 @@ fun Application.miruModule(
     plexOAuthService: PlexOAuthService? = null,
     authRateLimiter: AuthRateLimiter = AuthRateLimiter(config.auth.rateLimit),
     metricsService: MiruMetricsService? = null,
+    mediaServerRegistry: MediaServerRegistry? = null,
 ) {
     if (realtime != null) {
         monitor.subscribe(ApplicationStarted) {
@@ -823,95 +1094,147 @@ fun Application.miruModule(
         healthRoutes(readinessService = readinessService, appVersion = appVersion)
         openApiRoutes()
         if (authService != null) {
-            authRoutes(
+            registerAuthenticatedRoutes(
+                config = config,
+                appVersion = appVersion,
                 authService = authService,
-                authMode = config.auth.mode,
-                cookieSecureMode = config.auth.cookieSecure,
-                authRateLimiter = authRateLimiter,
-                trustProxyHeaders = config.server.trustProxyHeaders,
                 oidcAuthService = oidcAuthService,
+                artworkProxyService = artworkProxyService,
+                streamsAndUsersService = streamsAndUsersService,
+                streamControlService = streamControlService,
+                webhookService = webhookService,
+                sessionEvents = sessionEvents,
+                sseKeepaliveInterval = sseKeepaliveInterval,
+                historyAndStatsService = historyAndStatsService,
+                libraryQueryService = libraryQueryService,
+                librarySyncTrigger = librarySyncTrigger,
+                mediaDetailsService = mediaDetailsService,
+                tautulliImporterService = tautulliImporterService,
+                tautulliCompatService = tautulliCompatService,
+                plexOAuthService = plexOAuthService,
+                authRateLimiter = authRateLimiter,
+                mediaServerRegistry = mediaServerRegistry,
             )
-            if (plexOAuthService != null) {
-                plexOAuthRoutes(
-                    plexOAuthService = plexOAuthService,
-                    authService = authService,
-                    authMode = config.auth.mode,
-                )
-            }
-            if (artworkProxyService != null) {
-                artworkRoutes(
-                    artworkProxyService = artworkProxyService,
-                    authService = authService,
-                    authMode = config.auth.mode,
-                )
-            }
-            if (mediaDetailsService != null) {
-                mediaDetailsRoutes(
-                    mediaDetailsService = mediaDetailsService,
-                    authService = authService,
-                    authMode = config.auth.mode,
-                )
-            }
-            if (streamsAndUsersService != null) {
-                streamsAndUsersRoutes(
-                    authService = authService,
-                    authMode = config.auth.mode,
-                    streamsAndUsersService = streamsAndUsersService,
-                    sessionEvents = sessionEvents,
-                    keepaliveInterval = sseKeepaliveInterval,
-                )
-            }
-            if (streamControlService != null) {
-                streamControlRoutes(
-                    streamControlService = streamControlService,
-                    authService = authService,
-                    authMode = config.auth.mode,
-                )
-            }
-            if (webhookService != null) {
-                webhookRoutes(
-                    webhookService = webhookService,
-                    authService = authService,
-                    authMode = config.auth.mode,
-                )
-            }
-            if (historyAndStatsService != null) {
-                historyStatsRoutes(
-                    historyAndStatsService = historyAndStatsService,
-                    authService = authService,
-                    authMode = config.auth.mode,
-                )
-            }
-            if (libraryQueryService != null) {
-                libraryRoutes(
-                    libraryQueryService = libraryQueryService,
-                    librarySyncTrigger = librarySyncTrigger,
-                    authService = authService,
-                    authMode = config.auth.mode,
-                )
-            }
-            if (tautulliImporterService != null) {
-                adminImportRoutes(
-                    tautulliImporterService = tautulliImporterService,
-                    authService = authService,
-                    authMode = config.auth.mode,
-                    watchedThresholdPercent = config.session.watchedThresholdPercent,
-                )
-            }
-            if (tautulliCompatService != null && config.tautulliCompat.enabled) {
-                tautulliCompatRoutes(
-                    tautulliCompatService = tautulliCompatService,
-                    authService = authService,
-                    authMode = config.auth.mode,
-                    watchedThresholdPercent = config.session.watchedThresholdPercent,
-                    appVersion = appVersion,
-                )
-            }
         }
         if (metricsService != null && config.metrics.enabled && config.metrics.port == config.server.port) {
             metricsRoutes(metricsService)
         }
         staticWebRoutes(config.server.staticWebDir)
+    }
+}
+
+@Suppress("LongParameterList")
+private fun io.ktor.server.routing.Routing.registerAuthenticatedRoutes(
+    config: AppConfig,
+    appVersion: String,
+    authService: AuthService,
+    oidcAuthService: OidcAuthService?,
+    artworkProxyService: ArtworkProxyService?,
+    streamsAndUsersService: StreamsAndUsersService?,
+    streamControlService: StreamControlService?,
+    webhookService: WebhookService?,
+    sessionEvents: SharedFlow<SessionEvent>?,
+    sseKeepaliveInterval: Duration,
+    historyAndStatsService: HistoryAndStatsService?,
+    libraryQueryService: LibraryQueryService?,
+    librarySyncTrigger: LibrarySyncTrigger?,
+    mediaDetailsService: MediaDetailsService?,
+    tautulliImporterService: TautulliImporterService?,
+    tautulliCompatService: TautulliCompatService?,
+    plexOAuthService: PlexOAuthService?,
+    authRateLimiter: AuthRateLimiter,
+    mediaServerRegistry: MediaServerRegistry?,
+) {
+    authRoutes(
+        authService = authService,
+        authMode = config.auth.mode,
+        cookieSecureMode = config.auth.cookieSecure,
+        authRateLimiter = authRateLimiter,
+        trustProxyHeaders = config.server.trustProxyHeaders,
+        oidcAuthService = oidcAuthService,
+    )
+    if (plexOAuthService != null) {
+        plexOAuthRoutes(
+            plexOAuthService = plexOAuthService,
+            authService = authService,
+            authMode = config.auth.mode,
+        )
+    }
+    if (mediaServerRegistry != null) {
+        serverRoutes(
+            mediaServerRegistry = mediaServerRegistry,
+            authService = authService,
+            authMode = config.auth.mode,
+        )
+    }
+    if (artworkProxyService != null) {
+        artworkRoutes(
+            artworkProxyService = artworkProxyService,
+            authService = authService,
+            authMode = config.auth.mode,
+        )
+    }
+    if (mediaDetailsService != null) {
+        mediaDetailsRoutes(
+            mediaDetailsService = mediaDetailsService,
+            authService = authService,
+            authMode = config.auth.mode,
+        )
+    }
+    if (streamsAndUsersService != null) {
+        streamsAndUsersRoutes(
+            authService = authService,
+            authMode = config.auth.mode,
+            streamsAndUsersService = streamsAndUsersService,
+            sessionEvents = sessionEvents,
+            keepaliveInterval = sseKeepaliveInterval,
+        )
+    }
+    if (streamControlService != null) {
+        streamControlRoutes(
+            streamControlService = streamControlService,
+            authService = authService,
+            authMode = config.auth.mode,
+        )
+    }
+    if (webhookService != null) {
+        webhookRoutes(
+            webhookService = webhookService,
+            authService = authService,
+            authMode = config.auth.mode,
+        )
+    }
+    if (historyAndStatsService != null) {
+        historyStatsRoutes(
+            historyAndStatsService = historyAndStatsService,
+            authService = authService,
+            authMode = config.auth.mode,
+        )
+    }
+    if (libraryQueryService != null) {
+        libraryRoutes(
+            libraryQueryService = libraryQueryService,
+            librarySyncTrigger = librarySyncTrigger,
+            authService = authService,
+            authMode = config.auth.mode,
+        )
+    }
+    if (tautulliImporterService != null) {
+        adminImportRoutes(
+            tautulliImporterService = tautulliImporterService,
+            authService = authService,
+            authMode = config.auth.mode,
+            watchedThresholdPercent = config.session.watchedThresholdPercent,
+        )
+    }
+    if (tautulliCompatService != null && config.tautulliCompat.enabled) {
+        tautulliCompatRoutes(
+            tautulliCompatService = tautulliCompatService,
+            authService = authService,
+            authMode = config.auth.mode,
+            watchedThresholdPercent = config.session.watchedThresholdPercent,
+            appVersion = appVersion,
+        )
     }
 }
 

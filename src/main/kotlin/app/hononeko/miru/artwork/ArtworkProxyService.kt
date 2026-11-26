@@ -94,6 +94,7 @@ sealed interface AvatarTarget {
  * Proxies media artwork from the configured [MediaServerAdapter] and user avatars from either
  * the media server or an SSRF-allowlisted external HTTPS host, backed by [BoundedArtworkCache].
  */
+@Suppress("LongParameterList")
 class ArtworkProxyService(
     private val adapter: MediaServerAdapter,
     private val userRepository: UserRepository,
@@ -101,12 +102,15 @@ class ArtworkProxyService(
     private val cache: BoundedArtworkCache = BoundedArtworkCache(),
     allowedAvatarHosts: Set<String> = DEFAULT_ALLOWED_AVATAR_HOSTS,
     private val plexBaseUrlProvider: () -> String? = { null },
-    libraryRepository: LibraryRepository? = null,
+    private val libraryRepository: LibraryRepository? = null,
     private val sectionAccessChecker: MediaSectionAccessChecker =
         MediaSectionAccessChecker(libraryRepository = libraryRepository, adapter = adapter),
     private val dnsResolver: DnsResolver = SystemDnsResolver,
     private val externalAvatarFetcher: ExternalAvatarFetcher =
         externalAvatarClient?.let(::HttpClientExternalAvatarFetcher) ?: PinnedHttpsAvatarFetcher(),
+    private val adapterForServer: (suspend (String?) -> MediaServerAdapter?)? = null,
+    private val allServerAdaptersProvider: (suspend () -> List<Pair<String?, MediaServerAdapter>>)? = null,
+    private val serverBaseUrlsProvider: (() -> List<String>)? = null,
 ) {
     constructor(
         adapter: MediaServerAdapter,
@@ -141,11 +145,13 @@ class ArtworkProxyService(
         ("gravatar.com" in normalizedAllowedHosts || "secure.gravatar.com" in normalizedAllowedHosts) &&
             "plex.tv" in normalizedAllowedHosts
 
-    private fun currentPlexOrigin(): NormalizedOrigin? =
-        plexBaseUrlProvider()
-            ?.trim()
-            ?.takeIf { it.isNotEmpty() }
-            ?.let(::parseOrigin)
+    private fun currentServerOrigins(): List<NormalizedOrigin> =
+        buildList {
+            plexBaseUrlProvider()?.let { add(it) }
+            serverBaseUrlsProvider?.invoke()?.let { addAll(it) }
+        }.mapNotNull { raw ->
+            raw.trim().takeIf { it.isNotEmpty() }?.let(::parseOrigin)
+        }.distinct()
 
     suspend fun getMediaArtwork(
         principal: MiruPrincipal,
@@ -153,26 +159,115 @@ class ArtworkProxyService(
         kind: ArtworkKind,
         width: Int? = null,
         height: Int? = null,
+        serverId: String? = null,
     ): Either<MiruError, CachedArtwork> =
         either {
             validateMediaArtworkRequest(ratingKey = ratingKey, width = width, height = height).bind()
-            sectionAccessChecker.requireAccessForRatingKey(principal = principal, ratingKey = ratingKey).bind()
+            val normalizedServerId = serverId?.trim()?.takeIf { it.isNotEmpty() }
+            sectionAccessChecker
+                .requireAccessForRatingKey(principal = principal, ratingKey = ratingKey, serverId = normalizedServerId)
+                .bind()
 
-            val cacheKey = "media:$ratingKey:${kind.pathSegment}:w=${width ?: 0}:h=${height ?: 0}"
-            cache.get(cacheKey)?.let { return@either it }
+            val targetServers = resolveArtworkTargets(ratingKey = ratingKey, requestedServerId = normalizedServerId).bind()
+            val cachePrefix = normalizedServerId ?: targetServers.singleOrNull()?.first
+            val primaryCacheKey = buildMediaCacheKey(cachePrefix, ratingKey, kind, width, height)
+            cache.get(primaryCacheKey)?.let { return@either it }
 
-            val artworkPath = "/library/metadata/$ratingKey/${kind.pathSegment}"
-            val artwork = adapter.fetchArtwork(artworkPath, width = width, height = height).bind()
-            ensure(artwork.bytes.isNotEmpty()) {
-                MiruError.UpstreamUnavailable(
-                    provider = adapter.serverType,
-                    message = "Upstream returned empty artwork payload",
-                )
+            var lastError: MiruError? = null
+            for ((resolvedServerId, targetAdapter) in targetServers) {
+                if (normalizedServerId == null && !principal.isAdmin()) {
+                    val perServerAccess =
+                        sectionAccessChecker.requireAccessForRatingKey(
+                            principal = principal,
+                            ratingKey = ratingKey,
+                            serverId = resolvedServerId,
+                        )
+                    if (perServerAccess is Either.Left) {
+                        if (lastError == null) {
+                            lastError = perServerAccess.value
+                        }
+                        continue
+                    }
+                }
+                val scopedCacheKey = buildMediaCacheKey(resolvedServerId, ratingKey, kind, width, height)
+                cache.get(scopedCacheKey)?.let { return@either it }
+
+                val artworkPath = targetAdapter.mediaArtworkPath(ratingKey, isBackdrop = kind == ArtworkKind.ART)
+                when (val fetched = targetAdapter.fetchArtwork(artworkPath, width = width, height = height)) {
+                    is Either.Right -> {
+                        val artwork = fetched.value
+                        if (artwork.bytes.isEmpty()) {
+                            lastError =
+                                MiruError.UpstreamUnavailable(
+                                    provider = targetAdapter.serverType,
+                                    message = "Upstream returned empty artwork payload",
+                                )
+                            continue
+                        }
+                        val contentType = sanitizeImageContentType(artwork.contentType)
+                        return@either cache.put(key = scopedCacheKey, bytes = artwork.bytes, contentType = contentType)
+                    }
+
+                    is Either.Left -> {
+                        lastError = fetched.value
+                    }
+                }
             }
 
-            val contentType = sanitizeImageContentType(artwork.contentType)
-            cache.put(key = cacheKey, bytes = artwork.bytes, contentType = contentType)
+            raise(
+                lastError
+                    ?: MiruError.NotFound(resource = "Artwork", id = ratingKey),
+            )
         }
+
+    private suspend fun resolveArtworkTargets(
+        ratingKey: String,
+        requestedServerId: String?,
+    ): Either<MiruError, List<Pair<String?, MediaServerAdapter>>> =
+        either {
+            if (requestedServerId != null) {
+                val targetAdapter =
+                    if (adapterForServer != null) {
+                        adapterForServer(requestedServerId)
+                            ?: raise(MiruError.NotFound(resource = "Media server", id = requestedServerId))
+                    } else {
+                        adapter
+                    }
+                return@either listOf(requestedServerId to targetAdapter)
+            }
+
+            val targets = linkedMapOf<String?, MediaServerAdapter>()
+            if (adapterForServer != null) {
+                val dbServerIds =
+                    libraryRepository
+                        ?.findSectionKeysByRatingKey(ratingKey)
+                        ?.getOrNull()
+                        .orEmpty()
+                        .map { it.first }
+                        .distinct()
+                for (dbServerId in dbServerIds) {
+                    adapterForServer(dbServerId)?.let { targets[dbServerId] = it }
+                }
+            }
+            allServerAdaptersProvider?.invoke()?.forEach { (sid, candidateAdapter) ->
+                targets.putIfAbsent(sid, candidateAdapter)
+            }
+            if (targets.isEmpty()) {
+                targets[null] = adapter
+            }
+            targets.entries.map { it.key to it.value }
+        }
+
+    private fun buildMediaCacheKey(
+        serverId: String?,
+        ratingKey: String,
+        kind: ArtworkKind,
+        width: Int?,
+        height: Int?,
+    ): String {
+        val scope = serverId?.let { "$it:" }.orEmpty()
+        return "media:$scope$ratingKey:${kind.pathSegment}:w=${width ?: 0}:h=${height ?: 0}"
+    }
 
     suspend fun getUserAvatar(
         principal: MiruPrincipal,
@@ -203,10 +298,22 @@ class ArtworkProxyService(
 
             when (target) {
                 is AvatarTarget.PlexPath -> {
-                    val artwork = adapter.fetchArtwork(target.path).bind()
+                    val targetAdapter =
+                        if (adapterForServer != null) {
+                            adapterForServer.invoke(user.serverId)
+                                ?: raise(
+                                    MiruError.UpstreamUnavailable(
+                                        provider = "media_server",
+                                        message = "Media server adapter is not available for user '$trimmedUserId'",
+                                    ),
+                                )
+                        } else {
+                            adapter
+                        }
+                    val artwork = targetAdapter.fetchArtwork(target.path).bind()
                     ensure(artwork.bytes.isNotEmpty()) {
                         MiruError.UpstreamUnavailable(
-                            provider = adapter.serverType,
+                            provider = targetAdapter.serverType,
                             message = "Upstream returned empty avatar payload",
                         )
                     }
@@ -263,11 +370,10 @@ class ArtworkProxyService(
             }
 
             val origin = NormalizedOrigin(scheme = scheme, host = host, port = effectivePort(scheme, uri.port))
-            val parsedPlexOrigin = currentPlexOrigin()
-            if (parsedPlexOrigin != null && origin == parsedPlexOrigin) {
+            if (origin in currentServerOrigins()) {
                 val plexPath = uri.rawPath?.takeIf { it.isNotEmpty() } ?: "/"
                 ensure(isSafeRelativePlexPath(plexPath)) {
-                    invalidAvatarTargetError("Plex avatar path is not a safe relative path")
+                    invalidAvatarTargetError("Media server avatar path is not a safe relative path")
                 }
                 return@either AvatarTarget.PlexPath(plexPath)
             }

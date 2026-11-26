@@ -151,13 +151,13 @@ class PlexUserSyncService(
             syncOnce().fold(
                 ifLeft = { error ->
                     if (error is MiruError.UpstreamUnavailable && error.message.contains("not configured")) {
-                        logger.debug("Skipping {}: {}", label, error.message)
+                        logger.debug("Skipping {} {}: {}", adapter.serverType, label, error.message)
                     } else {
-                        logger.warn("Plex {} failed: {}", label, error.message)
+                        logger.warn("Media server ({}) {} failed: {}", adapter.serverType, label, error.message)
                     }
                 },
                 ifRight = { count ->
-                    logger.debug("Plex {} completed {}", label, kv("users", count))
+                    logger.debug("Media server ({}) {} completed {}", adapter.serverType, label, kv("users", count))
                 },
             )
         } catch (e: CancellationException) {

@@ -59,6 +59,7 @@ private suspend fun ApplicationCall.handleMediaArtwork(
     val ratingKey = parameters["ratingKey"].orEmpty()
     val widthRaw = request.queryParameters["w"]
     val heightRaw = request.queryParameters["h"]
+    val serverId = request.queryParameters["serverId"]
 
     val result: Either<MiruError, CachedArtwork> =
         either {
@@ -71,6 +72,7 @@ private suspend fun ApplicationCall.handleMediaArtwork(
                     kind = kind,
                     width = width,
                     height = height,
+                    serverId = serverId,
                 ).bind()
         }
     respondArtworkEither(result)

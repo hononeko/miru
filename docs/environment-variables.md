@@ -48,6 +48,18 @@ Miru connects to Plex in one of two ways:
 | `PLEX_CLIENT_IDENTIFIER` | *(generated)* | Client identifier Miru presents to plex.tv when you sign in to Plex. When unset, Miru reuses the one saved with an already connected server, or generates a new `miru-…` identifier. |
 | `PLEX_TV_BASE_URL` | `https://plex.tv` | Base URL of the plex.tv API, used for sign-in, server discovery, users and avatars. Change it only to route plex.tv traffic through a proxy or a test double. |
 
+## Jellyfin
+
+Miru can monitor a Jellyfin server alongside Plex or standalone. Set `JELLYFIN_URL` and `JELLYFIN_API_KEY` together.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `JELLYFIN_URL` | *(none)* | Base URL of the Jellyfin server, for example `http://jellyfin:8096`. Must be an `http://` or `https://` URL. Set it together with `JELLYFIN_API_KEY`. |
+| `JELLYFIN_API_KEY` 🔒 | *(none)* | Jellyfin API key for `JELLYFIN_URL` (created under Dashboard → API Keys). Set it together with `JELLYFIN_URL`. |
+| `JELLYFIN_POLL_INTERVAL_SECONDS` | `20` | How often, in seconds, Miru polls active sessions when the Jellyfin WebSocket has been quiet. At least 5. |
+| `JELLYFIN_WEBSOCKET_ENABLED` | `true` | `true` to receive real-time session updates over Jellyfin's `/socket` WebSocket. `false` runs Jellyfin in polling-only mode. |
+| `JELLYFIN_CLIENT_IDENTIFIER` | `miru` | `DeviceId` sent in Jellyfin's `Authorization: MediaBrowser` header and WebSocket query string. |
+
 ## Security
 
 | Variable | Default | Description |

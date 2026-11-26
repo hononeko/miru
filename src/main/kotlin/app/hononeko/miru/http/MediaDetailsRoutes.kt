@@ -22,7 +22,13 @@ fun Route.mediaDetailsRoutes(
                     either {
                         val principal = call.requireMiruPrincipal().bind()
                         val ratingKey = call.parameters["ratingKey"].orEmpty()
-                        mediaDetailsService.getMediaDetails(principal = principal, ratingKey = ratingKey).bind()
+                        val serverId = call.request.queryParameters["serverId"]
+                        mediaDetailsService
+                            .getMediaDetails(
+                                principal = principal,
+                                ratingKey = ratingKey,
+                                serverId = serverId,
+                            ).bind()
                     }
                 call.respondEither(result)
             }

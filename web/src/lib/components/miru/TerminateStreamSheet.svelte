@@ -6,6 +6,7 @@
 	import Button from '$components/ui/Button.svelte';
 	import Sheet from '$components/ui/Sheet.svelte';
 	import ProxiedImage from '$components/miru/ProxiedImage.svelte';
+	import { serversStore } from '$stores/servers.svelte';
 	import { formatMediaTitle, getDecisionMeta } from '$lib/utils';
 
 	type Props = {
@@ -88,7 +89,12 @@
 			const trimmedReason = reason.trim();
 			const result = unwrap(
 				await api.POST('/api/v1/streams/{sessionId}/terminate', {
-					params: { path: { sessionId: targetSessionId } },
+					params: {
+						path: { sessionId: targetSessionId },
+						...(serversStore.hasMultipleServers && stream.serverId
+							? { query: { serverId: stream.serverId } }
+							: {})
+					},
 					body: { reason: trimmedReason.length > 0 ? trimmedReason : null }
 				})
 			);
@@ -107,7 +113,7 @@
 	bind:open
 	{onOpenChange}
 	title="Terminate Active Stream"
-	description="Stop playback on Plex and display an optional message to the viewer"
+	description="Stop playback on the media server and display an optional message to the viewer"
 >
 	{#if stream && titles && decision}
 		<form onsubmit={handleSubmit} class="flex flex-col gap-4">
@@ -188,7 +194,7 @@
 					rows={3}
 					maxlength={500}
 					bind:value={reason}
-					placeholder="Optional message shown in the viewer's Plex client (leave blank for default)"
+					placeholder="Optional message shown in the viewer's client (leave blank for default)"
 					class="rounded-xl border border-input-border bg-canvas px-3 py-2 text-sm text-fg-primary placeholder:text-fg-muted focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 				></textarea>
 				<span class="text-[11px] text-fg-muted">

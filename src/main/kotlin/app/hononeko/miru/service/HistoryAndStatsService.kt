@@ -17,7 +17,9 @@ import app.hononeko.miru.http.toHistoryItemDto
 import app.hononeko.miru.persistence.model.HistoryFilter
 import app.hononeko.miru.persistence.model.HistorySortDirection
 import app.hononeko.miru.persistence.model.HistorySortField
+import app.hononeko.miru.persistence.model.MediaServerRecord
 import app.hononeko.miru.persistence.model.UserRecord
+import app.hononeko.miru.persistence.repository.MediaServerRepository
 import app.hononeko.miru.persistence.repository.PlaybackHistoryRepository
 import app.hononeko.miru.persistence.repository.UserRepository
 import arrow.core.Either
@@ -48,6 +50,7 @@ enum class AnalyticsMetric(
 }
 
 data class HistoryQueryParams(
+    val serverId: String? = null,
     val userId: String? = null,
     val mediaType: String? = null,
     val libraryId: String? = null,
@@ -64,6 +67,7 @@ data class HistoryQueryParams(
 )
 
 private data class ValidatedHistoryQuery(
+    val serverId: String?,
     val userId: String?,
     val mediaType: String?,
     val librarySectionKey: String?,
@@ -87,6 +91,7 @@ class HistoryAndStatsService(
     private val playbackHistoryRepository: PlaybackHistoryRepository,
     private val userRepository: UserRepository,
     private val clock: () -> Long = System::currentTimeMillis,
+    private val mediaServerRepository: MediaServerRepository? = null,
 ) {
     suspend fun queryHistory(
         principal: MiruPrincipal,
@@ -107,6 +112,7 @@ class HistoryAndStatsService(
 
             val filter =
                 HistoryFilter(
+                    serverId = validated.serverId,
                     userId = validated.userId,
                     userIds = scopedUserIds,
                     mediaType = validated.mediaType,
@@ -123,6 +129,7 @@ class HistoryAndStatsService(
 
             val resultPage = playbackHistoryRepository.query(filter).bind()
             val usersById = resolveUsers(resultPage.items.map { it.userId }.distinct()).bind()
+            val serversById = loadServersById()
 
             val totalPages =
                 if (resultPage.totalCount == 0L) {
@@ -132,7 +139,13 @@ class HistoryAndStatsService(
                 }
 
             HistoryListResponse(
-                items = resultPage.items.map { it.toHistoryItemDto(user = usersById[it.userId]) },
+                items =
+                    resultPage.items.map { item ->
+                        item.toHistoryItemDto(
+                            user = usersById[item.userId],
+                            server = serversById[item.serverId],
+                        )
+                    },
                 page = validated.page,
                 pageSize = validated.pageSize,
                 totalCount = resultPage.totalCount,
@@ -159,22 +172,25 @@ class HistoryAndStatsService(
 
             principal.requireMediaUserAccess(record.userId).bind()
             val user = userRepository.findById(record.userId).bind()
-            record.toHistoryDetailResponse(user = user)
+            val server = mediaServerRepository?.findById(record.serverId)?.getOrNull()
+            record.toHistoryDetailResponse(user = user, server = server)
         }
 
     suspend fun getOverviewStats(
         principal: MiruPrincipal,
         rangeRaw: String?,
         metricRaw: String? = null,
+        serverId: String? = null,
     ): Either<MiruError, OverviewStatsResponse> =
         either {
             val range = parseRange(rangeRaw).bind()
             val metric = parseMetric(metricRaw).bind()
+            val normalizedServerId = normalizeOptionalId(serverId)
             val scopedUserIds = if (principal.isAdmin()) null else principal.linkedMediaUserIds
             val accumulator = CommonStatsAccumulator(includeDailyBreakdowns = true)
 
             playbackHistoryRepository
-                .forEachOverviewStatsRow(userIds = scopedUserIds, fromMs = range.fromMs) { row ->
+                .forEachOverviewStatsRow(serverId = normalizedServerId, userIds = scopedUserIds, fromMs = range.fromMs) { row ->
                     accumulator.record(row)
                 }.bind()
 
@@ -253,10 +269,12 @@ class HistoryAndStatsService(
         rangeRaw: String?,
         userId: String? = null,
         metricRaw: String? = null,
+        serverId: String? = null,
     ): Either<MiruError, HeatmapStatsResponse> =
         either {
             val (rangeLabel, days) = parseHeatmapRange(rangeRaw).bind()
             val metric = parseMetric(metricRaw).bind()
+            val normalizedServerId = normalizeOptionalId(serverId)
             val scopedUserIds = resolveScopedStatsUserIds(principal, userId).bind()
 
             // Whole UTC days up to and including today, so every row of the grid is a calendar date
@@ -271,7 +289,12 @@ class HistoryAndStatsService(
             var totalWatchDurationSec = 0L
 
             playbackHistoryRepository
-                .forEachHeatmapSample(userIds = scopedUserIds, fromMs = fromMs, toMs = toMs) { stoppedAtMs, watchedDurationSec ->
+                .forEachHeatmapSample(
+                    serverId = normalizedServerId,
+                    userIds = scopedUserIds,
+                    fromMs = fromMs,
+                    toMs = toMs,
+                ) { stoppedAtMs, watchedDurationSec ->
                     val dayOffset = utcEpochDay(stoppedAtMs) - firstDay
                     if (dayOffset !in 0L until days) return@forEachHeatmapSample
                     val dayIdx = dayOffset.toInt()
@@ -336,15 +359,17 @@ class HistoryAndStatsService(
         rangeRaw: String?,
         userId: String? = null,
         metricRaw: String? = null,
+        serverId: String? = null,
     ): Either<MiruError, ClientStatsResponse> =
         either {
             val range = parseRange(rangeRaw, defaultRange = "30d").bind()
             val metric = parseMetric(metricRaw).bind()
+            val normalizedServerId = normalizeOptionalId(serverId)
             val scopedUserIds = resolveScopedStatsUserIds(principal, userId).bind()
             val acc = ClientStatsAccumulator()
 
             playbackHistoryRepository
-                .forEachClientStatsRow(userIds = scopedUserIds, fromMs = range.fromMs) { row ->
+                .forEachClientStatsRow(serverId = normalizedServerId, userIds = scopedUserIds, fromMs = range.fromMs) { row ->
                     acc.record(row)
                 }.bind()
 
@@ -367,6 +392,7 @@ class HistoryAndStatsService(
         yearRaw: String?,
         userId: String? = null,
         metricRaw: String? = null,
+        serverId: String? = null,
     ): Either<MiruError, WrappedStatsResponse> =
         either {
             val year =
@@ -378,6 +404,7 @@ class HistoryAndStatsService(
                         ),
                     )
             val metric = parseMetric(metricRaw).bind()
+            val normalizedServerId = normalizeOptionalId(serverId)
             val trimmedUserId = userId?.trim()?.takeIf { it.isNotEmpty() }
             val resolvedUser =
                 if (trimmedUserId != null) {
@@ -401,7 +428,7 @@ class HistoryAndStatsService(
             val calendarAcc = WrappedCalendarAccumulator()
 
             playbackHistoryRepository
-                .forEachStatsRow(userIds = scopedUserIds, fromMs = fromMs, toMs = toMs) { row ->
+                .forEachStatsRow(serverId = normalizedServerId, userIds = scopedUserIds, fromMs = fromMs, toMs = toMs) { row ->
                     val epochDay = commonAcc.record(row)
                     detailsAcc.record(row)
                     calendarAcc.record(row, epochDay)
@@ -444,6 +471,16 @@ class HistoryAndStatsService(
                 playsByMonth = playsByMonth,
             )
         }
+
+    private suspend fun loadServersById(): Map<String, MediaServerRecord> =
+        mediaServerRepository
+            ?.findAll()
+            ?.getOrNull()
+            .orEmpty()
+            .associateBy { it.id }
+
+    private fun normalizeOptionalId(value: String?): String? =
+        value?.trim()?.takeIf { it.isNotEmpty() }
 
     private suspend fun resolveUsers(userIds: List<String>): Either<MiruError, Map<String, UserRecord>> =
         either {
@@ -519,6 +556,7 @@ class HistoryAndStatsService(
             }
 
             ValidatedHistoryQuery(
+                serverId = normalizeOptionalId(params.serverId),
                 userId = params.userId?.trim()?.takeIf { it.isNotEmpty() },
                 mediaType = mediaType,
                 librarySectionKey = params.libraryId?.trim()?.takeIf { it.isNotEmpty() },

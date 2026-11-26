@@ -88,6 +88,11 @@ export type LibrarySyncMode = Schemas['LibrarySyncMode'];
 export type LibrarySyncResponse = Schemas['LibrarySyncResponse'];
 export type TautulliImportResponse = Schemas['TautulliImportResponse'];
 
+export type MediaServerSummaryDto = Schemas['MediaServerSummaryDto'];
+export type MediaServersResponse = Schemas['MediaServersResponse'];
+export type AdminServerStatusDto = Schemas['AdminServerStatusDto'];
+export type AdminServersResponse = Schemas['AdminServersResponse'];
+
 export type PlexCredentialSource = Schemas['PlexCredentialSource'];
 export type PlexOAuthPinStatus = Schemas['PlexOAuthPinStatus'];
 export type PlexConnectionStatus = Schemas['PlexConnectionStatus'];

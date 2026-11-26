@@ -22,6 +22,11 @@ data:
   # "local", "oidc" or "none" (no login at all; only for trusted networks).
   AUTH_MODE: "local"
 
+  # Set to "true" to expose Prometheus metrics on port 9090 (pair with servicemonitor.yaml).
+  METRICS_ENABLED: "false"
+  METRICS_HOST: "0.0.0.0"
+  METRICS_PORT: "9090"
+
   # Single sign-on: set AUTH_MODE=oidc, or OIDC_ENABLED=true to offer it next to local logins.
   # OIDC_ENABLED: "true"
   # OIDC_ISSUER_URL: "https://auth.example.com/application/o/miru/"

@@ -71,7 +71,8 @@ Open <http://localhost:8080>, complete first-run admin setup, and connect Plex f
 - **Real-time Plex sync:** Subscribes to Plex's WebSocket notification stream (`PLEX_WEBSOCKET_ENABLED=true`) with debounced updates, jittered reconnect backoff, and a fallback reconciler (`PLEX_POLL_INTERVAL_SECONDS=20`), pushing live updates to browsers over SSE.
 - **API & webhooks:** [`docs/compatibility.md`](docs/compatibility.md) lists what stays compatible between releases, and [`docs/webhooks.md`](docs/webhooks.md) describes the webhook payloads and signature.
 - **Kometa & Tautulli API:** Kometa and similar tools can read from Miru instead of Tautulli, see [`docs/tautulli-api.md`](docs/tautulli-api.md).
-- **System endpoints:** `GET /healthz` (liveness), `GET /readyz` (readiness), `GET /api/v1/openapi.yaml` (OpenAPI 3.1 contract).
+- **Prometheus & Grafana:** Set `METRICS_ENABLED=true` to expose Prometheus metrics at `GET /metrics` (default port `9090`); see [`docs/k8s/servicemonitor.yaml`](docs/k8s/servicemonitor.yaml) and [`docs/grafana/miru-dashboard.json`](docs/grafana/miru-dashboard.json).
+- **System endpoints:** `GET /healthz` (liveness), `GET /readyz` (readiness), `GET /metrics` (opt-in Prometheus metrics), `GET /api/v1/openapi.yaml` (OpenAPI 3.1 contract).
 
 ## Development
 

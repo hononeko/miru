@@ -172,6 +172,17 @@ data class TautulliCompatConfig(
     val enabled: Boolean = false,
 )
 
+data class MetricsConfig(
+    val enabled: Boolean = false,
+    val host: String = DEFAULT_HOST,
+    val port: Int = DEFAULT_PORT,
+) {
+    companion object {
+        const val DEFAULT_HOST = "0.0.0.0"
+        const val DEFAULT_PORT = 9090
+    }
+}
+
 data class AppConfig(
     val server: ServerConfig,
     val database: DatabaseConfig,
@@ -180,6 +191,7 @@ data class AppConfig(
     val auth: AuthConfig,
     val guardrails: GuardrailsConfig = GuardrailsConfig(),
     val tautulliCompat: TautulliCompatConfig = TautulliCompatConfig(),
+    val metrics: MetricsConfig = MetricsConfig(),
 )
 
 data class DatabaseAndSessionConfig(
@@ -208,6 +220,7 @@ object AppConfigLoader {
             val auth = parseAuthConfig(get, errors)
             val guardrails = parseGuardrailsConfig(get, errors)
             val tautulliCompat = parseTautulliCompatConfig(get, errors)
+            val metrics = parseMetricsConfig(get, errors)
 
             ensure(errors.isEmpty()) {
                 MiruError.ValidationError(
@@ -224,6 +237,7 @@ object AppConfigLoader {
                 auth = auth,
                 guardrails = guardrails,
                 tautulliCompat = tautulliCompat,
+                metrics = metrics,
             )
         }
 
@@ -411,6 +425,30 @@ object AppConfigLoader {
             errors["ENABLE_TAUTULLI_COMPAT_API"] = "must be 'true' or 'false'"
         }
         return TautulliCompatConfig(enabled = enabled ?: false)
+    }
+
+    private fun parseMetricsConfig(
+        get: (String, String, String?) -> String?,
+        errors: MutableMap<String, String>,
+    ): MetricsConfig {
+        val enabledRaw = get("METRICS_ENABLED", "miru.metrics.enabled", null) ?: "false"
+        val enabled = enabledRaw.toBooleanStrictOrNull()
+        if (enabled == null) {
+            errors["METRICS_ENABLED"] = "must be 'true' or 'false'"
+        }
+
+        val host = get("METRICS_HOST", "miru.metrics.host", null) ?: MetricsConfig.DEFAULT_HOST
+        val portRaw = get("METRICS_PORT", "miru.metrics.port", null) ?: MetricsConfig.DEFAULT_PORT.toString()
+        val port = portRaw.toIntOrNull()
+        if (port == null || port !in 1..MAX_PORT) {
+            errors["METRICS_PORT"] = "must be an integer between 1 and $MAX_PORT"
+        }
+
+        return MetricsConfig(
+            enabled = enabled ?: false,
+            host = host,
+            port = port ?: MetricsConfig.DEFAULT_PORT,
+        )
     }
 
     private fun parseSessionConfig(

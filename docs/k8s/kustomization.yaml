@@ -18,6 +18,9 @@ resources:
   # - ingress.yaml          # Ingress controller
   # Restrict traffic (needs a CNI that enforces NetworkPolicy):
   # - network-policy.yaml
+  # Prometheus Operator ServiceMonitor & Grafana sidecar dashboard (requires monitoring.coreos.com/v1 CRDs):
+  # - servicemonitor.yaml
+  # - grafana-dashboard.yaml
 
 images:
   - name: ghcr.io/hononeko/miru

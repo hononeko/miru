@@ -44,6 +44,9 @@ dependencies {
     // Cryptography
     implementation(libs.bouncycastle.bcprov)
 
+    // Telemetry
+    implementation(libs.micrometer.registry.prometheus)
+
     // Testing
     testImplementation(libs.bundles.kotest)
     testImplementation(libs.mockk)

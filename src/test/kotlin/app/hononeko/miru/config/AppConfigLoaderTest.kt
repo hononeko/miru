@@ -525,4 +525,55 @@ class AppConfigLoaderTest :
                     "AUTH_RATE_LIMIT_SETUP_MAX_ATTEMPTS",
                 )
         }
+
+        test("loads and validates METRICS_* settings from env and HOCON") {
+            val defaults = AppConfigLoader.load(env = baseSqliteEnv()).shouldBeRight()
+            defaults.metrics shouldBe MetricsConfig(enabled = false, host = "0.0.0.0", port = 9090)
+
+            val fromEnv =
+                AppConfigLoader
+                    .load(
+                        env =
+                            baseSqliteEnv(
+                                mapOf(
+                                    "METRICS_ENABLED" to "true",
+                                    "METRICS_HOST" to "127.0.0.1",
+                                    "METRICS_PORT" to "9100",
+                                ),
+                            ),
+                    ).shouldBeRight()
+            fromEnv.metrics shouldBe MetricsConfig(enabled = true, host = "127.0.0.1", port = 9100)
+
+            val fromHocon =
+                AppConfigLoader
+                    .load(
+                        env = mapOf("AUTH_SESSION_SECRET" to validSecret),
+                        hocon =
+                            MapApplicationConfig(
+                                "miru.metrics.enabled" to "true",
+                                "miru.metrics.host" to "10.0.0.5",
+                                "miru.metrics.port" to "8080",
+                            ),
+                    ).shouldBeRight()
+            fromHocon.metrics shouldBe MetricsConfig(enabled = true, host = "10.0.0.5", port = 8080)
+
+            val invalid =
+                AppConfigLoader
+                    .load(
+                        env =
+                            baseSqliteEnv(
+                                mapOf(
+                                    "METRICS_ENABLED" to "maybe",
+                                    "METRICS_PORT" to "70000",
+                                ),
+                            ),
+                    ).shouldBeLeft()
+            invalid.fieldErrors.keys shouldBe setOf("METRICS_ENABLED", "METRICS_PORT")
+
+            val zeroPort =
+                AppConfigLoader
+                    .load(env = baseSqliteEnv(mapOf("METRICS_PORT" to "0")))
+                    .shouldBeLeft()
+            zeroPort.fieldErrors.keys shouldBe setOf("METRICS_PORT")
+        }
     })

@@ -16,6 +16,10 @@ spec:
     - ports:
         - port: http
           protocol: TCP
+    # Prometheus metrics (used when METRICS_ENABLED=true; narrow with from/namespaceSelector if desired)
+    - ports:
+        - port: metrics
+          protocol: TCP
   egress:
     # DNS
     - ports:

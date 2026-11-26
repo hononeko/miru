@@ -116,7 +116,8 @@ private fun isApiOrSystemPath(path: String): Boolean =
     path == "/api" ||
         path.startsWith("/api/") ||
         path == "/healthz" ||
-        path == "/readyz"
+        path == "/readyz" ||
+        path == "/metrics"
 
 private fun ApplicationResponse.appendHeaderIfAbsent(
     name: String,

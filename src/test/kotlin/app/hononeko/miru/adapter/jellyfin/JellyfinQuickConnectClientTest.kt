@@ -148,9 +148,10 @@ class JellyfinQuickConnectClientTest :
                                                 """
                                                 {
                                                   "Items": [
-                                                    {"Id":1,"AccessToken":"old-key","AppName":"Miru","IsActive":true,"DateCreated":"2026-11-26T17:50:00Z"},
-                                                    {"Id":2,"AccessToken":"revoked-key","AppName":"Miru","IsActive":false,"DateCreated":"2026-11-26T18:05:00Z"},
-                                                    {"Id":3,"AccessToken":"new-api-key-789","AppName":"Miru","IsActive":true,"DateCreated":"2026-11-26T18:01:00.1234567Z"}
+                                                    {"Id":0,"AccessToken":"old-key","AppName":"Miru","IsActive":false,"DateCreated":"2026-11-26T17:50:00Z"},
+                                                    {"Id":0,"AccessToken":"","AppName":"Miru","IsActive":false,"DateCreated":"2026-11-26T18:05:00Z"},
+                                                    {"Id":0,"AccessToken":"new-api-key-789","AppName":"Miru","IsActive":false,"DateCreated":"2026-11-26T18:01:00.1234567"},
+                                                    {"Id":0,"AccessToken":"undated-key","AppName":"Kometa","IsActive":false}
                                                   ],
                                                   "TotalRecordCount": 3
                                                 }
@@ -194,11 +195,14 @@ class JellyfinQuickConnectClientTest :
             session.toString() shouldNotContain tempToken
 
             client.createApiKey("http://jf.local:8096", tempToken, "miru-dev-1").shouldBeRight()
+            // Shaped like Jellyfin 10.11's /Auth/Keys: Id 0 and IsActive false for every key, which must
+            // not hide them; a date without an offset is UTC; keys without a token are skipped
             val keys = client.listApiKeys("http://jf.local:8096", tempToken, "miru-dev-1").shouldBeRight()
-            keys shouldHaveSize 2
-            keys[1].accessToken shouldBe "new-api-key-789"
+            keys.map { it.accessToken } shouldBe listOf("old-key", "new-api-key-789", "undated-key")
+            keys[1].appName shouldBe "Miru"
             keys[1].dateCreatedMs shouldBe Instant.parse("2026-11-26T18:01:00.1234567Z").toEpochMilli()
             keys[1].toString() shouldNotContain "new-api-key-789"
+            keys[2].dateCreatedMs shouldBe null
 
             client.logoutSessionBestEffort("http://jf.local:8096", tempToken, "miru-dev-1")
         }

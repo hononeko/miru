@@ -62,6 +62,8 @@ import org.slf4j.LoggerFactory
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Instant
+import java.time.LocalDateTime
+import java.time.ZoneOffset
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
@@ -72,6 +74,7 @@ private const val RAW_TEMP_ACCESS_TOKEN = "raw-jellyfin-temp-access-token"
 private const val RAW_OLD_API_KEY = "raw-jellyfin-old-miru-api-key"
 private const val RAW_NEW_API_KEY = "raw-jellyfin-new-miru-api-key"
 private const val MOCK_JF_URL = "http://192.168.1.75:8096"
+private const val TWO_HOURS_MS = 2 * 60 * 60 * 1000L
 
 private class MockJellyfinQuickConnectState(
     var quickConnectEnabled: Boolean = true,
@@ -91,6 +94,9 @@ private class MockJellyfinQuickConnectState(
 ) {
     val logoutCalls = AtomicInteger(0)
     val deletedKeys = mutableListOf<String>()
+
+    /** Keys created through POST /Auth/Keys, listed by GET /Auth/Keys until deleted */
+    val createdKeys = mutableListOf<String>()
 }
 
 private class QuickConnectTestHarness(
@@ -203,7 +209,9 @@ private fun createMockJellyfinEngine(state: MockJellyfinQuickConnectState): Mock
 
             req.method == HttpMethod.Delete && req.url.encodedPath.startsWith("/Auth/Keys/") -> {
                 req.headers[HttpHeaders.Authorization].orEmpty() shouldContain """Token="${state.issuedApiKey}""""
-                state.deletedKeys += req.url.encodedPath.removePrefix("/Auth/Keys/")
+                val deleted = req.url.encodedPath.removePrefix("/Auth/Keys/")
+                state.deletedKeys += deleted
+                state.createdKeys -= deleted
                 respond("", HttpStatusCode.NoContent)
             }
 
@@ -230,23 +238,29 @@ private fun io.ktor.client.engine.mock.MockRequestHandleScope.handleMockAuthKeys
             if (state.failCreateKey) {
                 respond("Server error", HttpStatusCode.InternalServerError)
             } else {
+                if (!state.omitCreatedKeyInList) state.createdKeys += state.issuedApiKey
                 respond("", HttpStatusCode.NoContent)
             }
         }
 
         HttpMethod.Get -> {
             req.headers[HttpHeaders.Authorization].orEmpty() shouldContain """Token="$RAW_TEMP_ACCESS_TOKEN""""
+            // Shaped like Jellyfin 10.11 (AuthenticationManager.GetApiKeys): Id is 0 and IsActive false for
+            // every key, and DateCreated has no offset. The dates are also two hours behind Miru's clock, as
+            // when Jellyfin's timezone shifts them, so nothing may depend on comparing them to the attempt.
+            fun keyJson(
+                token: String,
+                appName: String,
+                offsetMs: Long,
+            ): String {
+                val created = Instant.ofEpochMilli(state.nowMs.get() - TWO_HOURS_MS + offsetMs)
+                val date = LocalDateTime.ofInstant(created, ZoneOffset.UTC)
+                return """{"Id":0,"AccessToken":"$token","AppName":"$appName","IsActive":false,"DateCreated":"$date"}"""
+            }
             val items = mutableListOf<String>()
-            if (state.includeOlderMiruKey) {
-                val olderTs = Instant.ofEpochMilli(state.nowMs.get() - 60_000L).toString()
-                items += """{"Id":1,"AccessToken":"$RAW_OLD_API_KEY","AppName":"Miru","IsActive":true,"DateCreated":"$olderTs"}"""
-            }
-            val otherAppTs = Instant.ofEpochMilli(state.nowMs.get() + 1_000L).toString()
-            items += """{"Id":2,"AccessToken":"other-app-key","AppName":"OtherClient","IsActive":true,"DateCreated":"$otherAppTs"}"""
-            if (!state.omitCreatedKeyInList) {
-                val newTs = Instant.ofEpochMilli(state.nowMs.get() + 500L).toString()
-                items += """{"Id":3,"AccessToken":"${state.issuedApiKey}","AppName":"Miru","IsActive":true,"DateCreated":"$newTs"}"""
-            }
+            if (state.includeOlderMiruKey) items += keyJson(RAW_OLD_API_KEY, "Miru", -60_000L)
+            items += keyJson("other-app-key", "OtherClient", 1_000L)
+            state.createdKeys.forEachIndexed { index, key -> items += keyJson(key, "Miru", 500L + index) }
             respond("""{"Items":[${items.joinToString(",")}],"TotalRecordCount":${items.size}}""", HttpStatusCode.OK, jsonHeaders)
         }
 

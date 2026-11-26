@@ -29,7 +29,9 @@ import org.slf4j.LoggerFactory
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.time.Instant
+import java.time.LocalDateTime
 import java.time.OffsetDateTime
+import java.time.ZoneOffset
 
 private val quickConnectLogger = LoggerFactory.getLogger("app.hononeko.miru.adapter.jellyfin.JellyfinQuickConnectClient")
 
@@ -69,7 +71,8 @@ data class JellyfinQuickConnectAuthSession(
 data class JellyfinCreatedAuthKey(
     val accessToken: String,
     val appName: String,
-    val dateCreatedMs: Long,
+    /** Null when Jellyfin sends no timestamp Miru can read; only used to order keys */
+    val dateCreatedMs: Long?,
 ) {
     override fun toString(): String =
         "JellyfinCreatedAuthKey(accessToken=***, appName=$appName, dateCreatedMs=$dateCreatedMs)"
@@ -300,17 +303,17 @@ class JellyfinQuickConnectClient(
                     }
                 }.bind()
 
+            // Jellyfin builds this list from its API key table and fills in only AppName, AccessToken
+            // and DateCreated (AuthenticationManager.GetApiKeys in 10.11): Id is 0 and IsActive is
+            // false for every key, and a deleted key is simply absent. Those fields carry no
+            // information here, so they are ignored rather than used as filters.
             response.items.orEmpty().mapNotNull { item ->
                 val token = item.accessToken?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
                 val app = item.appName?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
-                val createdAtMs = parseIsoTimestampMs(item.dateCreated) ?: return@mapNotNull null
-                if (item.isActive == false || !item.dateRevoked.isNullOrBlank()) {
-                    return@mapNotNull null
-                }
                 JellyfinCreatedAuthKey(
                     accessToken = token,
                     appName = app,
-                    dateCreatedMs = createdAtMs,
+                    dateCreatedMs = parseIsoTimestampMs(item.dateCreated),
                 )
             }
         }
@@ -494,6 +497,8 @@ class JellyfinQuickConnectClient(
         val trimmed = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return null
         return runCatching { OffsetDateTime.parse(trimmed).toInstant().toEpochMilli() }
             .recoverCatching { Instant.parse(trimmed).toEpochMilli() }
+            // Jellyfin stores UTC but can serialize a date read back from its database without an offset
+            .recoverCatching { LocalDateTime.parse(trimmed).toInstant(ZoneOffset.UTC).toEpochMilli() }
             .getOrNull()
     }
 

@@ -15,8 +15,12 @@ import arrow.core.raise.either
 import arrow.core.raise.ensure
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.slf4j.LoggerFactory
 import java.net.URI
 import java.util.UUID
+
+private val quickConnectServiceLogger =
+    LoggerFactory.getLogger("app.hononeko.miru.adapter.jellyfin.JellyfinQuickConnectService")
 
 private const val MAX_ATTEMPTS = 64
 private const val QUICK_CONNECT_TTL_MS = 10 * 60 * 1000L
@@ -283,6 +287,24 @@ class JellyfinQuickConnectService(
                     )
                 }
 
+                // Jellyfin answers the create request with no body, and its key list has no usable id,
+                // while DateCreated depends on Jellyfin's clock and how it serializes dates. So Miru
+                // finds its new key as the "Miru" key that was not in the list before it asked for one.
+                val keysBefore =
+                    quickConnectClient.listApiKeys(
+                        baseUrl = attempt.baseUrl,
+                        accessToken = authSession.accessToken,
+                        deviceId = attempt.deviceId,
+                    ).fold(
+                        ifLeft = {
+                            return@either markFailed(
+                                attempt = attempt,
+                                message = "Failed to list the API keys on Jellyfin.",
+                            )
+                        },
+                        ifRight = { it },
+                    )
+
                 val createResult =
                     quickConnectClient.createApiKey(
                         baseUrl = attempt.baseUrl,
@@ -297,7 +319,7 @@ class JellyfinQuickConnectService(
                     )
                 }
 
-                val keys =
+                val keysAfter =
                     quickConnectClient.listApiKeys(
                         baseUrl = attempt.baseUrl,
                         accessToken = authSession.accessToken,
@@ -312,12 +334,26 @@ class JellyfinQuickConnectService(
                         ifRight = { it },
                     )
 
+                val tokensBefore = keysBefore.mapTo(HashSet()) { it.accessToken }
+                val newMiruKeys =
+                    keysAfter.filter { key ->
+                        key.appName == JellyfinQuickConnectClient.MIRU_APP_NAME && key.accessToken !in tokensBefore
+                    }
+                quickConnectServiceLogger.debug(
+                    "Jellyfin API keys: {} before creating Miru's key, {} after, {} new Miru key(s)",
+                    keysBefore.size,
+                    keysAfter.size,
+                    newMiruKeys.size,
+                )
+                if (newMiruKeys.size > 1) {
+                    // Only possible if another client created a "Miru" key at the same moment
+                    quickConnectServiceLogger.warn(
+                        "{} new Miru API keys appeared on Jellyfin at once; using the newest",
+                        newMiruKeys.size,
+                    )
+                }
                 val createdKey =
-                    keys
-                        .filter { key ->
-                            key.appName == JellyfinQuickConnectClient.MIRU_APP_NAME &&
-                                key.dateCreatedMs >= attempt.startedAtMs
-                        }.maxByOrNull { it.dateCreatedMs }
+                    newMiruKeys.maxByOrNull { it.dateCreatedMs ?: Long.MIN_VALUE }
                         ?: return@either markFailed(
                             attempt = attempt,
                             message = "Miru API key was not found after creation on Jellyfin.",

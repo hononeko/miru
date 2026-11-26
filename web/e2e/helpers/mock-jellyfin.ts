@@ -339,6 +339,9 @@ export async function startMockJellyfinServer(options: MockJellyfinOptions = {})
 	let nextKeyCounter = 1;
 	let logoutCount = 0;
 	const validApiKeys = new Set<string>([apiKey]);
+	// Jellyfin 10.11 lists API keys with Id 0 and IsActive false for every key (AuthenticationManager.GetApiKeys)
+	// and can send DateCreated without an offset; the mock does the same so Miru can't rely on either
+	const jellyfinApiKeyDate = (ms: number) => new Date(ms).toISOString().replace('Z', '');
 	const issuedApiKeys: string[] = [];
 	const revokedApiKeys: string[] = [];
 	const authKeyRecords: Array<{
@@ -349,11 +352,11 @@ export async function startMockJellyfinServer(options: MockJellyfinOptions = {})
 		DateCreated: string;
 	}> = [
 		{
-			Id: 100,
+			Id: 0,
 			AccessToken: 'older-miru-key-should-not-be-picked',
 			AppName: 'Miru',
-			IsActive: true,
-			DateCreated: new Date(Date.now() - 3_600_000).toISOString()
+			IsActive: false,
+			DateCreated: jellyfinApiKeyDate(Date.now() - 3_600_000)
 		}
 	];
 	const qcRequests = new Map<
@@ -502,11 +505,11 @@ export async function startMockJellyfinServer(options: MockJellyfinOptions = {})
 				validApiKeys.add(newKey);
 				issuedApiKeys.push(newKey);
 				authKeyRecords.push({
-					Id: 100 + nextKeyCounter,
+					Id: 0,
 					AccessToken: newKey,
 					AppName: appName,
-					IsActive: true,
-					DateCreated: new Date().toISOString()
+					IsActive: false,
+					DateCreated: jellyfinApiKeyDate(Date.now())
 				});
 				res.writeHead(204);
 				res.end();

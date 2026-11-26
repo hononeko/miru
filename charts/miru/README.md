@@ -18,14 +18,18 @@ kubectl create namespace miru
 kubectl label namespace miru pod-security.kubernetes.io/enforce=restricted
 ```
 
-Generate two 32+ character secrets (`AUTH_SESSION_SECRET` and `MIRU_ENCRYPTION_KEY`) and install the chart:
+Generate two 32+ character secrets (`AUTH_SESSION_SECRET` and `MIRU_ENCRYPTION_KEY`) and install the chart from GHCR:
 
 ```sh
-helm install miru ./charts/miru \
+helm install miru oci://ghcr.io/hononeko/charts/miru \
   --namespace miru \
   --set auth.sessionSecret="$(openssl rand -base64 48)" \
   --set security.encryptionKey="$(openssl rand -base64 48)"
 ```
+
+Each Miru release publishes the chart with the same version, and the chart's default image is that release, so chart `1.1.0` runs `ghcr.io/hononeko/miru:1.1.0`. Without `--version`, Helm installs the newest release; pass `--version` to pin one. The [releases page](https://github.com/hononeko/miru/releases) also attaches the packaged chart.
+
+Installing from a checkout (`helm install miru ./charts/miru ...`) runs the `edge` image, the latest build of `main`, to match the chart on `main`.
 
 The chart refuses to render without a session secret of at least 32 characters (unless `auth.mode=none`). Later `helm upgrade` runs keep both values when you don't pass them again: the chart reads them back from the Secret it created. `helm template`, `--dry-run=client` and Argo CD can't read the cluster, so with those, set the values in your values file or use `existingSecret`. Keep `MIRU_ENCRYPTION_KEY` stable: a new key can't read the credentials saved with the old one.
 

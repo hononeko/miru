@@ -583,4 +583,85 @@ class JellyfinMediaServerAdapterTest :
             seriesDetails.artPath shouldBe "/Items/sr-1/Images/Backdrop"
             seriesDetails.series?.seasonCount shouldBe null
         }
+
+        test("buildMediaBrowserAuthHeader sanitizes values and adapter handles mediaTypeCode, season, section fallback, and quiet stop") {
+            val sanitized = buildMediaBrowserAuthHeader(apiKey = "tok\"en\n1", deviceId = "  ", version = " ")
+            sanitized shouldContain """DeviceId="miru""""
+            sanitized shouldContain """Version="1.0.0""""
+            sanitized shouldContain """Token="token1""""
+            sanitized shouldNotContain "\n"
+
+            val seenIncludeTypes = mutableListOf<String?>()
+            val seenIsFolder = mutableListOf<String?>()
+            val (adapter, requests) =
+                adapterWithMock { request ->
+                    when (request.url.encodedPath) {
+                        "/Items" -> {
+                            seenIncludeTypes += request.url.parameters["IncludeItemTypes"]
+                            seenIsFolder += request.url.parameters["IsFolder"]
+                            respondJson("""{"TotalRecordCount":7,"Items":[]}""")
+                        }
+
+                        "/Items/season-5" ->
+                            respondJson(
+                                """{"Id":"season-5","Name":"Season 5","Type":"Season","ParentId":"show-5","SeriesName":"Expanse"}""",
+                            )
+
+                        "/Items/show-5" ->
+                            respondJson("""{"Id":"show-5","Name":"Expanse","Type":"Series","ChildCount":6}""")
+
+                        "/Items/season-5/Ancestors" -> respond("", status = HttpStatusCode.InternalServerError)
+
+                        "/Items/movie-fallback" ->
+                            respondJson("""{"Id":"movie-fallback","Name":"Solo Film","Type":"Movie","ParentId":"lib-movies"}""")
+
+                        "/Items/movie-fallback/Ancestors" -> respond("", status = HttpStatusCode.NotFound)
+
+                        "/Items/userview-item/Ancestors" ->
+                            respondJson("""[{"Id":"uv-lib","Name":"Home Movies","Type":"UserView"}]""")
+
+                        "/Items/err-item/Ancestors" -> respond("", status = HttpStatusCode.ServiceUnavailable)
+
+                        "/Items/no-ct/Images/Primary" ->
+                            respond(content = byteArrayOf(9, 8), status = HttpStatusCode.OK)
+
+                        "/Sessions/sess-quiet/Playing/Stop" ->
+                            if (request.method == HttpMethod.Post) {
+                                respond("", status = HttpStatusCode.NoContent)
+                            } else {
+                                respond("", HttpStatusCode.BadRequest)
+                            }
+
+                        else -> respond("", status = HttpStatusCode.NotFound)
+                    }
+                }
+
+            // Exercise every mediaTypeCode branch: 2, 3, 4, 8, 9, 10, 1 (positive default), null, and invalid 0
+            listOf(2, 3, 4, 8, 9, 10, 1, null).forEach { code ->
+                adapter.fetchLibraryCount("lib-all", mediaTypeCode = code).shouldBeRight() shouldBe 7
+            }
+            seenIncludeTypes shouldContainExactly listOf("Series", "Season", "Episode", "MusicArtist", "MusicAlbum", "Audio", null, null)
+            seenIsFolder shouldContainExactly listOf(null, null, null, null, null, null, "false", "false")
+            adapter.fetchLibraryCount("lib-all", mediaTypeCode = 0).shouldBeLeft().shouldBeInstanceOf<MiruError.ValidationError>()
+
+            // Season details fetches parent series via parentId even when ancestors call fails
+            val seasonDetails = adapter.fetchMediaDetails("season-5").shouldBeRight()
+            seasonDetails.series?.title shouldBe "Expanse"
+            seasonDetails.librarySectionId shouldBe "show-5"
+
+            // fetchMediaSectionKey falls back to /Items/{id} parentId on 404 Ancestors, handles UserView, and propagates 503
+            adapter.fetchMediaSectionKey("movie-fallback").shouldBeRight() shouldBe "lib-movies"
+            adapter.fetchMediaSectionKey("userview-item").shouldBeRight() shouldBe "uv-lib"
+            adapter.fetchMediaSectionKey("err-item").shouldBeLeft().shouldBeInstanceOf<MiruError.UpstreamUnavailable>()
+
+            // Artwork without Content-Type defaults to application/octet-stream
+            val rawArtwork = adapter.fetchArtwork("/Items/no-ct/Images/Primary").shouldBeRight()
+            rawArtwork.bytes shouldBe byteArrayOf(9, 8)
+            rawArtwork.contentType shouldBe "application/octet-stream"
+
+            // Blank termination reason skips /Message and posts only /Playing/Stop
+            adapter.terminateSession("sess-quiet", "   ").shouldBeRight()
+            requests.none { it.url.encodedPath == "/Sessions/sess-quiet/Message" } shouldBe true
+            requests.any { it.url.encodedPath == "/Sessions/sess-quiet/Playing/Stop" } shouldBe true
+        }
     })

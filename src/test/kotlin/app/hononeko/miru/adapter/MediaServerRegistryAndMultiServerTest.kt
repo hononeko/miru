@@ -577,4 +577,52 @@ class MediaServerRegistryAndMultiServerTest :
                 h.close()
             }
         }
+
+        test("registry handles unconfigured runtimes, single-server display names, and async adapterForServer fallback") {
+            val dir = Files.createTempDirectory("miru-registry-edge-")
+            val handle = DatabaseFactory.createAndMigrate(DatabaseConfig.Sqlite(dir.resolve("miru.db").toString())).shouldBeRight()
+            try {
+                val serverRepo = ExposedMediaServerRepository(handle)
+                val plexUnconfigured =
+                    PlexRuntimeManager(PlexConfig(websocketEnabled = false), handle, mediaServerRepository = serverRepo)
+                val jfUnconfigured =
+                    JellyfinRuntimeManager(JellyfinConfig(websocketEnabled = false), handle, mediaServerRepository = serverRepo)
+                val emptyRegistry =
+                    MediaServerRegistry(
+                        runtimes = listOf(plexUnconfigured, jfUnconfigured),
+                        mediaServerRepository = serverRepo,
+                        jellyfinConfig = JellyfinConfig(),
+                    )
+                emptyRegistry.currentDefaultServerName().shouldBeNull()
+                emptyRegistry.serverSummaryById(null).shouldBeNull()
+                emptyRegistry.adapterForServer("   ").shouldBeNull()
+                emptyRegistry.listPublicServers().servers shouldHaveSize 0
+                val adminEmpty = emptyRegistry.listAdminServers().servers
+                adminEmpty shouldHaveSize 2
+                adminEmpty.first { it.serverType == "plex" }.statusMessage shouldBe "No Plex server configured"
+                adminEmpty.first { it.serverType == "jellyfin" }.statusMessage shouldBe
+                    "Set JELLYFIN_URL and JELLYFIN_API_KEY to connect Jellyfin"
+
+                // Single configured Jellyfin runtime whose cachedServerId is not yet warmed exercises async adapterForServer lookup
+                val jfEngine = createJellyfinMockEngine()
+                val jfConfig = JellyfinConfig(baseUrl = "http://jf-only.local:8096", apiKey = JF_SECRET, websocketEnabled = false)
+                val jfOnly =
+                    JellyfinRuntimeManager(
+                        jellyfinConfig = jfConfig,
+                        databaseHandle = handle,
+                        mediaServerRepository = serverRepo,
+                        httpClientEngineFactory = { jfEngine },
+                    )
+                jfOnly.initialize().shouldBeRight() shouldBe true
+                val singleRegistry = MediaServerRegistry(listOf(jfOnly), serverRepo, jfConfig)
+                val jfSid = jfOnly.serverIdProvider().shouldBeRight()
+                singleRegistry.currentDefaultServerName() shouldBe "Studio Jellyfin"
+                singleRegistry.adapterForServer(jfSid)?.serverType shouldBe "jellyfin"
+                singleRegistry.stop()
+                emptyRegistry.stop()
+            } finally {
+                handle.close()
+                dir.toFile().deleteRecursively()
+            }
+        }
     })

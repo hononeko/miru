@@ -74,7 +74,22 @@ tests:
     asserts:
       - template: templates/deployment.yaml
         failedTemplate:
-          errorMessage: "strategy.type=RollingUpdate cannot be used with SQLite persistence: the new pod would wait for the volume the old pod holds, or both would write the same database file. Use strategy.type=Recreate."
+          errorMessage: "strategy.type=RollingUpdate is not supported for Deployment (with either SQLite or PostgreSQL): Miru has no leader election, so overlapping pods during rollout would record duplicate streams, trigger duplicate guardrails, and emit duplicate webhooks. Use strategy.type=Recreate (or workload.kind=StatefulSet)."
+
+  - it: rejects Deployment with PostgreSQL and strategy.type=RollingUpdate
+    set:
+      database:
+        engine: postgres
+        postgres:
+          url: jdbc:postgresql://postgres:5432/miru
+          user: miru
+          password: pg-password
+      strategy:
+        type: RollingUpdate
+    asserts:
+      - template: templates/deployment.yaml
+        failedTemplate:
+          errorMessage: "strategy.type=RollingUpdate is not supported for Deployment (with either SQLite or PostgreSQL): Miru has no leader election, so overlapping pods during rollout would record duplicate streams, trigger duplicate guardrails, and emit duplicate webhooks. Use strategy.type=Recreate (or workload.kind=StatefulSet)."
 
   - it: rejects replicaCount above 1
     set:

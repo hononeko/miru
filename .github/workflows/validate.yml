@@ -65,7 +65,6 @@ jobs:
             --set database.engine=postgres \
             --set database.postgres.url=jdbc:postgresql://postgres:5432/miru \
             --set database.postgres.user=miru \
-            --set strategy.type=RollingUpdate \
             --set existingSecret=miru-secrets
 
           check "${secret[@]}" \
@@ -162,6 +161,12 @@ jobs:
           expect_failure --set existingSecret=miru-secrets --set plex.token=token
           expect_failure "${secret[@]}" --set auth.allowLocalLogin=false
           expect_failure "${secret[@]}" --set strategy.type=RollingUpdate
+          expect_failure \
+            --set database.engine=postgres \
+            --set database.postgres.url=jdbc:postgresql://postgres:5432/miru \
+            --set database.postgres.user=miru \
+            --set strategy.type=RollingUpdate \
+            --set existingSecret=miru-secrets
           expect_failure "${secret[@]}" --set strategy.rollingUpdate.maxUnavailable=0
           expect_failure "${secret[@]}" --set replicaCount=2
           expect_failure "${secret[@]}" --set image.digest=not-a-digest

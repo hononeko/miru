@@ -34,10 +34,9 @@ terminationGracePeriodSeconds: 30
 # -- Disable Kubernetes service-link env var injection (<SERVICE>_PORT, etc.), which otherwise collides with MIRU_PORT when the Service is named miru.
 enableServiceLinks: false
 
-# -- Deployment strategy. Recreate lets the new pod attach the ReadWriteOnce SQLite volume after the old pod stops;
-# the chart refuses RollingUpdate with SQLite persistence when workload.kind is Deployment. With PostgreSQL
-# (database.engine=postgres), RollingUpdate keeps the UI up during upgrades, but the old and new pod both track
-# sessions for a few seconds, so a stream that ends in that window can be recorded twice.
+# -- Deployment strategy. Deployment requires Recreate for both SQLite and PostgreSQL because Miru has no leader
+# election, so overlapping pods during RollingUpdate would record duplicate streams, guardrails, and webhooks.
+# Ignored when workload.kind is StatefulSet (use workload.statefulSet.updateStrategy instead).
 strategy:
   type: Recreate
 

@@ -53,14 +53,11 @@ existingSecret: miru-secrets
 
 When `existingSecret` is set, the chart creates no `Secret` of its own, and it refuses to render if one of the secret values above is also set in your values, since it would be ignored. Settings that aren't secret (`database.postgres.url`, `database.postgres.user`, `auth.adminUsername`) still come from your values and go into the `ConfigMap`. A key in your Secret overrides the `ConfigMap`, so a `DATABASE_URL` kept in the Secret still works.
 
-### 2. PostgreSQL with `RollingUpdate`
+### 2. PostgreSQL
 
-With PostgreSQL, Miru keeps no state on disk, so the SQLite `PersistentVolumeClaim` is automatically omitted and you can use `RollingUpdate`:
+With PostgreSQL, Miru keeps no SQLite database on disk, so the SQLite `PersistentVolumeClaim` is automatically omitted:
 
 ```yaml
-strategy:
-  type: RollingUpdate
-
 database:
   engine: postgres
   postgres:
@@ -71,7 +68,7 @@ database:
 
 Set the password with `--set database.postgres.password=...`, or as `DATABASE_PASSWORD` in your `existingSecret`. Keep it out of the URL, which goes into the `ConfigMap`.
 
-`RollingUpdate` keeps the UI up during upgrades, but the old and new pod both track sessions for a few seconds, so a stream that ends in that window can be recorded twice. The chart refuses `RollingUpdate` with SQLite persistence, and `replicaCount` above `1`: Miru has no leader election, so every pod records every stream.
+Even with PostgreSQL, `Deployment` still requires `strategy.type: Recreate` (and `replicaCount <= 1`): Miru has no leader election, so overlapping pods during a `Deployment` `RollingUpdate` would record duplicate streams, trigger duplicate guardrails, and emit duplicate webhooks. If you prefer a `StatefulSet` controller, `workload.kind: StatefulSet` with `updateStrategy.type: RollingUpdate` terminates `pod-0` before recreating it.
 
 ### 3. Ingress or Gateway API (`HTTPRoute`)
 
@@ -224,9 +221,9 @@ Miru runs as a single pod (`replicaCount` is capped at `0` or `1` because Miru h
 | **Headless Service** | None | `Service` (`<fullname>-headless`, `clusterIP: None`) |
 | **SQLite PVC (default)** | Standalone `PersistentVolumeClaim` (`<fullname>-data`) | `spec.volumeClaimTemplates` (`data`, creating PVC `data-<fullname>-0`) |
 | **`existingClaim` / `postgres` / `persistence.enabled: false`** | Omits standalone PVC; mounts `existingClaim` or `emptyDir` | Omits `volumeClaimTemplates`; mounts `existingClaim` or `emptyDir` |
-| **Upgrade behavior** | `strategy.type: Recreate` (refuses `RollingUpdate` with SQLite) | `workload.statefulSet.updateStrategy.type: RollingUpdate` or `OnDelete` (terminates `pod-0` before recreating it; `strategy.*` is ignored) |
+| **Upgrade behavior** | `strategy.type: Recreate` (refuses `RollingUpdate` for both SQLite and PostgreSQL) | `workload.statefulSet.updateStrategy.type: RollingUpdate` or `OnDelete` (terminates `pod-0` before recreating it; `strategy.*` is ignored) |
 | **PVC retention on uninstall** | `persistence.keep: true` adds `helm.sh/resource-policy: keep` to `<fullname>-data` | `workload.statefulSet.persistentVolumeClaimRetentionPolicy.whenDeleted` (`Retain` or `Delete`) |
-| **When to choose** | Standard single-pod installs, PostgreSQL with `RollingUpdate`, or simple Helm-managed PVCs | GitOps / backup tools expecting `StatefulSet` `volumeClaimTemplates` (e.g. VolSync / Kopiur) or stable pod ordinal DNS (`<fullname>-0.<fullname>-headless`) |
+| **When to choose** | Standard single-pod installs, PostgreSQL deployments, or simple Helm-managed PVCs | GitOps / backup tools expecting `StatefulSet` `volumeClaimTemplates` (e.g. VolSync / Kopiur) or stable pod ordinal DNS (`<fullname>-0.<fullname>-headless`) |
 
 ### `workload.*` Values
 
@@ -351,7 +348,7 @@ Both `values.schema.json` and the chart's `miru.validate` helper reject unsafe o
 
 - `workload.kind` must be `Deployment` or `StatefulSet`.
 - `replicaCount` must be `0` or `1` (multiple pods would duplicate playback history).
-- `strategy.type: RollingUpdate` is rejected when `workload.kind` is `Deployment` with SQLite persistence enabled (ignored when `workload.kind` is `StatefulSet` or `database.engine` is `postgres`).
+- `strategy.type: RollingUpdate` is rejected when `workload.kind` is `Deployment` regardless of database engine (`sqlite` or `postgres`), because Miru has no leader election and overlapping pods would record duplicate streams, guardrails, and webhooks (ignored when `workload.kind` is `StatefulSet`, whose `updateStrategy.type: RollingUpdate` terminates `pod-0` before recreating it).
 - `strategy.rollingUpdate` cannot be set when `strategy.type` is `Recreate` in `Deployment` mode.
 - `persistence.dataSource` and `persistence.dataSourceRef` cannot be set simultaneously.
 - Neither `persistence.dataSource` nor `persistence.dataSourceRef` may be set alongside `persistence.existingClaim`.

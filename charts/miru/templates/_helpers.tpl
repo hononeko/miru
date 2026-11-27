@@ -187,8 +187,8 @@ Refuse to render settings that would deploy a pod that cannot start or that woul
 {{- end -}}
 {{- if eq $workloadKind "Deployment" -}}
 {{- $strategy := .Values.strategy | default dict -}}
-{{- if and (include "miru.persistenceEnabled" .) (eq (get $strategy "type") "RollingUpdate") -}}
-{{- fail "strategy.type=RollingUpdate cannot be used with SQLite persistence: the new pod would wait for the volume the old pod holds, or both would write the same database file. Use strategy.type=Recreate." -}}
+{{- if eq (get $strategy "type") "RollingUpdate" -}}
+{{- fail "strategy.type=RollingUpdate is not supported for Deployment (with either SQLite or PostgreSQL): Miru has no leader election, so overlapping pods during rollout would record duplicate streams, trigger duplicate guardrails, and emit duplicate webhooks. Use strategy.type=Recreate (or workload.kind=StatefulSet)." -}}
 {{- end -}}
 {{- if and (eq (get $strategy "type") "Recreate") (get $strategy "rollingUpdate") -}}
 {{- fail "strategy.rollingUpdate cannot be set when strategy.type is Recreate." -}}

@@ -11,6 +11,11 @@ import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import java.sql.SQLException
 
+suspend fun <T> Database.exposedReadQuery(
+    operation: String,
+    block: JdbcTransaction.() -> T,
+): Either<MiruError.PersistenceError, T> = exposedQuery(operation = operation, block = block)
+
 suspend fun <T> Database.exposedQuery(
     operation: String,
     block: JdbcTransaction.() -> T,

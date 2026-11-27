@@ -4,6 +4,7 @@ import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.persistence.DatabaseHandle
 import app.hononeko.miru.persistence.escapeLikePattern
 import app.hononeko.miru.persistence.exposedQuery
+import app.hononeko.miru.persistence.exposedReadQuery
 import app.hononeko.miru.persistence.model.ClientStatsRow
 import app.hononeko.miru.persistence.model.HistoryFilter
 import app.hononeko.miru.persistence.model.HistoryPage
@@ -199,8 +200,12 @@ interface PlaybackHistoryRepository {
 
 class ExposedPlaybackHistoryRepository(
     private val database: Database,
+    private val readDatabase: Database = database,
 ) : PlaybackHistoryRepository {
-    constructor(handle: DatabaseHandle) : this(handle.database)
+    constructor(handle: DatabaseHandle) : this(
+        database = handle.database,
+        readDatabase = handle.readDatabase,
+    )
 
     override suspend fun insert(record: PlaybackHistoryRecord): Either<MiruError.PersistenceError, PlaybackHistoryRecord> =
         database.exposedQuery("playback_history_insert") {
@@ -232,7 +237,7 @@ class ExposedPlaybackHistoryRepository(
         if (keys.isEmpty()) {
             return Either.Right(emptySet())
         }
-        return database.exposedQuery("playback_history_find_existing_import_keys") {
+        return readDatabase.exposedReadQuery("playback_history_find_existing_import_keys") {
             val existing = linkedSetOf<String>()
             for (chunk in keys.chunked(IMPORT_KEY_QUERY_CHUNK_SIZE)) {
                 PlaybackHistoryTable
@@ -247,7 +252,7 @@ class ExposedPlaybackHistoryRepository(
     }
 
     override suspend fun findById(id: String): Either<MiruError.PersistenceError, PlaybackHistoryRecord?> =
-        database.exposedQuery("playback_history_find_by_id") {
+        readDatabase.exposedReadQuery("playback_history_find_by_id") {
             PlaybackHistoryTable
                 .selectAll()
                 .where { PlaybackHistoryTable.id eq id }
@@ -262,7 +267,7 @@ class ExposedPlaybackHistoryRepository(
         minStoppedAtMs: Long,
         playerMachineId: String?,
     ): Either<MiruError.PersistenceError, PlaybackHistoryRecord?> =
-        database.exposedQuery("playback_history_find_merge_candidate") {
+        readDatabase.exposedReadQuery("playback_history_find_merge_candidate") {
             val baseCondition =
                 (PlaybackHistoryTable.serverId eq serverId) and
                     (PlaybackHistoryTable.userId eq userId) and
@@ -325,7 +330,7 @@ class ExposedPlaybackHistoryRepository(
             return Either.Right(HistoryPage(emptyList(), 0L, safeLimit, safeOffset))
         }
 
-        return database.exposedQuery("playback_history_query") {
+        return readDatabase.exposedReadQuery("playback_history_query") {
             val condition = buildFilterCondition(filter)
             val sortOrder =
                 when (filter.sortDir) {
@@ -399,7 +404,7 @@ class ExposedPlaybackHistoryRepository(
             return Either.Right(Unit)
         }
 
-        return database.exposedQuery("playback_history_stream_stats") {
+        return readDatabase.exposedReadQuery("playback_history_stream_stats") {
             val condition = buildStatsCondition(serverId, userIds, fromMs, toMs)
             PlaybackHistoryTable
                 .select(
@@ -449,7 +454,7 @@ class ExposedPlaybackHistoryRepository(
             return Either.Right(Unit)
         }
 
-        return database.exposedQuery("playback_history_stream_overview_stats") {
+        return readDatabase.exposedReadQuery("playback_history_stream_overview_stats") {
             val condition = buildStatsCondition(serverId, userIds, fromMs, toMs)
             PlaybackHistoryTable
                 .select(
@@ -481,7 +486,7 @@ class ExposedPlaybackHistoryRepository(
             return Either.Right(Unit)
         }
 
-        return database.exposedQuery("playback_history_stream_media_plays") {
+        return readDatabase.exposedReadQuery("playback_history_stream_media_plays") {
             val condition =
                 buildStatsCondition(serverId, userIds, fromMs, null) and (PlaybackHistoryTable.mediaType inList mediaTypes)
             PlaybackHistoryTable
@@ -523,7 +528,7 @@ class ExposedPlaybackHistoryRepository(
             return Either.Right(Unit)
         }
 
-        return database.exposedQuery("playback_history_stream_client_stats") {
+        return readDatabase.exposedReadQuery("playback_history_stream_client_stats") {
             val condition = buildStatsCondition(serverId, userIds, fromMs, toMs)
             PlaybackHistoryTable
                 .select(
@@ -558,7 +563,7 @@ class ExposedPlaybackHistoryRepository(
             return Either.Right(Unit)
         }
 
-        return database.exposedQuery("playback_history_stream_heatmap_stats") {
+        return readDatabase.exposedReadQuery("playback_history_stream_heatmap_stats") {
             val condition = buildStatsCondition(serverId, userIds, fromMs, toMs)
             PlaybackHistoryTable
                 .select(
@@ -610,7 +615,7 @@ class ExposedPlaybackHistoryRepository(
         if (userIds != null && userIds.isEmpty()) {
             return Either.Right(emptyMap())
         }
-        return database.exposedQuery("playback_history_summarize_by_user") {
+        return readDatabase.exposedReadQuery("playback_history_summarize_by_user") {
             val playCountExpr = PlaybackHistoryTable.id.count()
             val watchDurationExpr = PlaybackHistoryTable.watchedDurationSec.castTo(LongColumnType()).sum()
             val query =
@@ -683,7 +688,7 @@ class ExposedPlaybackHistoryRepository(
         if (allowedUserIds != null && allowedUserIds.isEmpty()) {
             return Either.Right(MediaPlaySummary.EMPTY)
         }
-        return database.exposedQuery(operation) {
+        return readDatabase.exposedReadQuery(operation) {
             var condition = predicate()
             if (serverId != null) {
                 condition = condition and (PlaybackHistoryTable.serverId eq serverId)
@@ -730,7 +735,7 @@ class ExposedPlaybackHistoryRepository(
                 }
 
             if (totalPlays == 0L) {
-                return@exposedQuery MediaPlaySummary.EMPTY
+                return@exposedReadQuery MediaPlaySummary.EMPTY
             }
 
             val resolvedLastUserId = lastUserId
@@ -767,7 +772,7 @@ class ExposedPlaybackHistoryRepository(
         userId: String,
         limit: Int,
     ): Either<MiruError.PersistenceError, List<PlaybackHistoryRecord>> =
-        database.exposedQuery("playback_history_list_recent_by_user") {
+        readDatabase.exposedReadQuery("playback_history_list_recent_by_user") {
             val safeLimit = limit.coerceAtLeast(0)
             if (safeLimit == 0) {
                 emptyList()
@@ -782,7 +787,7 @@ class ExposedPlaybackHistoryRepository(
         }
 
     override suspend fun listByUser(userId: String): Either<MiruError.PersistenceError, List<PlaybackHistoryRecord>> =
-        database.exposedQuery("playback_history_list_by_user") {
+        readDatabase.exposedReadQuery("playback_history_list_by_user") {
             PlaybackHistoryTable
                 .selectAll()
                 .where { PlaybackHistoryTable.userId eq userId }

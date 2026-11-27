@@ -632,4 +632,33 @@ class AppConfigLoaderTest :
                     "JELLYFIN_WEBSOCKET_ENABLED",
                 )
         }
+
+        test("loads and validates SQLITE_READ_POOL_SIZE from env and HOCON") {
+            val fromEnv =
+                AppConfigLoader
+                    .load(env = baseSqliteEnv(mapOf("SQLITE_READ_POOL_SIZE" to "8")))
+                    .shouldBeRight()
+            fromEnv.database shouldBe DatabaseConfig.Sqlite(path = "./data/miru.db", readPoolSize = 8)
+
+            val hocon =
+                MapApplicationConfig(
+                    "miru.database.sqlite.path" to "/tmp/hocon.db",
+                    "miru.database.sqlite.readPoolSize" to "6",
+                    "miru.auth.mode" to "none",
+                )
+            val fromHocon = AppConfigLoader.load(env = emptyMap(), hocon = hocon).shouldBeRight()
+            fromHocon.database shouldBe DatabaseConfig.Sqlite(path = "/tmp/hocon.db", readPoolSize = 6)
+
+            val zeroPool =
+                AppConfigLoader
+                    .load(env = baseSqliteEnv(mapOf("SQLITE_READ_POOL_SIZE" to "0")))
+                    .shouldBeLeft()
+            zeroPool.fieldErrors shouldContainKey "SQLITE_READ_POOL_SIZE"
+
+            val nonNumericPool =
+                AppConfigLoader
+                    .load(env = baseSqliteEnv(mapOf("SQLITE_READ_POOL_SIZE" to "abc")))
+                    .shouldBeLeft()
+            nonNumericPool.fieldErrors shouldContainKey "SQLITE_READ_POOL_SIZE"
+        }
     })

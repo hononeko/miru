@@ -33,7 +33,12 @@ data class ServerConfig(
 sealed interface DatabaseConfig {
     data class Sqlite(
         val path: String,
-    ) : DatabaseConfig
+        val readPoolSize: Int = DEFAULT_READ_POOL_SIZE,
+    ) : DatabaseConfig {
+        companion object {
+            const val DEFAULT_READ_POOL_SIZE = 4
+        }
+    }
 
     data class Postgres(
         val url: String,
@@ -340,10 +345,20 @@ object AppConfigLoader {
         return when (engine) {
             "sqlite" -> {
                 val path = get("SQLITE_PATH", "miru.database.sqlite.path", null) ?: "./data/miru.db"
+                val readPoolRaw =
+                    get("SQLITE_READ_POOL_SIZE", "miru.database.sqlite.readPoolSize", null)
+                        ?: DatabaseConfig.Sqlite.DEFAULT_READ_POOL_SIZE.toString()
+                val readPoolSize = readPoolRaw.toIntOrNull()
                 if (path.isBlank()) {
                     errors["SQLITE_PATH"] = "must not be blank when DB_ENGINE=sqlite"
                 }
-                DatabaseConfig.Sqlite(path = path)
+                if (readPoolSize == null || readPoolSize < 1) {
+                    errors["SQLITE_READ_POOL_SIZE"] = "must be an integer >= 1"
+                }
+                DatabaseConfig.Sqlite(
+                    path = path,
+                    readPoolSize = readPoolSize ?: DatabaseConfig.Sqlite.DEFAULT_READ_POOL_SIZE,
+                )
             }
 
             "postgres", "postgresql" -> {

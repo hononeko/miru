@@ -11,20 +11,19 @@ import javax.sql.DataSource
 
 class DatabaseReadinessCheck(
     private val dataSource: DataSource,
+    private val readDataSource: DataSource = dataSource,
 ) : ReadinessCheck {
-    constructor(handle: DatabaseHandle) : this(handle.dataSource)
+    constructor(handle: DatabaseHandle) : this(
+        dataSource = handle.dataSource,
+        readDataSource = handle.readDataSource,
+    )
 
     override suspend fun check(): Either<MiruError, Unit> =
         withContext(Dispatchers.IO) {
             try {
-                dataSource.connection.use { conn ->
-                    conn.createStatement().use { stmt ->
-                        stmt.executeQuery("SELECT 1").use { rs ->
-                            if (!rs.next()) {
-                                throw SQLException("Database readiness probe returned no rows")
-                            }
-                        }
-                    }
+                probeDataSource(dataSource)
+                if (readDataSource !== dataSource) {
+                    probeDataSource(readDataSource)
                 }
                 Either.Right(Unit)
             } catch (ex: CancellationException) {
@@ -47,4 +46,16 @@ class DatabaseReadinessCheck(
                 )
             }
         }
+
+    private fun probeDataSource(source: DataSource) {
+        source.connection.use { conn ->
+            conn.createStatement().use { stmt ->
+                stmt.executeQuery("SELECT 1").use { rs ->
+                    if (!rs.next()) {
+                        throw SQLException("Database readiness probe returned no rows")
+                    }
+                }
+            }
+        }
+    }
 }

@@ -4,6 +4,7 @@ import app.hononeko.miru.MiruJson
 import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.persistence.DatabaseHandle
 import app.hononeko.miru.persistence.exposedQuery
+import app.hononeko.miru.persistence.exposedReadQuery
 import app.hononeko.miru.persistence.model.WebhookDeliveryFilter
 import app.hononeko.miru.persistence.model.WebhookDeliveryPage
 import app.hononeko.miru.persistence.model.WebhookDeliveryRecord
@@ -57,11 +58,15 @@ interface WebhookDeliveryRepository {
 
 class ExposedWebhookTargetRepository(
     private val database: Database,
+    private val readDatabase: Database = database,
 ) : WebhookTargetRepository {
-    constructor(handle: DatabaseHandle) : this(handle.database)
+    constructor(handle: DatabaseHandle) : this(
+        database = handle.database,
+        readDatabase = handle.readDatabase,
+    )
 
     override suspend fun findAll(): Either<MiruError.PersistenceError, List<WebhookTargetRecord>> =
-        database.exposedQuery("webhook_target_find_all") {
+        readDatabase.exposedReadQuery("webhook_target_find_all") {
             WebhookTargetsTable
                 .selectAll()
                 .orderBy(
@@ -71,7 +76,7 @@ class ExposedWebhookTargetRepository(
         }
 
     override suspend fun findEnabled(): Either<MiruError.PersistenceError, List<WebhookTargetRecord>> =
-        database.exposedQuery("webhook_target_find_enabled") {
+        readDatabase.exposedReadQuery("webhook_target_find_enabled") {
             WebhookTargetsTable
                 .selectAll()
                 .where { WebhookTargetsTable.enabled eq true }
@@ -82,7 +87,7 @@ class ExposedWebhookTargetRepository(
         }
 
     override suspend fun findById(id: String): Either<MiruError.PersistenceError, WebhookTargetRecord?> =
-        database.exposedQuery("webhook_target_find_by_id") {
+        readDatabase.exposedReadQuery("webhook_target_find_by_id") {
             WebhookTargetsTable
                 .selectAll()
                 .where { WebhookTargetsTable.id eq id }
@@ -141,8 +146,12 @@ class ExposedWebhookTargetRepository(
 
 class ExposedWebhookDeliveryRepository(
     private val database: Database,
+    private val readDatabase: Database = database,
 ) : WebhookDeliveryRepository {
-    constructor(handle: DatabaseHandle) : this(handle.database)
+    constructor(handle: DatabaseHandle) : this(
+        database = handle.database,
+        readDatabase = handle.readDatabase,
+    )
 
     override suspend fun insert(record: WebhookDeliveryRecord): Either<MiruError.PersistenceError, WebhookDeliveryRecord> =
         database.exposedQuery("webhook_delivery_insert") {
@@ -181,7 +190,7 @@ class ExposedWebhookDeliveryRepository(
     override suspend fun query(filter: WebhookDeliveryFilter): Either<MiruError.PersistenceError, WebhookDeliveryPage> {
         val safeLimit = filter.limit.coerceAtLeast(0)
         val safeOffset = filter.offset.coerceAtLeast(0)
-        return database.exposedQuery("webhook_delivery_query") {
+        return readDatabase.exposedReadQuery("webhook_delivery_query") {
             val predicates = mutableListOf<Op<Boolean>>()
             filter.targetId?.let { predicates += WebhookDeliveriesTable.targetId eq it }
             filter.eventType?.let { predicates += WebhookDeliveriesTable.eventType eq it }

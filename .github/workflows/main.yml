@@ -61,6 +61,11 @@ jobs:
       attestations: write
       id-token: write
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
       - name: Log in to GitHub Container Registry (GHCR)
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
@@ -79,3 +84,10 @@ jobs:
           expected-digests: "2"
           attest: "true"
           title: Release candidate published
+
+      # The chart X.Y.Z-rc.N runs the image above. Helm installs a pre-release only when asked for it by --version or
+      # --devel, and cd.yml deletes these charts on release, with the release candidate images.
+      - name: Publish release candidate chart
+        uses: ./.github/actions/publish-chart
+        with:
+          version: ${{ needs.version.outputs.rc_version }}

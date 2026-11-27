@@ -4,9 +4,11 @@ import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.persistence.DatabaseHandle
 import app.hononeko.miru.persistence.exposedQuery
 import app.hononeko.miru.persistence.exposedReadQuery
+import app.hononeko.miru.persistence.model.ApiKeyAuthContext
 import app.hononeko.miru.persistence.model.ApiKeyRecord
 import app.hononeko.miru.persistence.model.AuthAccountRecord
 import app.hononeko.miru.persistence.model.AuthSessionRecord
+import app.hononeko.miru.persistence.model.SessionAuthContext
 import app.hononeko.miru.persistence.model.UserPreferencesRecord
 import app.hononeko.miru.persistence.table.ApiKeysTable
 import app.hononeko.miru.persistence.table.AuthAccountMediaUsersTable
@@ -14,6 +16,7 @@ import app.hononeko.miru.persistence.table.AuthAccountsTable
 import app.hononeko.miru.persistence.table.AuthSessionsTable
 import app.hononeko.miru.persistence.table.UserPreferencesTable
 import arrow.core.Either
+import org.jetbrains.exposed.v1.core.JoinType
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
@@ -132,6 +135,8 @@ interface AuthSessionRepository {
 
     suspend fun findByTokenHash(tokenHash: String): Either<MiruError.PersistenceError, AuthSessionRecord?>
 
+    suspend fun findSessionAuthContextByTokenHash(tokenHash: String): Either<MiruError.PersistenceError, SessionAuthContext?>
+
     suspend fun touchLastSeen(
         id: String,
         lastSeenAtMs: Long,
@@ -148,6 +153,8 @@ interface ApiKeyRepository {
     suspend fun insert(apiKey: ApiKeyRecord): Either<MiruError.PersistenceError, ApiKeyRecord>
 
     suspend fun findByKeyHash(keyHash: String): Either<MiruError.PersistenceError, ApiKeyRecord?>
+
+    suspend fun findApiKeyAuthContextByKeyHash(keyHash: String): Either<MiruError.PersistenceError, ApiKeyAuthContext?>
 
     suspend fun findById(id: String): Either<MiruError.PersistenceError, ApiKeyRecord?>
 
@@ -493,6 +500,36 @@ class ExposedAuthSessionRepository(
                 ?.toAuthSessionRecord()
         }
 
+    override suspend fun findSessionAuthContextByTokenHash(
+        tokenHash: String,
+    ): Either<MiruError.PersistenceError, SessionAuthContext?> =
+        readDatabase.exposedReadQuery("auth_session_find_context_by_token_hash") {
+            val rows =
+                AuthSessionsTable
+                    .join(
+                        otherTable = AuthAccountsTable,
+                        joinType = JoinType.INNER,
+                        additionalConstraint = { AuthAccountsTable.id eq AuthSessionsTable.accountId },
+                    ).join(
+                        otherTable = AuthAccountMediaUsersTable,
+                        joinType = JoinType.LEFT,
+                        additionalConstraint = { AuthAccountMediaUsersTable.accountId eq AuthAccountsTable.id },
+                    ).selectAll()
+                    .where { AuthSessionsTable.tokenHash eq tokenHash }
+                    .orderBy(AuthAccountMediaUsersTable.mediaUserId to SortOrder.ASC)
+                    .toList()
+            val first = rows.firstOrNull() ?: return@exposedReadQuery null
+            val linkedIds =
+                rows
+                    .mapNotNull { it.getOrNull(AuthAccountMediaUsersTable.mediaUserId) }
+                    .toSet()
+            SessionAuthContext(
+                session = first.toAuthSessionRecord(),
+                account = first.toAuthAccountRecord(),
+                linkedMediaUserIds = linkedIds,
+            )
+        }
+
     override suspend fun touchLastSeen(
         id: String,
         lastSeenAtMs: Long,
@@ -552,6 +589,36 @@ class ExposedApiKeyRepository(
                 .where { ApiKeysTable.keyHash eq keyHash }
                 .singleOrNull()
                 ?.toApiKeyRecord()
+        }
+
+    override suspend fun findApiKeyAuthContextByKeyHash(
+        keyHash: String,
+    ): Either<MiruError.PersistenceError, ApiKeyAuthContext?> =
+        readDatabase.exposedReadQuery("api_key_find_context_by_key_hash") {
+            val rows =
+                ApiKeysTable
+                    .join(
+                        otherTable = AuthAccountsTable,
+                        joinType = JoinType.INNER,
+                        additionalConstraint = { AuthAccountsTable.id eq ApiKeysTable.accountId },
+                    ).join(
+                        otherTable = AuthAccountMediaUsersTable,
+                        joinType = JoinType.LEFT,
+                        additionalConstraint = { AuthAccountMediaUsersTable.accountId eq AuthAccountsTable.id },
+                    ).selectAll()
+                    .where { ApiKeysTable.keyHash eq keyHash }
+                    .orderBy(AuthAccountMediaUsersTable.mediaUserId to SortOrder.ASC)
+                    .toList()
+            val first = rows.firstOrNull() ?: return@exposedReadQuery null
+            val linkedIds =
+                rows
+                    .mapNotNull { it.getOrNull(AuthAccountMediaUsersTable.mediaUserId) }
+                    .toSet()
+            ApiKeyAuthContext(
+                apiKey = first.toApiKeyRecord(),
+                account = first.toAuthAccountRecord(),
+                linkedMediaUserIds = linkedIds,
+            )
         }
 
     override suspend fun findById(id: String): Either<MiruError.PersistenceError, ApiKeyRecord?> =

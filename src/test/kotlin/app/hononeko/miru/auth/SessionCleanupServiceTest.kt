@@ -8,6 +8,7 @@ import app.hononeko.miru.createSyncServices
 import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.persistence.DatabaseFactory
 import app.hononeko.miru.persistence.model.AuthSessionRecord
+import app.hononeko.miru.persistence.model.SessionAuthContext
 import app.hononeko.miru.persistence.repository.AuthSessionRepository
 import app.hononeko.miru.persistence.repository.ExposedAuthSessionRepository
 import app.hononeko.miru.persistence.repository.ExposedLibraryRepository
@@ -43,6 +44,10 @@ private class FakeAuthSessionRepository(
     override suspend fun findByTokenHash(tokenHash: String): Either<MiruError.PersistenceError, AuthSessionRecord?> =
         null.right()
 
+    override suspend fun findSessionAuthContextByTokenHash(
+        tokenHash: String,
+    ): Either<MiruError.PersistenceError, SessionAuthContext?> = null.right()
+
     override suspend fun touchLastSeen(
         id: String,
         lastSeenAtMs: Long,
@@ -77,11 +82,13 @@ class SessionCleanupServiceTest :
                         }
                     }
 
+                val cleanedTimestamps = mutableListOf<Long>()
                 val service =
                     SessionCleanupService(
                         sessionRepository = repo,
                         scope = this,
                         clock = { nowMs.get() },
+                        onExpiredCleaned = { ts -> cleanedTimestamps += ts },
                     )
 
                 // Idempotent start() runs startup sweep immediately
@@ -113,6 +120,7 @@ class SessionCleanupServiceTest :
                 advanceTimeBy(1.hours)
                 runCurrent()
                 repo.deleteExpiredCalls shouldBe listOf(10_000L, 3_610_000L, 7_210_000L, 10_810_000L, 14_410_000L)
+                cleanedTimestamps shouldBe listOf(10_000L, 3_610_000L, 14_410_000L)
 
                 service.stop()
 

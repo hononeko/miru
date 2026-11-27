@@ -208,6 +208,7 @@ private fun runServer() {
             sessionRepository = sessionRepository,
             emailLinker = emailLinker,
             accountRepository = accountRepository,
+            onExpiredSessionsCleaned = { nowMs -> authService.evictExpiredSessions(nowMs) },
         )
     val readinessChecks = listOf(NamedReadinessCheck("database", DatabaseReadinessCheck(databaseHandle)))
     val mergedLibrarySyncEvents =
@@ -225,16 +226,12 @@ private fun runServer() {
             librarySyncEvents = mergedLibrarySyncEvents,
         )
     val mediaServerManagementService =
-        MediaServerManagementService(
-            mediaServerRegistry = wiring.mediaServerRegistry,
+        createMediaServerManagementService(
+            appConfig = appConfig,
+            wiring = wiring,
             mediaServerRepository = mediaServerRepository,
-            encryptionKey = appConfig.plex.encryptionKey,
-            jellyfinRevokeApiKey = { baseUrl, apiKey, deviceId ->
-                wiring.jellyfinQuickConnectClient.deleteApiKey(baseUrl, apiKey, apiKey, deviceId)
-            },
-            jellyfinDefaultDeviceId = appConfig.jellyfin.clientIdentifier ?: "miru",
-            onServerDisconnected = { metricsRuntime?.service?.onServerDisconnected() },
-            onServerRemoved = { serverId -> metricsRuntime?.service?.onServerRemoved(serverId) },
+            metricsRuntime = metricsRuntime,
+            authService = authService,
         )
 
     val server =
@@ -306,6 +303,7 @@ internal fun createCoreServiceWiring(
     sessionRepository: ExposedAuthSessionRepository,
     emailLinker: EmailMediaUserLinker,
     accountRepository: ExposedAuthAccountRepository? = null,
+    onExpiredSessionsCleaned: (Long) -> Unit = {},
 ): CoreServiceWiring {
     val (plexRuntimeManager, jellyfinRuntimeManager, mediaServerRegistry) =
         createMediaServerRuntimes(appConfig, databaseHandle, mediaServerRepository)
@@ -388,6 +386,7 @@ internal fun createCoreServiceWiring(
             sessionRepository = sessionRepository,
             mediaServerRegistry = mediaServerRegistry,
             additionalRuntimes = listOf(jellyfinRuntimeManager),
+            onExpiredSessionsCleaned = onExpiredSessionsCleaned,
         ) {
             emailLinker.relinkAll().onLeft { error ->
                 logger.warn("Linking SSO accounts by email after the user sync failed: {}", error.message)
@@ -413,6 +412,28 @@ internal fun createCoreServiceWiring(
         syncServices = syncServices,
     )
 }
+
+private fun createMediaServerManagementService(
+    appConfig: AppConfig,
+    wiring: CoreServiceWiring,
+    mediaServerRepository: ExposedMediaServerRepository,
+    metricsRuntime: MetricsRuntime?,
+    authService: AuthService,
+): MediaServerManagementService =
+    MediaServerManagementService(
+        mediaServerRegistry = wiring.mediaServerRegistry,
+        mediaServerRepository = mediaServerRepository,
+        encryptionKey = appConfig.plex.encryptionKey,
+        jellyfinRevokeApiKey = { baseUrl, apiKey, deviceId ->
+            wiring.jellyfinQuickConnectClient.deleteApiKey(baseUrl, apiKey, apiKey, deviceId)
+        },
+        jellyfinDefaultDeviceId = appConfig.jellyfin.clientIdentifier ?: "miru",
+        onServerDisconnected = { metricsRuntime?.service?.onServerDisconnected() },
+        onServerRemoved = { serverId ->
+            metricsRuntime?.service?.onServerRemoved(serverId)
+            authService.invalidateAll()
+        },
+    )
 
 private fun createMediaServerRuntimes(
     appConfig: AppConfig,
@@ -643,6 +664,7 @@ internal fun createSyncServices(
     sessionRepository: AuthSessionRepository? = null,
     mediaServerRegistry: MediaServerRegistry? = null,
     additionalRuntimes: List<ManagedMediaServerRuntime> = emptyList(),
+    onExpiredSessionsCleaned: (Long) -> Unit = {},
     afterUserSync: suspend () -> Unit = {},
 ): SyncServices {
     val libraryCollectorScope =
@@ -727,6 +749,7 @@ internal fun createSyncServices(
             SessionCleanupService(
                 sessionRepository = sessionRepository,
                 scope = sessionCleanupScope,
+                onExpiredCleaned = onExpiredSessionsCleaned,
             )
         } else {
             null

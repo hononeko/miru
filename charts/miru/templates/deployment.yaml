@@ -1,3 +1,4 @@
+{{- if not (include "miru.isStatefulSet" .) -}}
 {{- include "miru.validate" . -}}
 apiVersion: apps/v1
 kind: Deployment
@@ -5,6 +6,10 @@ metadata:
   name: {{ include "miru.fullname" . }}
   labels:
     {{- include "miru.labels" . | nindent 4 }}
+  {{- with (.Values.workload).annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   replicas: {{ .Values.replicaCount }}
   {{- if not (kindIs "invalid" .Values.revisionHistoryLimit) }}
@@ -18,118 +23,5 @@ spec:
     matchLabels:
       {{- include "miru.selectorLabels" . | nindent 6 }}
   template:
-    metadata:
-      annotations:
-        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
-        {{- if not .Values.existingSecret }}
-        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
-        {{- end }}
-        {{- with .Values.podAnnotations }}
-        {{- toYaml . | nindent 8 }}
-        {{- end }}
-      labels:
-        {{- include "miru.labels" . | nindent 8 }}
-        {{- with .Values.podLabels }}
-        {{- toYaml . | nindent 8 }}
-        {{- end }}
-    spec:
-      {{- with .Values.imagePullSecrets }}
-      imagePullSecrets:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      serviceAccountName: {{ include "miru.serviceAccountName" . }}
-      automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
-      enableServiceLinks: {{ .Values.enableServiceLinks }}
-      {{- if not (kindIs "invalid" .Values.terminationGracePeriodSeconds) }}
-      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
-      {{- end }}
-      {{- with .Values.priorityClassName }}
-      priorityClassName: {{ . }}
-      {{- end }}
-      {{- with .Values.podSecurityContext }}
-      securityContext:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      containers:
-        - name: {{ .Chart.Name }}
-          {{- with .Values.securityContext }}
-          securityContext:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
-          image: {{ include "miru.image" . | quote }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
-          envFrom:
-            - configMapRef:
-                name: {{ include "miru.configMapName" . }}
-            - secretRef:
-                name: {{ include "miru.secretName" . }}
-            {{- with .Values.extraEnvFrom }}
-            {{- toYaml . | nindent 12 }}
-            {{- end }}
-          {{- with .Values.extraEnv }}
-          env:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
-          ports:
-            - name: http
-              containerPort: {{ .Values.server.port }}
-              protocol: TCP
-            {{- if include "miru.dedicatedMetricsPort" . }}
-            - name: metrics
-              containerPort: {{ .Values.metrics.port }}
-              protocol: TCP
-            {{- end }}
-          {{- if .Values.startupProbe.enabled }}
-          startupProbe:
-            {{- toYaml (omit .Values.startupProbe "enabled") | nindent 12 }}
-          {{- end }}
-          {{- if .Values.livenessProbe.enabled }}
-          livenessProbe:
-            {{- toYaml (omit .Values.livenessProbe "enabled") | nindent 12 }}
-          {{- end }}
-          {{- if .Values.readinessProbe.enabled }}
-          readinessProbe:
-            {{- toYaml (omit .Values.readinessProbe "enabled") | nindent 12 }}
-          {{- end }}
-          {{- with .Values.resources }}
-          resources:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
-          volumeMounts:
-            - name: data
-              mountPath: /data
-            - name: tmp
-              mountPath: /tmp
-            {{- with .Values.extraVolumeMounts }}
-            {{- toYaml . | nindent 12 }}
-            {{- end }}
-      volumes:
-        - name: data
-          {{- if include "miru.persistenceEnabled" . }}
-          persistentVolumeClaim:
-            claimName: {{ .Values.persistence.existingClaim | default (include "miru.pvcName" .) }}
-          {{- else }}
-          emptyDir: {}
-          {{- end }}
-        - name: tmp
-          {{- if .Values.tmpVolume.sizeLimit }}
-          emptyDir:
-            sizeLimit: {{ .Values.tmpVolume.sizeLimit }}
-          {{- else }}
-          emptyDir: {}
-          {{- end }}
-        {{- with .Values.extraVolumes }}
-        {{- toYaml . | nindent 8 }}
-        {{- end }}
-      {{- with .Values.nodeSelector }}
-      nodeSelector:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.affinity }}
-      affinity:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.tolerations }}
-      tolerations:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+    {{- include "miru.podTemplate" . | nindent 4 }}
+{{- end }}

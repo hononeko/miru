@@ -1,0 +1,151 @@
+suite: Deployment workload and PVC rendering
+templates:
+  - templates/deployment.yaml
+  - templates/statefulset.yaml
+  - templates/service-headless.yaml
+  - templates/pvc.yaml
+  - templates/configmap.yaml
+  - templates/secret.yaml
+set:
+  auth.sessionSecret: unittest-session-secret-0123456789abcdef
+tests:
+  - it: renders Deployment and standalone PVC by default without StatefulSet or headless Service
+    asserts:
+      - template: templates/deployment.yaml
+        hasDocuments:
+          count: 1
+      - template: templates/deployment.yaml
+        isKind:
+          of: Deployment
+      - template: templates/deployment.yaml
+        contains:
+          path: spec.template.spec.volumes
+          content:
+            name: data
+            persistentVolumeClaim:
+              claimName: RELEASE-NAME-miru-data
+      - template: templates/statefulset.yaml
+        hasDocuments:
+          count: 0
+      - template: templates/service-headless.yaml
+        hasDocuments:
+          count: 0
+      - template: templates/pvc.yaml
+        hasDocuments:
+          count: 1
+      - template: templates/pvc.yaml
+        equal:
+          path: metadata.name
+          value: RELEASE-NAME-miru-data
+
+  - it: applies workload.annotations, strategy, and replicaCount to Deployment
+    set:
+      replicaCount: 0
+      workload:
+        annotations:
+          reloader.stakater.com/auto: "true"
+      strategy:
+        type: Recreate
+    asserts:
+      - template: templates/deployment.yaml
+        equal:
+          path: spec.replicas
+          value: 0
+      - template: templates/deployment.yaml
+        equal:
+          path: metadata.annotations["reloader.stakater.com/auto"]
+          value: "true"
+      - template: templates/deployment.yaml
+        equal:
+          path: spec.strategy.type
+          value: Recreate
+
+  - it: omits standalone PVC and mounts existingClaim when persistence.existingClaim is set
+    set:
+      persistence:
+        existingClaim: existing-miru-pvc
+    asserts:
+      - template: templates/pvc.yaml
+        hasDocuments:
+          count: 0
+      - template: templates/deployment.yaml
+        contains:
+          path: spec.template.spec.volumes
+          content:
+            name: data
+            persistentVolumeClaim:
+              claimName: existing-miru-pvc
+
+  - it: omits standalone PVC and mounts emptyDir when database.engine is postgres
+    set:
+      database:
+        engine: postgres
+        postgres:
+          url: jdbc:postgresql://postgres:5432/miru
+          user: miru
+          password: pg-password
+    asserts:
+      - template: templates/pvc.yaml
+        hasDocuments:
+          count: 0
+      - template: templates/deployment.yaml
+        contains:
+          path: spec.template.spec.volumes
+          content:
+            name: data
+            emptyDir: {}
+
+  - it: omits standalone PVC and mounts emptyDir when persistence.enabled is false
+    set:
+      persistence:
+        enabled: false
+    asserts:
+      - template: templates/pvc.yaml
+        hasDocuments:
+          count: 0
+      - template: templates/deployment.yaml
+        contains:
+          path: spec.template.spec.volumes
+          content:
+            name: data
+            emptyDir: {}
+
+  - it: renders persistence.dataSourceRef on standalone PVC
+    set:
+      persistence:
+        dataSourceRef:
+          apiGroup: volsync.backube
+          kind: ReplicationDestination
+          name: miru-data
+          namespace: backups
+    asserts:
+      - template: templates/pvc.yaml
+        equal:
+          path: spec.dataSourceRef
+          value:
+            apiGroup: volsync.backube
+            kind: ReplicationDestination
+            name: miru-data
+            namespace: backups
+      - template: templates/pvc.yaml
+        isNull:
+          path: spec.dataSource
+
+  - it: renders persistence.dataSource on standalone PVC
+    set:
+      persistence:
+        dataSource:
+          apiGroup: snapshot.storage.k8s.io
+          kind: VolumeSnapshot
+          name: miru-snap
+    asserts:
+      - template: templates/pvc.yaml
+        equal:
+          path: spec.dataSource
+          value:
+            apiGroup: snapshot.storage.k8s.io
+            kind: VolumeSnapshot
+            name: miru-snap
+      - template: templates/pvc.yaml
+        isNull:
+          path: spec.dataSourceRef

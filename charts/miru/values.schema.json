@@ -36,6 +36,52 @@
       "minimum": 0,
       "maximum": 1
     },
+    "workload": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["Deployment", "StatefulSet"]
+        },
+        "annotations": {
+          "type": "object"
+        },
+        "statefulSet": {
+          "type": "object",
+          "properties": {
+            "podManagementPolicy": {
+              "type": "string",
+              "enum": ["OrderedReady", "Parallel"]
+            },
+            "updateStrategy": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": ["RollingUpdate", "OnDelete"]
+                },
+                "rollingUpdate": {
+                  "type": "object"
+                }
+              }
+            },
+            "persistentVolumeClaimRetentionPolicy": {
+              "type": "object",
+              "properties": {
+                "whenDeleted": {
+                  "type": "string",
+                  "enum": ["Retain", "Delete"]
+                },
+                "whenScaled": {
+                  "type": "string",
+                  "enum": ["Retain", "Delete"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "revisionHistoryLimit": {
       "type": "integer",
       "minimum": 0
@@ -315,7 +361,44 @@
         },
         "size": { "type": "string", "minLength": 1 },
         "keep": { "type": "boolean" },
-        "annotations": { "type": "object" }
+        "annotations": { "type": "object" },
+        "dataSourceRef": {
+          "oneOf": [
+            {
+              "type": "object",
+              "maxProperties": 0
+            },
+            {
+              "type": "object",
+              "properties": {
+                "apiGroup": { "type": "string" },
+                "kind": { "type": "string", "minLength": 1 },
+                "name": { "type": "string", "minLength": 1 },
+                "namespace": { "type": "string" }
+              },
+              "required": ["kind", "name"],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "dataSource": {
+          "oneOf": [
+            {
+              "type": "object",
+              "maxProperties": 0
+            },
+            {
+              "type": "object",
+              "properties": {
+                "apiGroup": { "type": "string" },
+                "kind": { "type": "string", "minLength": 1 },
+                "name": { "type": "string", "minLength": 1 }
+              },
+              "required": ["kind", "name"],
+              "additionalProperties": false
+            }
+          ]
+        }
       }
     },
     "existingSecret": {

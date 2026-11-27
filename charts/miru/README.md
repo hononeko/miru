@@ -31,6 +31,13 @@ Each Miru release publishes the chart with the same version, and the chart's def
 
 Installing from a checkout (`helm install miru ./charts/miru ...`) runs the `edge` image, the latest build of `main`, to match the chart on `main`.
 
+The image version is `image.tag` in the chart's values: `helm show values oci://ghcr.io/hononeko/charts/miru --version 1.3.0` shows `tag: "1.3.0"` (charts before 1.3.0 show `tag: ""`, which runs the chart's own version). Set it in your values to run another Miru version with the same chart, for example `edge` or an older release:
+
+```yaml
+image:
+  tag: "1.0.0"
+```
+
 The chart refuses to render without a session secret of at least 32 characters (unless `auth.mode=none`). Later `helm upgrade` runs keep both values when you don't pass them again: the chart reads them back from the Secret it created. `helm template`, `--dry-run=client` and Argo CD can't read the cluster, so with those, set the values in your values file or use `existingSecret`. Keep `MIRU_ENCRYPTION_KEY` stable: a new key can't read the credentials saved with the old one.
 
 Port-forward to access the UI:

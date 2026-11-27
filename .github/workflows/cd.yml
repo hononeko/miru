@@ -157,10 +157,19 @@ jobs:
         with:
           version: "v4.3.2"
 
-      # The chart in the repository has placeholder versions; the release stamps both, so the chart's default image
-      # is the image promoted above.
+      # The chart in the repository has placeholder versions; the release stamps them, and image.tag in values.yaml,
+      # so the chart's default image, as `helm show values` shows it, is the image promoted above.
       - name: Package Helm chart
-        run: helm package charts/miru --version "$VERSION" --app-version "$VERSION" --destination "$RUNNER_TEMP/chart"
+        run: |
+          set -euo pipefail
+          sed -i -E '/^image:/,/^[^[:space:]#]/ s/^  tag: .*/  tag: "'"$VERSION"'"/' charts/miru/values.yaml
+          default_image=$(helm template miru charts/miru --set auth.mode=none --show-only templates/deployment.yaml \
+            | sed -n -E 's/^ +image: "(.*)"$/\1/p')
+          if [ "$default_image" != "$IMAGE:$VERSION" ]; then
+            echo "::error::The chart's default image is '$default_image', not '$IMAGE:$VERSION'"
+            exit 1
+          fi
+          helm package charts/miru --version "$VERSION" --app-version "$VERSION" --destination "$RUNNER_TEMP/chart"
 
       - name: Publish Helm chart
         id: chart

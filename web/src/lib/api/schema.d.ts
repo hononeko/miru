@@ -217,6 +217,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/me/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update the current authenticated user's profile
+         * @description Sets or clears the caller's Miru `displayName`, or clears their own avatar (upload one with `PUT /api/v1/auth/me/avatar`). Importing from a linked media server is an admin action on `PATCH /api/v1/admin/accounts/{id}`. Rejects `AUTH_MODE=none` with `409 Conflict`.
+         */
+        patch: operations["updateOwnProfile"];
+        trace?: never;
+    };
+    "/api/v1/auth/me/avatar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Upload a custom avatar for the current authenticated user
+         * @description Stores a PNG, JPEG, or WebP avatar up to 512 KiB (verified via magic bytes) on the caller's Miru account. Rejects `AUTH_MODE=none` with `409 Conflict`.
+         */
+        put: operations["uploadOwnAvatar"];
+        post?: never;
+        /** Remove the current authenticated user's custom or imported avatar */
+        delete: operations["deleteOwnAvatar"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/me/preferences": {
         parameters: {
             query?: never;
@@ -298,6 +339,27 @@ export interface paths {
          * @description Updates role (`ADMIN` / `USER`), `disabled` status, and/or resets a `LOCAL` account's password. Prevents self-demotion, self-disabling, and demoting or disabling the last active admin. Revokes active sessions whenever the account is disabled, downgraded, or has its password reset. Setting the role also sets `roleMode` to `MANUAL`, so SSO sign-in no longer changes it; `roleMode` `AUTO` hands the role of an SSO account back to its groups.
          */
         patch: operations["updateAccount"];
+        trace?: never;
+    };
+    "/api/v1/admin/accounts/{id}/avatar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Upload a custom avatar for an account
+         * @description Stores a PNG, JPEG, or WebP avatar up to 512 KiB (verified via magic bytes) on the target Miru account.
+         */
+        put: operations["uploadAccountAvatar"];
+        post?: never;
+        /** Remove an account's custom or imported avatar */
+        delete: operations["deleteAccountAvatar"];
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/admin/accounts/{id}/media-users": {
@@ -775,7 +837,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Proxy user avatar from the media server or allowlisted HTTPS avatar host */
+        /**
+         * Proxy user avatar from the media server or allowlisted HTTPS avatar host
+         * @description For a media user id, returns that media user's avatar from its server. For a Miru account id, returns the account's own uploaded or imported avatar, else its first linked media user's avatar.
+         */
         get: operations["getUserAvatar"];
         put?: never;
         post?: never;
@@ -1226,13 +1291,31 @@ export interface components {
         PrincipalResponse: {
             accountId: string;
             username: string;
+            /** @description The account's own display name, else the best display name of its linked media users; null when neither has one (show `username`). */
+            displayName?: string | null;
             email?: string | null;
             role: components["schemas"]["MiruRole"];
             linkedMediaUserIds: string[];
             authSource: components["schemas"]["AuthSource"];
             /** @example LOCAL */
             authProvider?: string;
+            /** @description Same-origin URL of the account's own avatar (versioned with `?v=`), else of its first linked media user's avatar; null when there is none. */
             avatarUrl?: string | null;
+            /** @description The media server the account's own avatar was imported from; null when uploaded or unset. */
+            avatarSourceServerId?: string | null;
+            /** @description Whether `displayName` is the account's own rather than one taken from a linked media user. */
+            hasCustomDisplayName?: boolean;
+            /** @description Whether the account has its own uploaded or imported avatar. */
+            hasCustomAvatar?: boolean;
+        };
+        /** @description At least one field must be set; `displayName` and `clearDisplayName` are mutually exclusive. */
+        UpdateProfileRequest: {
+            /** @description New display name; must not be blank or contain control characters. */
+            displayName?: string | null;
+            /** @description Remove the account's own display name so the linked media users' name shows again. */
+            clearDisplayName?: boolean;
+            /** @description Remove the account's own avatar so the linked media users' avatar shows again. */
+            clearAvatar?: boolean;
         };
         ChangePasswordRequest: {
             /** Format: password */
@@ -1254,6 +1337,16 @@ export interface components {
              * @description New password for LOCAL accounts. Must satisfy the password policy.
              */
             password?: string | null;
+            /** @description New display name; must not be blank or contain control characters. Mutually exclusive with `clearDisplayName` and `importDisplayNameFromServerId`. */
+            displayName?: string | null;
+            /** @description Remove the account's own display name so the linked media users' name shows again. */
+            clearDisplayName?: boolean;
+            /** @description Remove the account's own avatar so the linked media users' avatar shows again. Mutually exclusive with `importAvatarFromServerId`. */
+            clearAvatar?: boolean;
+            /** @description Copy the display name of the account's linked media user on this media server. The server's users are re-synced first, so the import reflects the server's current data. */
+            importDisplayNameFromServerId?: string | null;
+            /** @description Copy the avatar of the account's linked media user on this media server, as a PNG, JPEG, or WebP image. Pictures over 512 KiB are scaled down by the media server when it can (Plex); otherwise they are kept as is up to 4 MiB (Jellyfin cannot scale user images). */
+            importAvatarFromServerId?: string | null;
         };
         UserPreferencesResponse: {
             /** @enum {string} */
@@ -1289,6 +1382,8 @@ export interface components {
         AccountResponse: {
             id: string;
             username: string;
+            /** @description The account's own display name; null when unset. */
+            displayName?: string | null;
             email?: string | null;
             role: components["schemas"]["MiruRole"];
             roleMode: components["schemas"]["RoleMode"];
@@ -1298,6 +1393,12 @@ export interface components {
             mediaUserLinkMode: components["schemas"]["MediaUserLinkMode"];
             /** @description Whether the identity provider marked `email` as verified at the account's last SSO sign-in; null when not recorded (local accounts, and SSO accounts that have not signed in since). */
             emailVerified?: boolean | null;
+            /** @description Same-origin URL of the account's own avatar (versioned with `?v=`), else of its first linked media user's avatar; null when there is none. */
+            avatarUrl?: string | null;
+            /** @description The media server the account's own avatar was imported from; null when uploaded or unset. */
+            avatarSourceServerId?: string | null;
+            /** @description Whether the account has its own uploaded or imported avatar. */
+            hasCustomAvatar?: boolean;
             /** Format: int64 */
             createdAtMs: number;
             /** Format: int64 */
@@ -1316,6 +1417,7 @@ export interface components {
              */
             password: string;
             email?: string | null;
+            displayName?: string | null;
             role?: components["schemas"]["MiruRole"];
             linkedMediaUserIds?: string[];
         };
@@ -2876,6 +2978,148 @@ export interface operations {
             };
         };
     };
+    updateOwnProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateProfileRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated principal profile */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrincipalResponse"];
+                };
+            };
+            /** @description Invalid profile update request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Missing, invalid, or expired credentials */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Profile management is disabled when AUTH_MODE=none */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    uploadOwnAvatar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "image/png": string;
+                "image/jpeg": string;
+                "image/webp": string;
+            };
+        };
+        responses: {
+            /** @description Updated principal profile */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrincipalResponse"];
+                };
+            };
+            /** @description Unsupported image format, invalid content type, or payload exceeds 512 KiB */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Missing, invalid, or expired credentials */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Profile management is disabled when AUTH_MODE=none */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    deleteOwnAvatar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Updated principal profile */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrincipalResponse"];
+                };
+            };
+            /** @description Missing, invalid, or expired credentials */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Profile management is disabled when AUTH_MODE=none */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
     getUserPreferences: {
         parameters: {
             query?: never;
@@ -3221,6 +3465,119 @@ export interface operations {
             };
             /** @description Self-demotion/disable, last active admin protection, password reset on OIDC account, or `roleMode` `AUTO` on a local account or the caller's own account */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    uploadAccountAvatar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "image/png": string;
+                "image/jpeg": string;
+                "image/webp": string;
+            };
+        };
+        responses: {
+            /** @description Updated account */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountResponse"];
+                };
+            };
+            /** @description Unsupported image format, invalid content type, or payload exceeds 512 KiB */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Account not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    deleteAccountAvatar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Updated account */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountResponse"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Account not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

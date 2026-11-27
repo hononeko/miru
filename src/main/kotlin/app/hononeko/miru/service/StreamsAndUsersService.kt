@@ -22,7 +22,6 @@ import app.hononeko.miru.persistence.model.ActiveSessionKey
 import app.hononeko.miru.persistence.model.ActiveSessionRecord
 import app.hononeko.miru.persistence.model.MediaServerRecord
 import app.hononeko.miru.persistence.model.PlaybackHistoryRecord
-import app.hononeko.miru.persistence.model.UserRecord
 import app.hononeko.miru.persistence.repository.ActiveSessionRepository
 import app.hononeko.miru.persistence.repository.AuthAccountRepository
 import app.hononeko.miru.persistence.repository.MediaServerRepository
@@ -79,12 +78,20 @@ class StreamsAndUsersService(
             }
 
             val usersById = userRepository.findAll().bind().associateBy { it.id }
+            val identitiesByUserId =
+                ViewerIdentityResolver
+                    .resolveMediaUserIdentities(
+                        userRepository = userRepository,
+                        authAccountRepository = authAccountRepository,
+                        mediaUserIds = sessions.map { it.userId },
+                        preloadedUsersById = usersById,
+                    ).bind()
             val liveTechByKey = liveTechnicalProvider()
             val streams =
                 sessions.map { session ->
                     toActiveStreamDto(
                         session = session,
-                        user = usersById[session.userId],
+                        identity = identitiesByUserId[session.userId],
                         liveTech = liveTechByKey[session.key],
                         server = serversById[session.serverId],
                     )
@@ -94,18 +101,25 @@ class StreamsAndUsersService(
 
     suspend fun toActiveStreamDto(session: ActiveSessionRecord): Either<MiruError, ActiveStreamDto> =
         either {
-            val user = userRepository.findById(session.userId).bind()
+            val identity =
+                ViewerIdentityResolver
+                    .resolveMediaUserIdentities(
+                        userRepository = userRepository,
+                        authAccountRepository = authAccountRepository,
+                        mediaUserIds = listOf(session.userId),
+                    ).bind()[session.userId]
             val liveTech = liveTechnicalProvider()[session.key]
             val server = mediaServerRepository?.findById(session.serverId)?.getOrNull()
-            toActiveStreamDto(session = session, user = user, liveTech = liveTech, server = server)
+            toActiveStreamDto(session = session, identity = identity, liveTech = liveTech, server = server)
         }
 
-    fun toActiveStreamDto(
+    private fun toActiveStreamDto(
         session: ActiveSessionRecord,
-        user: UserRecord?,
+        identity: ResolvedMediaUserIdentity?,
         liveTech: StreamTechnicalInfo?,
         server: MediaServerRecord? = null,
     ): ActiveStreamDto {
+        val user = identity?.user
         val durationMs = session.media.durationMs
         val progressPercent =
             if (durationMs > 0L) {
@@ -124,8 +138,8 @@ class StreamsAndUsersService(
                 StreamUserDto(
                     id = session.userId,
                     username = user?.username,
-                    displayName = user?.displayName.normalizedDisplayName(),
-                    avatarUrl = user?.avatarProxyUrl(),
+                    displayName = identity?.displayName ?: user?.displayName.normalizedDisplayName(),
+                    avatarUrl = identity?.avatarUrl ?: user?.avatarProxyUrl(),
                 ),
             media =
                 StreamMediaDto(
@@ -199,6 +213,12 @@ class StreamsAndUsersService(
 
             val serversById = loadServersById()
             val linksByMediaUser = authAccountRepository?.findAllMediaUserLinks()?.bind().orEmpty()
+            val accountProfilesById =
+                if (merged && authAccountRepository != null) {
+                    authAccountRepository.findAllAccountProfiles().bind()
+                } else {
+                    emptyMap()
+                }
             val activeCountByUser =
                 activeSessionRepository
                     .findAll()
@@ -226,6 +246,7 @@ class StreamsAndUsersService(
                                 activeStreamCount = ordered.sumOf { activeCountByUser[it.id] ?: 0 },
                                 totalPlays = ordered.sumOf { summariesByUser[it.id]?.totalPlays ?: 0L },
                                 totalWatchDurationSec = ordered.sumOf { summariesByUser[it.id]?.totalWatchDurationSec ?: 0L },
+                                accountProfile = accountId?.let { accountProfilesById[it] },
                             )
                         }.sortedWith(
                             compareBy<UserSummaryDto> { (it.displayName ?: it.username).lowercase() }
@@ -234,14 +255,16 @@ class StreamsAndUsersService(
                 } else {
                     users.map { user ->
                         val summary = summariesByUser[user.id]
+                        val accountId = linksByMediaUser[user.id]
                         ViewerIdentityResolver.buildUserSummaryDto(
                             id = user.id,
-                            accountId = linksByMediaUser[user.id],
+                            accountId = accountId,
                             orderedProfiles = listOf(user),
                             serversById = serversById,
                             activeStreamCount = activeCountByUser[user.id] ?: 0,
                             totalPlays = summary?.totalPlays ?: 0L,
                             totalWatchDurationSec = summary?.totalWatchDurationSec ?: 0L,
+                            accountProfile = if (merged) accountId?.let { accountProfilesById[it] } else null,
                         )
                     }
                 }
@@ -286,9 +309,15 @@ class StreamsAndUsersService(
             val liveTechByKey = if (userSessions.isEmpty()) emptyMap() else liveTechnicalProvider()
             val activeStreams =
                 userSessions.map { session ->
+                    val streamUser = profilesById[session.userId] ?: resolved.primaryProfile
                     toActiveStreamDto(
                         session = session,
-                        user = profilesById[session.userId] ?: resolved.primaryProfile,
+                        identity =
+                            ResolvedMediaUserIdentity(
+                                user = streamUser,
+                                displayName = resolved.primaryDisplayName,
+                                avatarUrl = resolved.avatarUrl ?: streamUser.avatarProxyUrl(),
+                            ),
                         liveTech = liveTechByKey[session.key],
                         server = serversById[session.serverId],
                     )
@@ -312,6 +341,7 @@ class StreamsAndUsersService(
                         totalPlays = totalPlays,
                         totalWatchDurationSec = totalWatchDurationSec,
                         linkedProfileRecords = resolved.scopedProfiles,
+                        accountProfile = resolved.accountProfile,
                     ),
                 activeStreams = activeStreams,
                 totalPlays = totalPlays,

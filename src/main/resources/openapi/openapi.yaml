@@ -324,6 +324,131 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /api/v1/auth/me/profile:
+    patch:
+      tags: [Auth]
+      operationId: updateOwnProfile
+      summary: Update the current authenticated user's profile
+      description: >-
+        Sets or clears the caller's Miru `displayName`, or clears their own avatar (upload one with
+        `PUT /api/v1/auth/me/avatar`). Importing from a linked media server is an admin action on
+        `PATCH /api/v1/admin/accounts/{id}`. Rejects `AUTH_MODE=none` with `409 Conflict`.
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        '200':
+          description: Updated principal profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrincipalResponse'
+        '400':
+          description: Invalid profile update request
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Missing, invalid, or expired credentials
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Profile management is disabled when AUTH_MODE=none
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/auth/me/avatar:
+    put:
+      tags: [Auth]
+      operationId: uploadOwnAvatar
+      summary: Upload a custom avatar for the current authenticated user
+      description: >-
+        Stores a PNG, JPEG, or WebP avatar up to 512 KiB (verified via magic bytes) on the caller's
+        Miru account. Rejects `AUTH_MODE=none` with `409 Conflict`.
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          image/png:
+            schema:
+              type: string
+              format: binary
+          image/jpeg:
+            schema:
+              type: string
+              format: binary
+          image/webp:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: Updated principal profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrincipalResponse'
+        '400':
+          description: Unsupported image format, invalid content type, or payload exceeds 512 KiB
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Missing, invalid, or expired credentials
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Profile management is disabled when AUTH_MODE=none
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+    delete:
+      tags: [Auth]
+      operationId: deleteOwnAvatar
+      summary: Remove the current authenticated user's custom or imported avatar
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Updated principal profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrincipalResponse'
+        '401':
+          description: Missing, invalid, or expired credentials
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Profile management is disabled when AUTH_MODE=none
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
   /api/v1/auth/me/preferences:
     get:
       tags: [Auth]
@@ -608,6 +733,108 @@ paths:
                 $ref: '#/components/schemas/ProblemDetails'
         '409':
           description: Cannot delete self or last remaining admin
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/admin/accounts/{id}/avatar:
+    put:
+      tags: [Admin]
+      operationId: uploadAccountAvatar
+      summary: Upload a custom avatar for an account
+      description: Stores a PNG, JPEG, or WebP avatar up to 512 KiB (verified via magic bytes) on the target Miru account.
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          image/png:
+            schema:
+              type: string
+              format: binary
+          image/jpeg:
+            schema:
+              type: string
+              format: binary
+          image/webp:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: Updated account
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '400':
+          description: Unsupported image format, invalid content type, or payload exceeds 512 KiB
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Account not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+    delete:
+      tags: [Admin]
+      operationId: deleteAccountAvatar
+      summary: Remove an account's custom or imported avatar
+      security:
+        - CookieAuth: []
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Updated account
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrator role required
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Account not found
           content:
             application/problem+json:
               schema:
@@ -2131,6 +2358,9 @@ paths:
       tags: [Artwork]
       operationId: getUserAvatar
       summary: Proxy user avatar from the media server or allowlisted HTTPS avatar host
+      description: >-
+        For a media user id, returns that media user's avatar from its server. For a Miru account id,
+        returns the account's own uploaded or imported avatar, else its first linked media user's avatar.
       security:
         - CookieAuth: []
         - ApiKeyAuth: []
@@ -3637,6 +3867,12 @@ components:
           type: string
         username:
           type: string
+        displayName:
+          type: string
+          nullable: true
+          description: >-
+            The account's own display name, else the best display name of its linked media users;
+            null when neither has one (show `username`).
         email:
           type: string
           nullable: true
@@ -3654,6 +3890,35 @@ components:
         avatarUrl:
           type: string
           nullable: true
+          description: >-
+            Same-origin URL of the account's own avatar (versioned with `?v=`), else of its first linked
+            media user's avatar; null when there is none.
+        avatarSourceServerId:
+          type: string
+          nullable: true
+          description: The media server the account's own avatar was imported from; null when uploaded or unset.
+        hasCustomDisplayName:
+          type: boolean
+          description: Whether `displayName` is the account's own rather than one taken from a linked media user.
+        hasCustomAvatar:
+          type: boolean
+          description: Whether the account has its own uploaded or imported avatar.
+
+    UpdateProfileRequest:
+      type: object
+      description: At least one field must be set; `displayName` and `clearDisplayName` are mutually exclusive.
+      properties:
+        displayName:
+          type: string
+          nullable: true
+          maxLength: 100
+          description: New display name; must not be blank or contain control characters.
+        clearDisplayName:
+          type: boolean
+          description: Remove the account's own display name so the linked media users' name shows again.
+        clearAvatar:
+          type: boolean
+          description: Remove the account's own avatar so the linked media users' avatar shows again.
 
     ChangePasswordRequest:
       type: object
@@ -3692,6 +3957,34 @@ components:
           minLength: 12
           nullable: true
           description: New password for LOCAL accounts. Must satisfy the password policy.
+        displayName:
+          type: string
+          nullable: true
+          maxLength: 100
+          description: >-
+            New display name; must not be blank or contain control characters. Mutually exclusive with
+            `clearDisplayName` and `importDisplayNameFromServerId`.
+        clearDisplayName:
+          type: boolean
+          description: Remove the account's own display name so the linked media users' name shows again.
+        clearAvatar:
+          type: boolean
+          description: >-
+            Remove the account's own avatar so the linked media users' avatar shows again. Mutually
+            exclusive with `importAvatarFromServerId`.
+        importDisplayNameFromServerId:
+          type: string
+          nullable: true
+          description: >-
+            Copy the display name of the account's linked media user on this media server. The server's
+            users are re-synced first, so the import reflects the server's current data.
+        importAvatarFromServerId:
+          type: string
+          nullable: true
+          description: >-
+            Copy the avatar of the account's linked media user on this media server, as a PNG, JPEG, or
+            WebP image. Pictures over 512 KiB are scaled down by the media server when it can (Plex);
+            otherwise they are kept as is up to 4 MiB (Jellyfin cannot scale user images).
 
     UserPreferencesResponse:
       type: object
@@ -3749,6 +4042,10 @@ components:
           type: string
         username:
           type: string
+        displayName:
+          type: string
+          nullable: true
+          description: The account's own display name; null when unset.
         email:
           type: string
           nullable: true
@@ -3772,6 +4069,19 @@ components:
           description: >-
             Whether the identity provider marked `email` as verified at the account's last SSO sign-in;
             null when not recorded (local accounts, and SSO accounts that have not signed in since).
+        avatarUrl:
+          type: string
+          nullable: true
+          description: >-
+            Same-origin URL of the account's own avatar (versioned with `?v=`), else of its first linked
+            media user's avatar; null when there is none.
+        avatarSourceServerId:
+          type: string
+          nullable: true
+          description: The media server the account's own avatar was imported from; null when uploaded or unset.
+        hasCustomAvatar:
+          type: boolean
+          description: Whether the account has its own uploaded or imported avatar.
         createdAtMs:
           type: integer
           format: int64
@@ -3809,6 +4119,10 @@ components:
         email:
           type: string
           nullable: true
+        displayName:
+          type: string
+          nullable: true
+          maxLength: 100
         role:
           $ref: '#/components/schemas/MiruRole'
         linkedMediaUserIds:

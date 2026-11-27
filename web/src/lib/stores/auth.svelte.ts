@@ -86,6 +86,20 @@ export class AuthStore {
 		return principal;
 	}
 
+	setPrincipal(principal: PrincipalResponse): void {
+		this.principal = principal;
+	}
+
+	async refreshPrincipal(): Promise<PrincipalResponse | null> {
+		if (this.setupRequired) return null;
+		const meRes = await api.GET('/api/v1/auth/me');
+		if (meRes.data) {
+			this.principal = meRes.data;
+			return meRes.data;
+		}
+		return null;
+	}
+
 	async logout(): Promise<void> {
 		if (this.loggingOut) return;
 		if (this.oidcEnabled && this.oidcLogoutUrl) {

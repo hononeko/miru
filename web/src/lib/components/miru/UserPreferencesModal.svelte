@@ -1,9 +1,10 @@
 <script lang="ts">
-	import { tick } from 'svelte';
-	import { Monitor, Moon, Sun, LogOut } from '@lucide/svelte';
-	import { api, MiruApiError } from '$api/client';
+	import { tick, untrack } from 'svelte';
+	import { Monitor, Moon, Sun, LogOut, Upload, Trash2 } from '@lucide/svelte';
+	import { api, MiruApiError, unwrap, uploadBinaryAvatar, validateAvatarFile } from '$api/client';
 	import Badge from '$components/ui/Badge.svelte';
 	import Button from '$components/ui/Button.svelte';
+	import ProxiedImage from './ProxiedImage.svelte';
 	import SignOutConfirmation from './SignOutConfirmation.svelte';
 	import { authStore } from '$stores/auth.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
@@ -13,12 +14,14 @@
 	import type {
 		AnalyticsMetricPreference,
 		DateFormatPreference,
+		PrincipalResponse,
 		StatsRange,
 		ThemePreference,
 		TimeFormatPreference,
+		UpdateProfileRequest,
 		UpdateUserPreferencesRequest
 	} from '$api/types';
-	import { cn, formatPreferencePreview, safeInitial, validatePassword } from '$lib/utils';
+	import { cn, formatPreferencePreview, validatePassword } from '$lib/utils';
 
 	const signOutTitleId = 'preferences-sign-out-title';
 
@@ -39,9 +42,20 @@
 	let passwordSubmitting = $state(false);
 	let passwordError = $state<string | null>(null);
 	let passwordSuccess = $state<string | null>(null);
+	let profileDisplayName = $state('');
+	let profileSubmitting = $state(false);
+	let profileError = $state<string | null>(null);
+	let profileSuccess = $state<string | null>(null);
+	let avatarInputEl: HTMLInputElement | undefined = $state();
 	let savedOnClose = false;
 	let confirmingSignOut = $state(false);
 	let signOutFooterEl: HTMLDivElement | undefined = $state();
+
+	const canEditProfile = $derived(authStore.authMode !== 'none' && authStore.authenticated);
+
+	const principalDisplayLabel = $derived(
+		authStore.principal?.displayName || authStore.principal?.username || 'Guest'
+	);
 
 	const canChangePassword = $derived(
 		authStore.authMode !== 'none' &&
@@ -95,6 +109,11 @@
 
 	const previewText = $derived(formatPreferencePreview(draft, previewSampleMs));
 
+	/** The account's own display name, which the field edits; a name taken from a linked server is only its placeholder. */
+	function ownDisplayName(principal: PrincipalResponse | null | undefined): string {
+		return principal?.hasCustomDisplayName ? (principal.displayName ?? '') : '';
+	}
+
 	function syncDraftFromStore() {
 		draft = {
 			theme: preferencesStore.prefs.theme,
@@ -111,6 +130,10 @@
 		confirmNewPassword = '';
 		passwordError = null;
 		passwordSuccess = null;
+		profileError = null;
+		profileSuccess = null;
+		// Untracked: saving the profile updates the principal, which must not reset the open modal
+		profileDisplayName = untrack(() => ownDisplayName(authStore.principal));
 	}
 
 	$effect(() => {
@@ -144,8 +167,86 @@
 		confirmNewPassword = '';
 		passwordError = null;
 		passwordSuccess = null;
+		profileError = null;
+		profileSuccess = null;
 		confirmingSignOut = false;
 		preferencesStore.closeModal();
+	}
+
+	async function submitProfilePatch(body: UpdateProfileRequest, successMessage: string) {
+		profileError = null;
+		profileSuccess = null;
+		profileSubmitting = true;
+		try {
+			const updated = unwrap(
+				await api.PATCH('/api/v1/auth/me/profile', {
+					body
+				})
+			);
+			authStore.setPrincipal(updated);
+			profileDisplayName = ownDisplayName(updated);
+			profileSuccess = successMessage;
+		} catch (err) {
+			profileError = err instanceof MiruApiError ? err.detail : 'Failed to update profile';
+		} finally {
+			profileSubmitting = false;
+		}
+	}
+
+	async function handleSaveDisplayName() {
+		const trimmed = profileDisplayName.trim();
+		if (!trimmed) {
+			profileError = 'Display name must not be blank. Use Clear to remove it.';
+			profileSuccess = null;
+			return;
+		}
+		await submitProfilePatch({ displayName: trimmed }, 'Display name updated.');
+	}
+
+	async function handleClearDisplayName() {
+		await submitProfilePatch({ clearDisplayName: true }, 'Display name cleared.');
+	}
+
+	async function handleAvatarFileSelected(e: Event) {
+		const input = e.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file) return;
+		profileError = null;
+		profileSuccess = null;
+
+		const validationMsg = validateAvatarFile(file);
+		if (validationMsg) {
+			profileError = validationMsg;
+			input.value = '';
+			return;
+		}
+
+		profileSubmitting = true;
+		try {
+			const updated = await uploadBinaryAvatar<PrincipalResponse>('/api/v1/auth/me/avatar', file);
+			authStore.setPrincipal(updated);
+			profileSuccess = 'Avatar uploaded.';
+		} catch (err) {
+			profileError = err instanceof MiruApiError ? err.detail : 'Failed to upload avatar';
+		} finally {
+			profileSubmitting = false;
+			input.value = '';
+		}
+	}
+
+	async function handleRemoveAvatar() {
+		profileError = null;
+		profileSuccess = null;
+		profileSubmitting = true;
+		try {
+			const updated = unwrap(await api.DELETE('/api/v1/auth/me/avatar'));
+			authStore.setPrincipal(updated);
+			profileSuccess = 'Custom avatar removed.';
+		} catch (err) {
+			profileError = err instanceof MiruApiError ? err.detail : 'Failed to remove avatar';
+		} finally {
+			profileSubmitting = false;
+		}
 	}
 
 	function handleCancel() {
@@ -248,6 +349,7 @@
 	use:sheetDrag={{ onDismiss: handleCancel }}
 	class="m-0 mt-auto w-full max-w-none rounded-t-2xl border-t border-border-strong bg-surface p-0 text-fg-primary shadow-2xl open:flex open:flex-col max-h-[90dvh] md:m-auto md:w-full md:max-w-lg md:rounded-2xl md:border"
 >
+	{#if preferencesStore.modalOpen}
 	<div
 		data-sheet-drag-handle
 		class="flex shrink-0 cursor-grab touch-none justify-center pt-2.5 pb-1 active:cursor-grabbing md:hidden"
@@ -258,22 +360,26 @@
 	<!-- Account Summary Header -->
 	<div class="flex items-start gap-3 border-b border-border px-5 py-4">
 		<div class="flex min-w-0 items-center gap-3">
-			<div
-				class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary font-heading text-sm font-bold text-primary-fg"
-			>
-				{safeInitial(authStore.principal?.username)}
-			</div>
+			<ProxiedImage
+				src={authStore.principal?.avatarUrl}
+				alt={principalDisplayLabel}
+				fallbackLabel={principalDisplayLabel}
+				variant="avatar"
+				class="h-10 w-10 text-sm"
+			/>
 			<div class="min-w-0">
 				<div class="flex flex-wrap items-center gap-2">
 					<h2 id="user-preferences-title" class="truncate font-heading text-base font-semibold text-fg-primary">
-						{authStore.principal?.username ?? 'Guest'}
+						{principalDisplayLabel}
 					</h2>
 					<Badge tone={authStore.principal?.role === 'ADMIN' ? 'primary' : 'neutral'}>
 						{authStore.principal?.role ?? 'USER'}
 					</Badge>
 				</div>
 				<p class="mt-0.5 truncate text-xs text-fg-secondary">
-					{#if authStore.principal?.email}
+					{#if authStore.principal?.displayName && authStore.principal.displayName !== authStore.principal.username}
+						@{authStore.principal.username}{#if authStore.principal.email} · {authStore.principal.email}{/if}
+					{:else if authStore.principal?.email}
 						{authStore.principal.email}
 					{:else if authStore.authMode === 'none'}
 						Local dev bypass session
@@ -293,6 +399,114 @@
 				<div class="rounded-xl border border-danger/50 bg-danger-soft px-3.5 py-2.5 text-xs text-danger">
 					{saveError}
 				</div>
+			{/if}
+
+			{#if canEditProfile}
+				<section aria-label="Profile" class="flex flex-col gap-3 rounded-xl border border-border bg-elevated p-3.5">
+					<div class="flex items-center justify-between gap-2">
+						<span class="font-heading text-xs font-semibold uppercase tracking-wider text-fg-secondary">
+							Profile
+						</span>
+						<span class="font-mono text-[10px] text-fg-muted">
+							@{authStore.principal?.username}
+						</span>
+					</div>
+
+					{#if profileError}
+						<div role="alert" class="rounded-xl border border-danger/50 bg-danger-soft px-3.5 py-2.5 text-xs text-danger">
+							{profileError}
+						</div>
+					{/if}
+					{#if profileSuccess}
+						<div role="status" class="rounded-xl border border-direct-play/50 bg-direct-play-soft px-3.5 py-2.5 text-xs text-direct-play">
+							{profileSuccess}
+						</div>
+					{/if}
+
+					<div class="flex flex-col gap-1.5">
+						<label for="profile-display-name" class="text-xs font-medium text-fg-secondary">
+							Display Name
+						</label>
+						<div class="flex flex-wrap items-center gap-2">
+							<input
+								id="profile-display-name"
+								type="text"
+								maxlength={100}
+								placeholder={authStore.principal?.displayName || authStore.principal?.username || 'Display name'}
+								bind:value={profileDisplayName}
+								class="min-w-0 flex-1 rounded-lg border border-input-border bg-canvas px-3 py-1.5 text-xs text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
+							/>
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								disabled={profileSubmitting}
+								onclick={() => void handleSaveDisplayName()}
+							>
+								Save Name
+							</Button>
+							{#if authStore.principal?.hasCustomDisplayName}
+								<Button
+									type="button"
+									variant="ghost"
+									size="sm"
+									disabled={profileSubmitting}
+									onclick={() => void handleClearDisplayName()}
+								>
+									Clear
+								</Button>
+							{/if}
+						</div>
+					</div>
+
+					<div class="flex flex-col gap-2 border-t border-border pt-3">
+						<span class="text-xs font-medium text-fg-secondary">Avatar</span>
+						<div class="flex flex-wrap items-center gap-3">
+							<ProxiedImage
+								src={authStore.principal?.avatarUrl}
+								alt={principalDisplayLabel}
+								fallbackLabel={principalDisplayLabel}
+								variant="avatar"
+								class="h-11 w-11 text-sm"
+							/>
+							<input
+								bind:this={avatarInputEl}
+								type="file"
+								accept="image/png,image/jpeg,image/webp"
+								aria-label="Upload Avatar"
+								onchange={handleAvatarFileSelected}
+								class="sr-only"
+							/>
+							<div class="flex flex-wrap items-center gap-2">
+								<Button
+									type="button"
+									variant="outline"
+									size="sm"
+									disabled={profileSubmitting}
+									onclick={() => avatarInputEl?.click()}
+								>
+									<Upload class="h-3.5 w-3.5" />
+									Upload Avatar
+								</Button>
+								{#if authStore.principal?.hasCustomAvatar}
+									<Button
+										type="button"
+										variant="ghost"
+										size="sm"
+										disabled={profileSubmitting}
+										onclick={() => void handleRemoveAvatar()}
+									>
+										<Trash2 class="h-3.5 w-3.5" />
+										Remove Avatar
+									</Button>
+								{/if}
+							</div>
+						</div>
+						<p class="text-[10px] text-fg-muted">
+							PNG, JPEG, or WebP up to 512 KiB.
+						</p>
+					</div>
+				</section>
 			{/if}
 
 			<!-- Appearance -->
@@ -576,6 +790,7 @@
 			</div>
 		{/if}
 	</form>
+	{/if}
 </dialog>
 
 <style>

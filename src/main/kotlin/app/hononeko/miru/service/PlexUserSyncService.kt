@@ -65,6 +65,14 @@ class PlexUserSyncService(
         current?.cancelAndJoin()
     }
 
+    /** Syncs now when this service syncs [serverId]'s users; Right(false) when it serves another server. */
+    suspend fun syncIfServes(serverId: String): Either<MiruError, Boolean> =
+        either {
+            if (serverIdProvider().getOrNull() != serverId) return@either false
+            syncOnce().bind()
+            true
+        }
+
     suspend fun syncOnce(): Either<MiruError, Int> =
         syncMutex.withLock {
             syncOnceLocked().onRight { onUsersSynced() }

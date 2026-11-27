@@ -12,10 +12,12 @@ import app.hononeko.miru.adapter.plex.PlexRuntimeManager
 import app.hononeko.miru.adapter.plex.RealtimeLifecycle
 import app.hononeko.miru.adapter.plex.createPlexHttpClient
 import app.hononeko.miru.artwork.ArtworkProxyService
+import app.hononeko.miru.auth.AccountProfileAutoImporter
 import app.hononeko.miru.auth.Argon2idPasswordHasher
 import app.hononeko.miru.auth.AuthRateLimiter
 import app.hononeko.miru.auth.AuthService
 import app.hononeko.miru.auth.EmailMediaUserLinker
+import app.hononeko.miru.auth.ProfileImportSources
 import app.hononeko.miru.auth.SessionCleanupService
 import app.hononeko.miru.auth.oidc.OidcAuthService
 import app.hononeko.miru.auth.oidc.OidcClient
@@ -210,6 +212,7 @@ private fun runServer() {
             accountRepository = accountRepository,
             onExpiredSessionsCleaned = { nowMs -> authService.evictExpiredSessions(nowMs) },
         )
+    attachAccountProfileAutoImporter(authService, accountRepository, userRepository, mediaServerRepository, emailLinker, wiring)
     val readinessChecks = listOf(NamedReadinessCheck("database", DatabaseReadinessCheck(databaseHandle)))
     val mergedLibrarySyncEvents =
         (listOf(wiring.syncServices.libraryStatsCollector) + wiring.syncServices.additionalLibraryCollectors)
@@ -269,6 +272,7 @@ private fun runServer() {
                 metricsService = metricsRuntime?.service,
                 mediaServerRegistry = wiring.mediaServerRegistry,
                 mediaServerManagementService = mediaServerManagementService,
+                syncServerUsers = { serverId -> wiring.syncServices.syncUsersOf(serverId) },
             )
         }
     try {
@@ -650,7 +654,22 @@ internal data class SyncServices(
     val sessionCleanupScope: CoroutineScope? = null,
     val sessionCleanupService: SessionCleanupService? = null,
     val compositeLibrarySyncTrigger: LibrarySyncTrigger = libraryStatsCollector,
-)
+) {
+    /** Re-syncs the users of the media server [serverId] now, logging (not failing on) upstream errors. */
+    suspend fun syncUsersOf(serverId: String) {
+        for (userSync in listOf(plexUserSyncService) + additionalUserSyncServices) {
+            val served =
+                userSync.syncIfServes(serverId).fold(
+                    ifLeft = { error ->
+                        logger.warn("On-demand user sync failed: {}", error.message)
+                        false
+                    },
+                    ifRight = { it },
+                )
+            if (served) return
+        }
+    }
+}
 
 @Suppress("LongParameterList")
 internal fun createSyncServices(
@@ -1086,6 +1105,25 @@ private fun initDatabase(appConfig: AppConfig): DatabaseHandle =
             ifRight = { it },
         )
 
+/** Gives accounts SSO links by email the profile of their user on the first-connected server. */
+private fun attachAccountProfileAutoImporter(
+    authService: AuthService,
+    accountRepository: ExposedAuthAccountRepository,
+    userRepository: ExposedUserRepository,
+    mediaServerRepository: ExposedMediaServerRepository,
+    emailLinker: EmailMediaUserLinker,
+    wiring: CoreServiceWiring,
+) {
+    AccountProfileAutoImporter(
+        authService = authService,
+        accountRepository = accountRepository,
+        userRepository = userRepository,
+        mediaServerRepository = mediaServerRepository,
+        profileImport = ProfileImportSources(artworkProxyService = wiring.artworkProxyService),
+        scope = wiring.syncServices.userSyncScope,
+    ).attachTo(emailLinker)
+}
+
 private fun initAuthService(
     appConfig: AppConfig,
     databaseHandle: DatabaseHandle,
@@ -1160,6 +1198,7 @@ fun Application.miruModule(
     metricsService: MiruMetricsService? = null,
     mediaServerRegistry: MediaServerRegistry? = null,
     mediaServerManagementService: MediaServerManagementService? = null,
+    syncServerUsers: (suspend (serverId: String) -> Unit)? = null,
 ) {
     if (realtime != null) {
         monitor.subscribe(ApplicationStarted) {
@@ -1217,6 +1256,7 @@ fun Application.miruModule(
                 authRateLimiter = authRateLimiter,
                 mediaServerRegistry = mediaServerRegistry,
                 mediaServerManagementService = mediaServerManagementService,
+                syncServerUsers = syncServerUsers,
             )
         }
         if (metricsService != null && config.metrics.enabled && config.metrics.port == config.server.port) {
@@ -1249,6 +1289,7 @@ private fun io.ktor.server.routing.Routing.registerAuthenticatedRoutes(
     authRateLimiter: AuthRateLimiter,
     mediaServerRegistry: MediaServerRegistry?,
     mediaServerManagementService: MediaServerManagementService?,
+    syncServerUsers: (suspend (serverId: String) -> Unit)?,
 ) {
     authRoutes(
         authService = authService,
@@ -1257,6 +1298,7 @@ private fun io.ktor.server.routing.Routing.registerAuthenticatedRoutes(
         authRateLimiter = authRateLimiter,
         trustProxyHeaders = config.server.trustProxyHeaders,
         oidcAuthService = oidcAuthService,
+        profileImport = ProfileImportSources(artworkProxyService = artworkProxyService, syncServerUsers = syncServerUsers ?: {}),
     )
     if (plexOAuthService != null) {
         plexOAuthRoutes(

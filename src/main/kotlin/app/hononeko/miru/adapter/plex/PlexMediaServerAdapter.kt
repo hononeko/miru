@@ -517,7 +517,45 @@ class PlexMediaServerAdapter(
                         parameter("url", path)
                     }
                 }.bind()
+            readArtwork(response).bind()
+        }
 
+    /** Plex's documented photo transcoder (`GET /photo/:/transcode`) fetches [source] itself and scales it. */
+    override suspend fun fetchScaledImage(
+        source: String,
+        maxDimension: Int,
+    ): Either<MiruError, ArtworkData> =
+        either {
+            val trimmedSource = source.trim()
+            val remote = trimmedSource.startsWith("https://", ignoreCase = true)
+            ensure((remote || isSafeArtworkPath(trimmedSource)) && maxDimension > 0) {
+                MiruError.ValidationError(
+                    message = "Invalid image scaling request parameters",
+                    fieldErrors =
+                        mapOf(
+                            "source" to "must be a relative Plex path or an absolute HTTPS URL",
+                            "maxDimension" to "must be greater than 0",
+                        ),
+                )
+            }
+            val response =
+                executeRequest(
+                    url = "$baseUrl/photo/:/transcode",
+                    acceptHeader = ARTWORK_ACCEPT_HEADER,
+                    operation = "scale image",
+                    notFoundResource = "Artwork",
+                    notFoundId = if (remote) "remote image" else trimmedSource,
+                ) {
+                    parameter("url", trimmedSource)
+                    parameter("width", maxDimension)
+                    parameter("height", maxDimension)
+                    parameter("format", "png")
+                }.bind()
+            readArtwork(response).bind()
+        }
+
+    private suspend fun readArtwork(response: HttpResponse): Either<MiruError, ArtworkData> =
+        either {
             val bytes =
                 try {
                     response.bodyAsBytes()

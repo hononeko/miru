@@ -137,6 +137,11 @@ class DelegatingMediaServerAdapter(
     ): Either<MiruError, ArtworkData> =
         withDelegate { it.fetchArtwork(path, width, height) }
 
+    override suspend fun fetchScaledImage(
+        source: String,
+        maxDimension: Int,
+    ): Either<MiruError, ArtworkData> = withDelegate { it.fetchScaledImage(source, maxDimension) }
+
     override suspend fun terminateSession(
         sessionId: String,
         reason: String,

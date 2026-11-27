@@ -1,21 +1,30 @@
 package app.hononeko.miru.auth
 
+import app.hononeko.miru.artwork.AvatarImageValidator
 import app.hononeko.miru.auth.oidc.OidcAuthService.Companion.PROVIDER_OIDC
 import app.hononeko.miru.config.AuthConfig
 import app.hononeko.miru.config.AuthMode
 import app.hononeko.miru.domain.error.MiruError
+import app.hononeko.miru.http.AccountResponse
+import app.hononeko.miru.http.PrincipalResponse
+import app.hononeko.miru.http.UpdateProfileRequest
 import app.hononeko.miru.http.UpdateUserPreferencesRequest
 import app.hononeko.miru.http.UserPreferencesResponse
 import app.hononeko.miru.http.toResponse
 import app.hononeko.miru.persistence.model.ApiKeyRecord
 import app.hononeko.miru.persistence.model.AuthAccountRecord
 import app.hononeko.miru.persistence.model.AuthSessionRecord
+import app.hononeko.miru.persistence.model.AvatarMutation
+import app.hononeko.miru.persistence.model.DisplayNameMutation
 import app.hononeko.miru.persistence.model.UserPreferencesRecord
+import app.hononeko.miru.persistence.model.UserRecord
 import app.hononeko.miru.persistence.repository.ApiKeyRepository
 import app.hononeko.miru.persistence.repository.AuthAccountRepository
 import app.hononeko.miru.persistence.repository.AuthSessionRepository
 import app.hononeko.miru.persistence.repository.UserPreferencesRepository
 import app.hononeko.miru.persistence.repository.UserRepository
+import app.hononeko.miru.service.ViewerIdentityResolver
+import app.hononeko.miru.service.ViewerIdentityResolver.avatarProxyUrl
 import arrow.core.Either
 import arrow.core.raise.either
 import arrow.core.raise.ensure
@@ -428,6 +437,9 @@ class AuthService(
                     linkedMediaUserIds = context.linkedMediaUserIds,
                     authSource = AuthSource.API_KEY,
                     authProvider = context.account.authProvider,
+                    displayName = context.account.displayName,
+                    avatarSourceServerId = context.account.avatarSourceServerId,
+                    avatarUpdatedAtMs = context.account.avatarUpdatedAtMs,
                 )
             principalCache.putIfGeneration(
                 entry =
@@ -465,18 +477,31 @@ class AuthService(
             }
         }
 
-    suspend fun resolveAvatarUrl(principal: MiruPrincipal): Either<MiruError, String?> =
+    /** The `/auth/me` view of [principal]: its own display name and avatar, else those of its linked media users. */
+    suspend fun resolvePrincipalResponse(principal: MiruPrincipal): Either<MiruError, PrincipalResponse> =
         either {
-            if (principal.linkedMediaUserIds.isEmpty()) {
-                return@either null
-            }
-            for (mediaUserId in principal.linkedMediaUserIds.sorted()) {
-                val user = userRepository.findById(mediaUserId).bind()
-                if (!user?.thumbUrl.isNullOrBlank()) {
-                    return@either "/api/v1/users/${user.id}/avatar"
+            val needsProfiles =
+                principal.linkedMediaUserIds.isNotEmpty() &&
+                    (principal.displayName.isNullOrBlank() || principal.avatarUpdatedAtMs == null)
+            val orderedProfiles =
+                if (needsProfiles) {
+                    userRepository
+                        .findByIds(principal.linkedMediaUserIds)
+                        .bind()
+                        .sortedWith(ViewerIdentityResolver.stableProfileComparator)
+                } else {
+                    emptyList()
                 }
-            }
-            null
+
+            val resolvedDisplayName = ViewerIdentityResolver.resolveDisplayName(principal.displayName, orderedProfiles)
+            val avatarUrl =
+                ViewerIdentityResolver.accountAvatarUrl(principal.accountId, principal.avatarUpdatedAtMs)
+                    ?: orderedProfiles.firstNotNullOfOrNull { it.avatarProxyUrl() }
+
+            principal.toResponse(
+                avatarUrl = avatarUrl,
+                resolvedDisplayName = resolvedDisplayName,
+            )
         }
 
     /** Whether SSO sign-in links AUTO accounts to media users by email (OIDC enabled and OIDC_AUTO_LINK_BY_EMAIL on). */
@@ -492,15 +517,54 @@ class AuthService(
             }
         }
 
+    suspend fun listAccountResponses(): Either<MiruError, List<AccountResponse>> =
+        either {
+            val accounts = listAccounts().bind()
+            val allLinkedIds = accounts.flatMapTo(HashSet()) { it.linkedMediaUserIds }
+            val usersById =
+                if (allLinkedIds.isEmpty()) {
+                    emptyMap()
+                } else {
+                    userRepository.findByIds(allLinkedIds).bind().associateBy { it.id }
+                }
+            accounts.map { toAccountResponse(it, preloadedUsersById = usersById).bind() }
+        }
+
+    suspend fun toAccountResponse(
+        accountWithLinks: AccountWithLinks,
+        preloadedUsersById: Map<String, UserRecord>? = null,
+    ): Either<MiruError, AccountResponse> =
+        either {
+            val account = accountWithLinks.account
+            val avatarUrl =
+                ViewerIdentityResolver.accountAvatarUrl(account.id, account.avatarUpdatedAtMs)
+                    ?: if (accountWithLinks.linkedMediaUserIds.isNotEmpty()) {
+                    val linkedUsers =
+                        if (preloadedUsersById != null) {
+                            accountWithLinks.linkedMediaUserIds.mapNotNull { preloadedUsersById[it] }
+                        } else {
+                            userRepository.findByIds(accountWithLinks.linkedMediaUserIds).bind()
+                        }
+                    linkedUsers
+                        .sortedWith(ViewerIdentityResolver.stableProfileComparator)
+                        .firstNotNullOfOrNull { it.avatarProxyUrl() }
+                } else {
+                    null
+                }
+            accountWithLinks.toResponse(avatarUrl = avatarUrl)
+        }
+
     suspend fun createAccount(
         username: String,
         password: String,
         email: String? = null,
         role: MiruRole = MiruRole.USER,
         linkedMediaUserIds: Set<String> = emptySet(),
+        displayName: String? = null,
     ): Either<MiruError, AccountWithLinks> =
         either {
             val validated = validateCredentials(username, password, email).bind()
+            val validatedDisplayName = validateOptionalDisplayName(displayName).bind()
             val normalizedLinks = linkedMediaUserIds.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
             validateMediaUserLinks(normalizedLinks, excludingAccountId = null).bind()
 
@@ -519,6 +583,7 @@ class AuthService(
                     passwordHash = hashPassword(password),
                     role = role.name,
                     disabled = false,
+                    displayName = validatedDisplayName,
                     createdAtMs = now,
                     updatedAtMs = now,
                 )
@@ -584,6 +649,119 @@ class AuthService(
             }
         }
 
+    /** Sets or clears the caller's own display name or avatar; importing from a server is for admins. */
+    suspend fun updateOwnProfile(
+        principal: MiruPrincipal,
+        request: UpdateProfileRequest,
+    ): Either<MiruError, PrincipalResponse> =
+        either {
+            ensure(authConfig.mode != AuthMode.NONE && principal.authSource != AuthSource.DEV_BYPASS) {
+                MiruError.Conflict("Profile management is disabled when authentication is disabled")
+            }
+            val hasChange = request.displayName != null || request.clearDisplayName || request.clearAvatar
+            ensure(hasChange) {
+                MiruError.ValidationError(
+                    message = "At least one profile field must be provided",
+                )
+            }
+
+            val account =
+                accountRepository.findById(principal.accountId).bind()
+                    ?: raise(MiruError.NotFound(resource = "Account", id = principal.accountId))
+            ensure(!account.disabled) {
+                MiruError.Unauthorized("Account is disabled")
+            }
+
+            val mutations =
+                resolveProfileMutations(
+                    accountId = account.id,
+                    displayName = request.displayName,
+                    clearDisplayName = request.clearDisplayName,
+                    clearAvatar = request.clearAvatar,
+                    importDisplayNameFromServerId = null,
+                    importAvatarFromServerId = null,
+                ).bind()
+
+            val updated =
+                accountRepository
+                    .updateProfile(
+                        id = account.id,
+                        displayName = mutations.displayName,
+                        avatar = mutations.avatar,
+                        updatedAtMs = clock(),
+                    ).bind()
+                    ?: raise(MiruError.NotFound(resource = "Account", id = account.id))
+
+            principalCache.invalidateByAccountId(account.id)
+            val linkedIds = accountRepository.findLinkedMediaUserIds(account.id).bind()
+            resolvePrincipalResponse(updated.toPrincipal(linkedIds, principal.authSource)).bind()
+        }
+
+    suspend fun uploadOwnAvatar(
+        principal: MiruPrincipal,
+        bytes: ByteArray,
+        declaredContentType: String? = null,
+    ): Either<MiruError, PrincipalResponse> =
+        either {
+            ensure(authConfig.mode != AuthMode.NONE && principal.authSource != AuthSource.DEV_BYPASS) {
+                MiruError.Conflict("Profile management is disabled when authentication is disabled")
+            }
+            val validated = AvatarImageValidator.validate(bytes, declaredContentType).bind()
+            val account =
+                accountRepository.findById(principal.accountId).bind()
+                    ?: raise(MiruError.NotFound(resource = "Account", id = principal.accountId))
+            ensure(!account.disabled) {
+                MiruError.Unauthorized("Account is disabled")
+            }
+
+            val now = clock()
+            val updated =
+                accountRepository
+                    .updateProfile(
+                        id = account.id,
+                        avatar =
+                            AvatarMutation.Set(
+                                bytes = validated.bytes,
+                                contentType = validated.contentType,
+                                sourceServerId = null,
+                                avatarUpdatedAtMs = now,
+                            ),
+                        updatedAtMs = now,
+                    ).bind()
+                    ?: raise(MiruError.NotFound(resource = "Account", id = account.id))
+
+            principalCache.invalidateByAccountId(account.id)
+            val linkedIds = accountRepository.findLinkedMediaUserIds(account.id).bind()
+            resolvePrincipalResponse(updated.toPrincipal(linkedIds, principal.authSource)).bind()
+        }
+
+    suspend fun deleteOwnAvatar(principal: MiruPrincipal): Either<MiruError, PrincipalResponse> =
+        either {
+            ensure(authConfig.mode != AuthMode.NONE && principal.authSource != AuthSource.DEV_BYPASS) {
+                MiruError.Conflict("Profile management is disabled when authentication is disabled")
+            }
+            val account =
+                accountRepository.findById(principal.accountId).bind()
+                    ?: raise(MiruError.NotFound(resource = "Account", id = principal.accountId))
+            ensure(!account.disabled) {
+                MiruError.Unauthorized("Account is disabled")
+            }
+
+            val updated =
+                accountRepository
+                    .updateProfile(
+                        id = account.id,
+                        avatar = AvatarMutation.Clear,
+                        updatedAtMs = clock(),
+                    ).bind()
+                    ?: raise(MiruError.NotFound(resource = "Account", id = account.id))
+
+            principalCache.invalidateByAccountId(account.id)
+            val linkedIds = accountRepository.findLinkedMediaUserIds(account.id).bind()
+            resolvePrincipalResponse(updated.toPrincipal(linkedIds, principal.authSource)).bind()
+        }
+
+    @Suppress("LongParameterList")
     suspend fun updateAccount(
         id: String,
         actingAccountId: String,
@@ -591,12 +769,90 @@ class AuthService(
         roleMode: RoleMode? = null,
         disabled: Boolean? = null,
         password: String? = null,
+        displayName: String? = null,
+        clearDisplayName: Boolean = false,
+        clearAvatar: Boolean = false,
+        importDisplayNameFromServerId: String? = null,
+        importAvatarFromServerId: String? = null,
+        profileImport: ProfileImportSources? = null,
     ): Either<MiruError, AccountWithLinks> =
         either {
-            ensure(role != null || roleMode != null || disabled != null || password != null) {
-                MiruError.ValidationError("At least one field (role, roleMode, disabled, password) must be provided")
+            val hasCoreChange = role != null || roleMode != null || disabled != null || password != null
+            val hasProfileChange =
+                displayName != null ||
+                    clearDisplayName ||
+                    clearAvatar ||
+                    importDisplayNameFromServerId != null ||
+                    importAvatarFromServerId != null
+            ensure(hasCoreChange || hasProfileChange) {
+                MiruError.ValidationError("At least one field must be provided")
             }
 
+            val corePlan = validateAccountCorePlan(role, roleMode, disabled, password).bind()
+            val target =
+                accountRepository.findById(id).bind()
+                    ?: raise(MiruError.NotFound(resource = "Account", id = id))
+            val resolvedCore = resolveAccountCoreUpdate(id, actingAccountId, target, corePlan).bind()
+
+            val profileMutations =
+                if (hasProfileChange) {
+                    resolveProfileMutations(
+                        accountId = id,
+                        displayName = displayName,
+                        clearDisplayName = clearDisplayName,
+                        clearAvatar = clearAvatar,
+                        importDisplayNameFromServerId = importDisplayNameFromServerId,
+                        importAvatarFromServerId = importAvatarFromServerId,
+                        profileImport = profileImport,
+                    ).bind()
+                } else {
+                    ProfileMutations(DisplayNameMutation.Keep, AvatarMutation.Keep)
+                }
+
+            val now = clock()
+            val newPasswordHash = password?.let { hashPassword(it) }
+            var latest = target
+            if (hasCoreChange) {
+                latest =
+                    accountRepository
+                        .updateAccount(
+                            id = id,
+                            role = resolvedCore.nextRole.name,
+                            disabled = resolvedCore.nextDisabled,
+                            passwordHash = newPasswordHash,
+                            roleMode = resolvedCore.nextRoleMode?.name,
+                            updatedAtMs = now,
+                        ).bind()
+                        ?: raise(MiruError.NotFound(resource = "Account", id = id))
+            }
+            if (profileMutations.displayName != DisplayNameMutation.Keep || profileMutations.avatar != AvatarMutation.Keep) {
+                latest =
+                    accountRepository
+                        .updateProfile(
+                            id = id,
+                            displayName = profileMutations.displayName,
+                            avatar = profileMutations.avatar,
+                            updatedAtMs = now,
+                        ).bind()
+                        ?: raise(MiruError.NotFound(resource = "Account", id = id))
+            }
+
+            if (resolvedCore.nextDisabled || resolvedCore.roleDowngraded || newPasswordHash != null) {
+                sessionRepository.deleteByAccountId(id).bind()
+            }
+            principalCache.invalidateByAccountId(id)
+
+            val links = accountRepository.findLinkedMediaUserIds(id).bind()
+            AccountWithLinks(account = latest, linkedMediaUserIds = links)
+        }
+
+    private fun validateAccountCorePlan(
+        role: String?,
+        roleMode: RoleMode?,
+        disabled: Boolean?,
+        password: String?,
+    ): Either<MiruError.ValidationError, AccountCorePlan> =
+        either {
             val errors = linkedMapOf<String, String>()
             val parsedRole =
                 role?.let { raw ->
@@ -617,27 +873,32 @@ class AuthService(
             ensure(errors.isEmpty()) {
                 MiruError.ValidationError("Invalid account update request", fieldErrors = errors)
             }
+            AccountCorePlan(parsedRole = parsedRole, roleMode = roleMode, disabled = disabled, password = password)
+        }
 
-            val target =
-                accountRepository.findById(id).bind()
-                    ?: raise(MiruError.NotFound(resource = "Account", id = id))
-
-            if (password != null) {
+    private suspend fun resolveAccountCoreUpdate(
+        id: String,
+        actingAccountId: String,
+        target: AuthAccountRecord,
+        plan: AccountCorePlan,
+    ): Either<MiruError, ResolvedAccountCoreUpdate> =
+        either {
+            if (plan.password != null) {
                 ensure(target.authProvider.equals("LOCAL", ignoreCase = true)) {
                     MiruError.Conflict("Password reset is only supported for local accounts")
                 }
             }
 
-            ensure(roleMode != RoleMode.AUTO || target.authProvider.equals(PROVIDER_OIDC, ignoreCase = true)) {
+            ensure(plan.roleMode != RoleMode.AUTO || target.authProvider.equals(PROVIDER_OIDC, ignoreCase = true)) {
                 MiruError.Conflict("Only SSO accounts can take their role from groups")
             }
 
             val currentRole = parseRole(target.role)
-            val nextRole = parsedRole ?: currentRole
-            val nextRoleMode = roleMode ?: RoleMode.MANUAL.takeIf { parsedRole != null }
+            val nextRole = plan.parsedRole ?: currentRole
+            val nextRoleMode = plan.roleMode ?: RoleMode.MANUAL.takeIf { plan.parsedRole != null }
             // The groups may take the admin role away at the next sign-in.
             val handsRoleToGroups = nextRoleMode == RoleMode.AUTO && RoleMode.fromStored(target.roleMode) != RoleMode.AUTO
-            val nextDisabled = disabled ?: target.disabled
+            val nextDisabled = plan.disabled ?: target.disabled
 
             if (id == actingAccountId) {
                 ensure(nextRole == MiruRole.ADMIN) {
@@ -660,25 +921,87 @@ class AuthService(
                 }
             }
 
-            val newPasswordHash = password?.let { hashPassword(it) }
+            ResolvedAccountCoreUpdate(
+                nextRole = nextRole,
+                nextRoleMode = nextRoleMode,
+                nextDisabled = nextDisabled,
+                roleDowngraded = currentRole == MiruRole.ADMIN && nextRole != MiruRole.ADMIN,
+            )
+        }
+
+    /**
+     * Copies the display name and/or avatar of the account's linked media user on [serverId] into the
+     * account itself, as an admin import does, for imports Miru makes on its own (see [AccountProfileAutoImporter]).
+     */
+    suspend fun importProfileFromServer(
+        accountId: String,
+        serverId: String,
+        importDisplayName: Boolean,
+        importAvatar: Boolean,
+        profileImport: ProfileImportSources,
+    ): Either<MiruError, AccountWithLinks> =
+        either {
+            val mutations =
+                resolveProfileMutations(
+                    accountId = accountId,
+                    displayName = null,
+                    clearDisplayName = false,
+                    clearAvatar = false,
+                    importDisplayNameFromServerId = serverId.takeIf { importDisplayName },
+                    importAvatarFromServerId = serverId.takeIf { importAvatar },
+                    profileImport = profileImport,
+                ).bind()
             val updated =
                 accountRepository
-                    .updateAccount(
+                    .updateProfile(
+                        id = accountId,
+                        displayName = mutations.displayName,
+                        avatar = mutations.avatar,
+                        updatedAtMs = clock(),
+                    ).bind()
+                    ?: raise(MiruError.NotFound(resource = "Account", id = accountId))
+            principalCache.invalidateByAccountId(accountId)
+            AccountWithLinks(account = updated, linkedMediaUserIds = accountRepository.findLinkedMediaUserIds(accountId).bind())
+        }
+
+    suspend fun uploadAccountAvatar(
+        id: String,
+        bytes: ByteArray,
+        declaredContentType: String? = null,
+    ): Either<MiruError, AccountWithLinks> =
+        either {
+            val validated = AvatarImageValidator.validate(bytes, declaredContentType).bind()
+            val now = clock()
+            val updated =
+                accountRepository
+                    .updateProfile(
                         id = id,
-                        role = nextRole.name,
-                        disabled = nextDisabled,
-                        passwordHash = newPasswordHash,
-                        roleMode = nextRoleMode?.name,
+                        avatar =
+                            AvatarMutation.Set(
+                                bytes = validated.bytes,
+                                contentType = validated.contentType,
+                                sourceServerId = null,
+                                avatarUpdatedAtMs = now,
+                            ),
+                        updatedAtMs = now,
+                    ).bind()
+                    ?: raise(MiruError.NotFound(resource = "Account", id = id))
+            principalCache.invalidateByAccountId(id)
+            val links = accountRepository.findLinkedMediaUserIds(id).bind()
+            AccountWithLinks(account = updated, linkedMediaUserIds = links)
+        }
+
+    suspend fun deleteAccountAvatar(id: String): Either<MiruError, AccountWithLinks> =
+        either {
+            val updated =
+                accountRepository
+                    .updateProfile(
+                        id = id,
+                        avatar = AvatarMutation.Clear,
                         updatedAtMs = clock(),
                     ).bind()
                     ?: raise(MiruError.NotFound(resource = "Account", id = id))
-
-            val roleDowngraded = currentRole == MiruRole.ADMIN && nextRole != MiruRole.ADMIN
-            if (nextDisabled || roleDowngraded || newPasswordHash != null) {
-                sessionRepository.deleteByAccountId(id).bind()
-            }
             principalCache.invalidateByAccountId(id)
-
             val links = accountRepository.findLinkedMediaUserIds(id).bind()
             AccountWithLinks(account = updated, linkedMediaUserIds = links)
         }
@@ -1017,6 +1340,167 @@ class AuthService(
             )
         }
 
+    @Suppress("LongParameterList")
+    private suspend fun resolveProfileMutations(
+        accountId: String,
+        displayName: String?,
+        clearDisplayName: Boolean,
+        clearAvatar: Boolean,
+        importDisplayNameFromServerId: String?,
+        importAvatarFromServerId: String?,
+        profileImport: ProfileImportSources? = null,
+    ): Either<MiruError, ProfileMutations> =
+        either {
+            val errors = linkedMapOf<String, String>()
+            if (clearDisplayName && (displayName != null || importDisplayNameFromServerId != null)) {
+                errors["clearDisplayName"] = "cannot be combined with displayName or importDisplayNameFromServerId"
+            }
+            if (displayName != null && importDisplayNameFromServerId != null) {
+                errors["displayName"] = "cannot be combined with importDisplayNameFromServerId"
+            }
+            if (clearAvatar && importAvatarFromServerId != null) {
+                errors["clearAvatar"] = "cannot be combined with importAvatarFromServerId"
+            }
+            val validatedExplicitDisplayName =
+                if (displayName != null && !clearDisplayName && importDisplayNameFromServerId == null) {
+                    validateExplicitDisplayName(displayName).fold(
+                        ifLeft = { err ->
+                            errors.putAll(err.fieldErrors)
+                            null
+                        },
+                        ifRight = { it },
+                    )
+                } else {
+                    null
+                }
+            ensure(errors.isEmpty()) {
+                MiruError.ValidationError("Invalid profile update request", fieldErrors = errors)
+            }
+
+            // Import what the server has now, not what the last scheduled user sync saw
+            setOfNotNull(importDisplayNameFromServerId, importAvatarFromServerId)
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .forEach { serverId -> profileImport?.syncServerUsers?.invoke(serverId) }
+
+            val displayNameMutation: DisplayNameMutation =
+                when {
+                    clearDisplayName -> DisplayNameMutation.Set(null)
+                    importDisplayNameFromServerId != null -> {
+                        val linkedUser =
+                            resolveLinkedUserForServer(
+                                accountId = accountId,
+                                serverId = importDisplayNameFromServerId,
+                                fieldName = "importDisplayNameFromServerId",
+                            ).bind()
+                        val importedName =
+                            sanitizeImportedDisplayName(linkedUser.displayName)
+                                ?: sanitizeImportedDisplayName(linkedUser.username)
+                                ?: raise(
+                                    MiruError.ValidationError(
+                                        message = "Linked user on server '${linkedUser.serverId}' has no display name or username",
+                                        fieldErrors = mapOf("importDisplayNameFromServerId" to "no display name available"),
+                                    ),
+                                )
+                        DisplayNameMutation.Set(importedName)
+                    }
+                    displayName != null -> DisplayNameMutation.Set(validatedExplicitDisplayName)
+                    else -> DisplayNameMutation.Keep
+                }
+
+            val avatarMutation: AvatarMutation =
+                when {
+                    clearAvatar -> AvatarMutation.Clear
+                    importAvatarFromServerId != null -> {
+                        val linkedUser =
+                            resolveLinkedUserForServer(
+                                accountId = accountId,
+                                serverId = importAvatarFromServerId,
+                                fieldName = "importAvatarFromServerId",
+                            ).bind()
+                        val proxy =
+                            profileImport?.artworkProxyService
+                                ?: raise(
+                                    MiruError.UpstreamUnavailable(
+                                        provider = "media_server",
+                                        message = "Artwork proxy service is not configured for avatar import",
+                                    ),
+                                )
+                        val fetched =
+                            proxy
+                                .fetchMediaUserAvatarFromSource(linkedUser, preferredMaxBytes = AvatarImageValidator.MAX_AVATAR_BYTES)
+                                .bind()
+                        val validated =
+                            AvatarImageValidator
+                                .validate(fetched.bytes, maxBytes = AvatarImageValidator.MAX_IMPORTED_AVATAR_BYTES)
+                                .bind()
+                        AvatarMutation.Set(
+                            bytes = validated.bytes,
+                            contentType = validated.contentType,
+                            sourceServerId = linkedUser.serverId,
+                            avatarUpdatedAtMs = clock(),
+                        )
+                    }
+                    else -> AvatarMutation.Keep
+                }
+
+            ProfileMutations(displayName = displayNameMutation, avatar = avatarMutation)
+        }
+
+    private suspend fun resolveLinkedUserForServer(
+        accountId: String,
+        serverId: String,
+        fieldName: String,
+    ): Either<MiruError, UserRecord> =
+        either {
+            val trimmedServerId = serverId.trim()
+            ensure(trimmedServerId.isNotEmpty()) {
+                MiruError.ValidationError(
+                    message = "Invalid server id",
+                    fieldErrors = mapOf(fieldName to "must not be blank"),
+                )
+            }
+            val linkedIds = accountRepository.findLinkedMediaUserIds(accountId).bind()
+            if (linkedIds.isEmpty()) {
+                raise(MiruError.NotFound(resource = "Linked media user on server", id = trimmedServerId))
+            }
+            val linkedUsers = userRepository.findByIds(linkedIds).bind().sortedWith(ViewerIdentityResolver.stableProfileComparator)
+            linkedUsers.firstOrNull { it.serverId == trimmedServerId }
+                ?: raise(MiruError.NotFound(resource = "Linked media user on server", id = trimmedServerId))
+        }
+
+    /** A media server's name for a user, without control characters and cut to the display name limit. */
+    private fun sanitizeImportedDisplayName(raw: String?): String? =
+        raw
+            ?.filterNot { it.isISOControl() }
+            ?.trim()
+            ?.take(MAX_DISPLAY_NAME_LENGTH)
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+
+    private fun validateOptionalDisplayName(raw: String?): Either<MiruError.ValidationError, String?> =
+        either {
+            val trimmed = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return@either null
+            validateExplicitDisplayName(trimmed).bind()
+        }
+
+    private fun validateExplicitDisplayName(raw: String): Either<MiruError.ValidationError, String> =
+        either {
+            val trimmed = raw.trim()
+            val errors = linkedMapOf<String, String>()
+            if (trimmed.isEmpty()) {
+                errors["displayName"] = "must not be blank; use clearDisplayName to clear"
+            } else if (trimmed.length > MAX_DISPLAY_NAME_LENGTH) {
+                errors["displayName"] = "must be at most $MAX_DISPLAY_NAME_LENGTH characters"
+            } else if (trimmed.any { it.isISOControl() }) {
+                errors["displayName"] = "must not contain control characters"
+            }
+            ensure(errors.isEmpty()) {
+                MiruError.ValidationError("Invalid display name", fieldErrors = errors)
+            }
+            trimmed
+        }
+
     private fun AuthAccountRecord.toPrincipal(
         linkedMediaUserIds: Set<String>,
         authSource: AuthSource,
@@ -1029,6 +1513,9 @@ class AuthService(
             linkedMediaUserIds = linkedMediaUserIds,
             authSource = authSource,
             authProvider = authProvider,
+            displayName = displayName,
+            avatarSourceServerId = avatarSourceServerId,
+            avatarUpdatedAtMs = avatarUpdatedAtMs,
         )
 
     private fun parseRole(raw: String): MiruRole =
@@ -1124,9 +1611,29 @@ class AuthService(
         val email: String?,
     )
 
+    private data class ProfileMutations(
+        val displayName: DisplayNameMutation,
+        val avatar: AvatarMutation,
+    )
+
+    private data class AccountCorePlan(
+        val parsedRole: MiruRole?,
+        val roleMode: RoleMode?,
+        val disabled: Boolean?,
+        val password: String?,
+    )
+
+    private data class ResolvedAccountCoreUpdate(
+        val nextRole: MiruRole,
+        val nextRoleMode: RoleMode?,
+        val nextDisabled: Boolean,
+        val roleDowngraded: Boolean,
+    )
+
     companion object {
         const val MIN_USERNAME_LENGTH = 3
         const val MAX_USERNAME_LENGTH = 64
+        const val MAX_DISPLAY_NAME_LENGTH = 100
         const val DEFAULT_MAX_CONCURRENT_PASSWORD_HASHES = 4
         const val MIN_PASSWORD_LENGTH = PasswordPolicy.MIN_LENGTH
         const val MAX_API_KEY_NAME_LENGTH = 100

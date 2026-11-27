@@ -6,6 +6,7 @@
 		CheckCircle2,
 		ChevronDown,
 		Copy,
+		Download,
 		ExternalLink,
 		FileSpreadsheet,
 		KeyRound,
@@ -21,7 +22,7 @@
 		Upload,
 		X
 	} from '@lucide/svelte';
-	import { api, MiruApiError, unwrap } from '$api/client';
+	import { api, MiruApiError, unwrap, uploadBinaryAvatar, validateAvatarFile } from '$api/client';
 	import type {
 		AccountResponse,
 		AdminServerStatusDto,
@@ -54,6 +55,7 @@
 	import { copyTextWhenReady } from '$lib/clipboard';
 	import { jellyfinQuickConnectUrl } from '$lib/jellyfin';
 	import DeleteAccountButton from '$components/miru/DeleteAccountButton.svelte';
+	import ProxiedImage from '$components/miru/ProxiedImage.svelte';
 	import ServerBadge from '$components/miru/ServerBadge.svelte';
 	import WebhooksPanel from '$components/miru/WebhooksPanel.svelte';
 	import { authStore } from '$stores/auth.svelte';
@@ -121,6 +123,7 @@
 	// Create Account Sheet
 	let createAccountOpen = $state(false);
 	let newUsername = $state('');
+	let newDisplayName = $state('');
 	let newEmail = $state('');
 	let newPassword = $state('');
 	let newRole = $state<MiruRole>('USER');
@@ -136,6 +139,13 @@
 	let manageRole = $state<MiruRole | 'AUTO'>('USER');
 	let manageDisabled = $state(false);
 	let managePassword = $state('');
+	let manageDisplayName = $state('');
+	let manageImportServerId = $state('');
+	let manageAvatarBusy = $state(false);
+	// Imports and avatar changes save at once, so Save may have nothing left to send
+	let manageProfileSaved = $state(false);
+	let manageProfileNotice = $state<string | null>(null);
+	let manageAvatarInputEl: HTMLInputElement | undefined = $state();
 	let manageSubmitting = $state(false);
 	let manageError = $state<string | null>(null);
 
@@ -862,12 +872,14 @@
 						username: newUsername.trim(),
 						password: newPassword,
 						email: newEmail.trim() || null,
+						displayName: newDisplayName.trim() || null,
 						role: newRole
 					}
 				})
 			);
 			createAccountOpen = false;
 			newUsername = '';
+			newDisplayName = '';
 			newEmail = '';
 			newPassword = '';
 			newRole = 'USER';
@@ -945,13 +957,44 @@
 		return acc.authProvider === 'OIDC' && acc.roleMode === 'AUTO' ? 'AUTO' : acc.role;
 	}
 
+	const manageLinkedMediaUsers = $derived.by(() => {
+		const target = manageTarget;
+		if (!target) return [];
+		return mediaUsers.filter((mu) => target.linkedMediaUserIds.includes(mu.id));
+	});
+
 	function openManageAccount(acc: AccountResponse) {
 		manageTarget = acc;
 		manageRole = roleChoice(acc);
 		manageDisabled = acc.disabled;
 		managePassword = '';
+		manageDisplayName = acc.displayName ?? '';
+		const linked = mediaUsers.filter((mu) => acc.linkedMediaUserIds.includes(mu.id));
+		manageImportServerId = linked[0]?.serverId ?? '';
+		manageProfileSaved = false;
+		manageProfileNotice = null;
 		manageError = null;
 		manageOpen = true;
+	}
+
+	async function syncSelfPrincipalIfNeeded(accountId: string) {
+		if (accountId === authStore.principal?.accountId) {
+			await authStore.refreshPrincipal();
+		}
+	}
+
+	/** [profileNotice] marks a profile action that saved on its own while the Manage sheet stays open. */
+	function applyUpdatedManagedAccount(updated: AccountResponse, notice: string, profileNotice?: string) {
+		accounts = accounts.map((a) => (a.id === updated.id ? updated : a));
+		if (manageTarget?.id === updated.id) {
+			manageTarget = updated;
+			manageDisplayName = updated.displayName ?? '';
+			if (profileNotice) {
+				manageProfileSaved = true;
+				manageProfileNotice = profileNotice;
+			}
+		}
+		accountNotice = notice;
 	}
 
 	async function handleSaveManagedAccount(e: SubmitEvent) {
@@ -969,6 +1012,15 @@
 		if (manageDisabled !== manageTarget.disabled) {
 			body.disabled = manageDisabled;
 		}
+		const trimmedDisplayName = manageDisplayName.trim();
+		const existingDisplayName = manageTarget.displayName ?? '';
+		if (trimmedDisplayName !== existingDisplayName) {
+			if (trimmedDisplayName.length > 0) {
+				body.displayName = trimmedDisplayName;
+			} else if (existingDisplayName.length > 0) {
+				body.clearDisplayName = true;
+			}
+		}
 		if (managePassword.length > 0) {
 			const pwdError = validatePassword(managePassword);
 			if (pwdError) {
@@ -979,6 +1031,10 @@
 		}
 
 		if (Object.keys(body).length === 0) {
+			if (manageProfileSaved) {
+				manageOpen = false;
+				return;
+			}
 			manageError = 'Make at least one change or enter a new password before saving.';
 			return;
 		}
@@ -991,14 +1047,104 @@
 					body
 				})
 			);
-			accounts = accounts.map((a) => (a.id === updated.id ? updated : a));
+			applyUpdatedManagedAccount(updated, `Updated account '${updated.username}'.`);
+			await syncSelfPrincipalIfNeeded(updated.id);
 			manageOpen = false;
 			managePassword = '';
-			accountNotice = `Updated account '${updated.username}'.`;
 		} catch (err) {
 			manageError = err instanceof MiruApiError ? err.detail : 'Failed to update account';
 		} finally {
 			manageSubmitting = false;
+		}
+	}
+
+	async function handleManagedAvatarFileSelected(e: Event) {
+		const target = manageTarget;
+		const input = e.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!target || !file) return;
+		manageError = null;
+		accountNotice = null;
+		const validationMsg = validateAvatarFile(file);
+		if (validationMsg) {
+			manageError = validationMsg;
+			input.value = '';
+			return;
+		}
+		manageAvatarBusy = true;
+		try {
+			const updated = await uploadBinaryAvatar<AccountResponse>(
+				`/api/v1/admin/accounts/${encodeURIComponent(target.id)}/avatar`,
+				file
+			);
+			applyUpdatedManagedAccount(updated, `Updated avatar for '${updated.username}'.`, 'Avatar uploaded and saved.');
+			await syncSelfPrincipalIfNeeded(updated.id);
+		} catch (err) {
+			manageError = err instanceof MiruApiError ? err.detail : 'Failed to upload avatar';
+		} finally {
+			manageAvatarBusy = false;
+			input.value = '';
+		}
+	}
+
+	async function handleRemoveManagedAvatar() {
+		const target = manageTarget;
+		if (!target || manageAvatarBusy) return;
+		manageError = null;
+		accountNotice = null;
+		manageAvatarBusy = true;
+		try {
+			const updated = unwrap(
+				await api.DELETE('/api/v1/admin/accounts/{id}/avatar', {
+					params: { path: { id: target.id } }
+				})
+			);
+			applyUpdatedManagedAccount(
+				updated,
+				`Removed custom avatar for '${updated.username}'.`,
+				'Custom avatar removed and saved.'
+			);
+			await syncSelfPrincipalIfNeeded(updated.id);
+		} catch (err) {
+			manageError = err instanceof MiruApiError ? err.detail : 'Failed to remove avatar';
+		} finally {
+			manageAvatarBusy = false;
+		}
+	}
+
+	async function handleImportManagedFromServer(mode: 'name' | 'avatar' | 'both') {
+		const target = manageTarget;
+		if (!target || !manageImportServerId || manageAvatarBusy || manageSubmitting) return;
+		manageError = null;
+		accountNotice = null;
+		const body: UpdateAccountRequest = {};
+		if (mode === 'name' || mode === 'both') {
+			body.importDisplayNameFromServerId = manageImportServerId;
+		}
+		if (mode === 'avatar' || mode === 'both') {
+			body.importAvatarFromServerId = manageImportServerId;
+		}
+		manageAvatarBusy = true;
+		try {
+			const updated = unwrap(
+				await api.PATCH('/api/v1/admin/accounts/{id}', {
+					params: { path: { id: target.id } },
+					body
+				})
+			);
+			const what = mode === 'both' ? 'Display name and avatar' : mode === 'name' ? 'Display name' : 'Avatar';
+			const server = manageLinkedMediaUsers.find((mu) => mu.serverId === manageImportServerId);
+			const from = server?.serverName || manageImportServerId;
+			applyUpdatedManagedAccount(
+				updated,
+				`Imported profile from server for '${updated.username}'.`,
+				`${what} imported from ${from} and saved.`
+			);
+			await syncSelfPrincipalIfNeeded(updated.id);
+		} catch (err) {
+			manageError = err instanceof MiruApiError ? err.detail : 'Failed to import profile from server';
+		} finally {
+			manageAvatarBusy = false;
 		}
 	}
 
@@ -1514,16 +1660,21 @@
 					{@const disableReason = disableToggleGuardReason(acc)}
 					<div class="flex flex-col gap-3 rounded-xl border border-border bg-elevated p-3.5 md:flex-row md:items-center md:justify-between">
 						<div class="flex items-center gap-3">
-							<div
-								class={acc.role === 'ADMIN'
-									? 'flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary bg-primary-soft font-heading text-xs font-bold text-primary-text'
-									: 'flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-cyan bg-cyan-soft font-heading text-xs font-bold text-cyan-hi'}
-							>
-								{safeInitial(acc.username)}
-							</div>
+							<ProxiedImage
+								src={acc.avatarUrl}
+								alt={acc.displayName || acc.username}
+								fallbackLabel={acc.displayName || acc.username}
+								variant="avatar"
+								class="h-9 w-9 text-xs"
+							/>
 							<div>
-								<p class="font-heading text-sm font-semibold text-fg-primary">{acc.username}</p>
+								<p class="font-heading text-sm font-semibold text-fg-primary">
+									{acc.displayName || acc.username}
+								</p>
 								<p class="text-[11px] text-fg-muted">
+									{#if acc.displayName && acc.displayName !== acc.username}
+										@{acc.username} ·
+									{/if}
 									{acc.email || 'No email'} · Created {formatRelativeTime(acc.createdAtMs)}
 								</p>
 							</div>
@@ -2381,6 +2532,16 @@
 			/>
 		</label>
 		<label class="flex flex-col gap-1">
+			<span class="font-heading text-xs font-semibold text-fg-primary">Display Name (optional)</span>
+			<input
+				type="text"
+				maxlength={100}
+				placeholder="Defaults to username"
+				bind:value={newDisplayName}
+				class="rounded-lg border border-input-border bg-canvas px-3 py-2 text-sm text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
+			/>
+		</label>
+		<label class="flex flex-col gap-1">
 			<span class="font-heading text-xs font-semibold text-fg-primary">Email (optional)</span>
 			<input
 				type="email"
@@ -2712,6 +2873,144 @@
 					{manageError}
 				</div>
 			{/if}
+
+			<div class="flex flex-col gap-2.5 rounded-xl border border-border bg-elevated p-3.5">
+				<span class="font-heading text-xs font-semibold uppercase tracking-wider text-fg-secondary">
+					Profile
+				</span>
+				{#if manageProfileNotice}
+					<p role="status" class="rounded-lg border border-direct-play/50 bg-direct-play-soft px-3 py-2 text-xs text-direct-play">
+						{manageProfileNotice}
+					</p>
+				{/if}
+				<div class="flex flex-col gap-1">
+					<label for="manage-account-display-name" class="font-heading text-xs font-semibold text-fg-primary">
+						Display Name
+					</label>
+					<div class="flex items-center gap-2">
+						<input
+							id="manage-account-display-name"
+							type="text"
+							maxlength={100}
+							placeholder={manageTarget.username}
+							bind:value={manageDisplayName}
+							class="min-w-0 flex-1 rounded-lg border border-input-border bg-canvas px-3 py-2 text-sm text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
+						/>
+						{#if manageDisplayName.trim().length > 0}
+							<Button
+								type="button"
+								variant="ghost"
+								size="sm"
+								onclick={() => (manageDisplayName = '')}
+							>
+								Clear
+							</Button>
+						{/if}
+					</div>
+				</div>
+
+				<div class="flex flex-col gap-2 border-t border-border pt-2.5">
+					<span class="font-heading text-xs font-semibold text-fg-primary">Avatar</span>
+					<div class="flex flex-wrap items-center gap-3">
+						<ProxiedImage
+							src={manageTarget.avatarUrl}
+							alt={manageTarget.displayName || manageTarget.username}
+							fallbackLabel={manageTarget.displayName || manageTarget.username}
+							variant="avatar"
+							class="h-10 w-10 text-sm"
+						/>
+						<input
+							bind:this={manageAvatarInputEl}
+							type="file"
+							accept="image/png,image/jpeg,image/webp"
+							aria-label="Upload Account Avatar"
+							onchange={handleManagedAvatarFileSelected}
+							class="sr-only"
+						/>
+						<div class="flex flex-wrap items-center gap-2">
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								disabled={manageAvatarBusy}
+								onclick={() => manageAvatarInputEl?.click()}
+							>
+								<Upload class="h-3.5 w-3.5" />
+								Upload Avatar
+							</Button>
+							{#if manageTarget.hasCustomAvatar}
+								<Button
+									type="button"
+									variant="ghost"
+									size="sm"
+									disabled={manageAvatarBusy}
+									onclick={() => void handleRemoveManagedAvatar()}
+								>
+									<Trash2 class="h-3.5 w-3.5" />
+									Remove Avatar
+								</Button>
+							{/if}
+						</div>
+					</div>
+					<p class="text-[10px] text-fg-muted">
+						PNG, JPEG, or WebP up to 512 KiB.
+					</p>
+				</div>
+
+				{#if manageLinkedMediaUsers.length > 0}
+					<div class="flex flex-col gap-2 border-t border-border pt-2.5">
+						<label for="manage-account-import-server" class="font-heading text-xs font-semibold text-fg-primary">
+							Import from server
+						</label>
+						<select
+							id="manage-account-import-server"
+							value={manageImportServerId}
+							onchange={(e) => {
+								manageImportServerId = e.currentTarget.value;
+							}}
+							disabled={manageAvatarBusy}
+							class="rounded-lg border border-input-border bg-canvas px-3 py-2 text-xs text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
+						>
+							{#each manageLinkedMediaUsers as mu (mu.id)}
+								<option value={mu.serverId}>
+									{mu.serverName || mu.serverId} ({mu.displayName || mu.username})
+								</option>
+							{/each}
+						</select>
+						<div class="flex flex-wrap items-center gap-2">
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								disabled={manageAvatarBusy || !manageImportServerId}
+								onclick={() => void handleImportManagedFromServer('name')}
+							>
+								<Download class="h-3.5 w-3.5" />
+								Import Name
+							</Button>
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								disabled={manageAvatarBusy || !manageImportServerId}
+								onclick={() => void handleImportManagedFromServer('avatar')}
+							>
+								<Download class="h-3.5 w-3.5" />
+								Import Avatar
+							</Button>
+							<Button
+								type="button"
+								variant="secondary"
+								size="sm"
+								disabled={manageAvatarBusy || !manageImportServerId}
+								onclick={() => void handleImportManagedFromServer('both')}
+							>
+								Import Both
+							</Button>
+						</div>
+					</div>
+				{/if}
+			</div>
 
 			<label class="flex flex-col gap-1">
 				<span class="font-heading text-xs font-semibold text-fg-primary">Account Role</span>

@@ -402,6 +402,124 @@ describe('Admin console Stream Guardrails & Audit Log', () => {
 		expect(screen.getByText('Cannot demote the last active admin account.')).toBeTruthy();
 	});
 
+	it('shows account display names and avatars, and edits, imports, uploads, and clears an account profile', async () => {
+		const [admin, bob, carol] = makeAccounts();
+		const linkedBob: AccountResponse = {
+			...bob,
+			displayName: 'Bob B',
+			linkedMediaUserIds: ['u-bob-plex'],
+			avatarUrl: '/api/v1/users/u-bob-plex/avatar',
+			hasCustomAvatar: false
+		};
+		showAccounts([admin, linkedBob, carol]);
+		const others = vi.mocked(api.GET).getMockImplementation()!;
+		vi.mocked(api.GET).mockImplementation(((url: string, ...rest: unknown[]) =>
+			url === '/api/v1/users'
+				? Promise.resolve({
+						data: {
+							users: [
+								{
+									id: 'u-bob-plex',
+									serverId: 'srv-plex',
+									serverName: 'Plex',
+									externalUserId: 'ext-bob',
+									username: 'bob',
+									displayName: 'Bobby',
+									isAdmin: false
+								}
+							]
+						},
+						response: new Response(null, { status: 200 })
+					})
+				: (others as (...args: unknown[]) => unknown)(url, ...rest)) as never);
+		const imported: AccountResponse = {
+			...linkedBob,
+			displayName: 'Bobby',
+			avatarUrl: '/api/v1/users/acc-2/avatar?v=10',
+			avatarSourceServerId: 'srv-plex',
+			hasCustomAvatar: true
+		};
+		const patchSpy = vi.spyOn(api, 'PATCH').mockResolvedValue({
+			data: imported,
+			response: new Response(null, { status: 200 })
+		} as never);
+
+		render(AdminPage);
+		await waitFor(() => expect(screen.getByText('Bob B')).toBeTruthy());
+		expect(screen.getByText(/@bob ·/)).toBeTruthy();
+
+		await fireEvent.click(screen.getAllByRole('button', { name: 'Manage' })[1]);
+		await waitFor(() => expect(screen.getByRole('heading', { name: 'Manage Account · bob' })).toBeTruthy());
+		expect((screen.getByLabelText('Display Name') as HTMLInputElement).value).toBe('Bob B');
+		expect(screen.queryByRole('button', { name: 'Remove Avatar' })).toBeNull();
+
+		const serverSelect = screen.getByLabelText('Import from server') as HTMLSelectElement;
+		expect(Array.from(serverSelect.options, (o) => o.textContent?.trim())).toEqual(['Plex (Bobby)']);
+		await fireEvent.click(screen.getByRole('button', { name: 'Import Both' }));
+		await waitFor(() => {
+			expect(patchSpy).toHaveBeenCalledWith('/api/v1/admin/accounts/{id}', {
+				params: { path: { id: 'acc-2' } },
+				body: { importDisplayNameFromServerId: 'srv-plex', importAvatarFromServerId: 'srv-plex' }
+			});
+			expect((screen.getByLabelText('Display Name') as HTMLInputElement).value).toBe('Bobby');
+			expect(screen.getByText('Display name and avatar imported from Plex and saved.')).toBeTruthy();
+		});
+
+		const deleteSpy = vi.spyOn(api, 'DELETE').mockResolvedValueOnce({
+			data: { ...imported, avatarUrl: '/api/v1/users/u-bob-plex/avatar', avatarSourceServerId: null, hasCustomAvatar: false },
+			response: new Response(null, { status: 200 })
+		} as never);
+		await fireEvent.click(screen.getByRole('button', { name: 'Remove Avatar' }));
+		await waitFor(() => {
+			expect(deleteSpy).toHaveBeenCalledWith('/api/v1/admin/accounts/{id}/avatar', { params: { path: { id: 'acc-2' } } });
+			expect(screen.queryByRole('button', { name: 'Remove Avatar' })).toBeNull();
+		});
+
+		const fetchMock = vi.fn(
+			async () => new Response(JSON.stringify(imported), { status: 200, headers: { 'Content-Type': 'application/json' } })
+		);
+		vi.stubGlobal('fetch', fetchMock);
+		const png = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'bob.png', { type: 'image/png' });
+		await fireEvent.change(screen.getByLabelText('Upload Account Avatar'), { target: { files: [png] } });
+		await waitFor(() => expect(screen.getByRole('button', { name: 'Remove Avatar' })).toBeTruthy());
+		expect(fetchMock).toHaveBeenCalledWith(
+			'/api/v1/admin/accounts/acc-2/avatar',
+			expect.objectContaining({ method: 'PUT', headers: { 'Content-Type': 'image/png' }, body: png })
+		);
+		vi.unstubAllGlobals();
+
+		// Emptying the field clears the account's own name on save
+		await fireEvent.input(screen.getByLabelText('Display Name'), { target: { value: '  ' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Save Account Changes' }));
+		await waitFor(() =>
+			expect(patchSpy).toHaveBeenLastCalledWith('/api/v1/admin/accounts/{id}', {
+				params: { path: { id: 'acc-2' } },
+				body: { clearDisplayName: true }
+			})
+		);
+		await waitFor(() => expect(screen.queryByRole('heading', { name: 'Manage Account · bob' })).toBeNull());
+
+		// An import saves on its own, so Save with nothing else changed just closes the sheet
+		const openBob = async () => {
+			await fireEvent.click(screen.getAllByRole('button', { name: 'Manage' })[1]);
+			await waitFor(() => expect(screen.getByRole('heading', { name: 'Manage Account · bob' })).toBeTruthy());
+		};
+		await openBob();
+		await fireEvent.click(screen.getByRole('button', { name: 'Import Name' }));
+		await waitFor(() => expect(screen.getByText('Display name imported from Plex and saved.')).toBeTruthy());
+		const patchesBeforeSave = patchSpy.mock.calls.length;
+		await fireEvent.click(screen.getByRole('button', { name: 'Save Account Changes' }));
+		await waitFor(() => expect(screen.queryByRole('heading', { name: 'Manage Account · bob' })).toBeNull());
+		expect(patchSpy.mock.calls.length).toBe(patchesBeforeSave);
+		expect(screen.queryByText(/Make at least one change/)).toBeNull();
+
+		// Without any change at all, Save still asks for one
+		await openBob();
+		expect(screen.queryByText(/imported from Plex and saved/)).toBeNull();
+		await fireEvent.click(screen.getByRole('button', { name: 'Save Account Changes' }));
+		expect(screen.getByText(/Make at least one change/)).toBeTruthy();
+	});
+
 	describe('deleting an account', () => {
 		const trigger = (row: number) => screen.getAllByRole('button', { name: 'Delete' })[row];
 		const confirmation = () => screen.queryByRole('dialog', { name: /^Delete account/ });

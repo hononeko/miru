@@ -10,6 +10,7 @@ export type MiruRole = Schemas['MiruRole'];
 export type AuthSource = Schemas['AuthSource'];
 export type AuthProvidersResponse = Schemas['AuthProvidersResponse'];
 export type PrincipalResponse = Schemas['PrincipalResponse'];
+export type UpdateProfileRequest = Schemas['UpdateProfileRequest'];
 export type ChangePasswordRequest = Schemas['ChangePasswordRequest'];
 export type UserPreferencesResponse = Schemas['UserPreferencesResponse'];
 export type UpdateUserPreferencesRequest = Schemas['UpdateUserPreferencesRequest'];

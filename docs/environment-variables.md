@@ -147,7 +147,7 @@ Miru logs JSON lines to standard output.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `LOG_LEVEL` | `INFO` | Log level for Miru's own loggers (`app.hononeko.miru`): `TRACE`, `DEBUG`, `INFO`, `WARN` or `ERROR`. |
-| `ROOT_LOG_LEVEL` | `INFO` | Log level for everything else, such as Ktor, HikariCP and Flyway. |
+| `ROOT_LOG_LEVEL` | `INFO` | Log level for everything else, such as Ktor, HikariCP and Flyway. This includes the request log (`io.ktor.server.Application`), which logs passing `GET /readyz` probes at `DEBUG` and failing ones at `INFO`, and leaves out `/healthz`. |
 
 ## Container image
 

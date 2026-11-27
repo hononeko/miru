@@ -452,6 +452,13 @@ class SessionStateEngine(
         }
 
         if (watchedSec < config.minPlayDurationSeconds) {
+            logger.debug(
+                "Not recording a play shorter than the minimum {} {} {} {}",
+                kv("serverId", serverId),
+                kv("watchedSec", watchedSec),
+                kv("minPlayDurationSec", config.minPlayDurationSeconds),
+                kv("completionPercent", completionPercent),
+            )
             return SessionEvent.SessionStopped(
                 serverId = serverId,
                 key = record.key,

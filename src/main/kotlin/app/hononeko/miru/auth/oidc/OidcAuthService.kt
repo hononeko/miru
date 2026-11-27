@@ -136,6 +136,8 @@ class OidcAuthService(
             val role = mapGroupsToRole(enriched.claims.groups).bind()
 
             val (account, emailChanged) = upsertOidcAccount(enriched, role, now).bind()
+            // Evict any cached principal state for this account immediately when OIDC login updates profile/role/email.
+            authService.invalidateAccount(account.id)
             if (account.role != MiruRole.ADMIN.name) {
                 warnIfNoAdmin().bind()
             }

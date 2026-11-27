@@ -61,7 +61,7 @@ data class AuthProvidersInfo(
     val setupRequired: Boolean,
 )
 
-@Suppress("LongParameterList")
+@Suppress("LongParameterList", "TooManyFunctions")
 class AuthService(
     private val accountRepository: AuthAccountRepository,
     private val sessionRepository: AuthSessionRepository,
@@ -75,9 +75,24 @@ class AuthService(
     private val preferencesRepository: UserPreferencesRepository? = null,
     private val emailLinker: EmailMediaUserLinker? = null,
     private val maxConcurrentPasswordHashes: Int = DEFAULT_MAX_CONCURRENT_PASSWORD_HASHES,
+    private val lastSeenTouchThresholdMs: Long = DEFAULT_LAST_SEEN_TOUCH_THRESHOLD_MS,
+    private val principalCacheTtlMs: Long = DEFAULT_PRINCIPAL_CACHE_TTL_MS,
+    private val principalCacheMaxEntries: Int = DEFAULT_PRINCIPAL_CACHE_MAX_ENTRIES,
 ) {
+    private val principalCache =
+        BoundedPrincipalCache(
+            ttlMs = principalCacheTtlMs,
+            maxEntries = principalCacheMaxEntries,
+        )
+
     init {
         require(maxConcurrentPasswordHashes >= 1) { "maxConcurrentPasswordHashes must be >= 1" }
+        require(lastSeenTouchThresholdMs >= 0L) { "lastSeenTouchThresholdMs must be >= 0" }
+        require(principalCacheTtlMs >= 0L) { "principalCacheTtlMs must be >= 0" }
+        require(principalCacheMaxEntries >= 0) { "principalCacheMaxEntries must be >= 0" }
+        emailLinker?.addOnLinksChangedListener { accountId ->
+            invalidateAccount(accountId)
+        }
     }
 
     private val logger = LoggerFactory.getLogger(AuthService::class.java)
@@ -232,6 +247,20 @@ class AuthService(
             issueSession(account, linkedMediaUserIds).bind()
         }
 
+    fun invalidateAccount(accountId: String) {
+        principalCache.invalidateByAccountId(accountId)
+    }
+
+    fun evictExpiredSessions(nowMs: Long = clock()) {
+        principalCache.evictExpired(nowMs)
+    }
+
+    fun invalidateAll() {
+        principalCache.invalidateAll()
+    }
+
+    internal fun principalCacheSize(): Int = principalCache.size()
+
     suspend fun logout(signedToken: String?): Either<MiruError, Unit> =
         either {
             if (signedToken.isNullOrBlank()) {
@@ -241,6 +270,7 @@ class AuthService(
                 TokenCrypto.verifySignedSessionToken(signedToken, authConfig.sessionSecret)
                     ?: return@either
             val tokenHash = TokenCrypto.sha256Hex(rawToken)
+            principalCache.invalidateByKey(CachedCredentialKind.SESSION, tokenHash)
             sessionRepository.deleteByTokenHash(tokenHash).bind()
         }
 
@@ -251,26 +281,74 @@ class AuthService(
                     ?: raise(MiruError.Unauthorized("Invalid session token"))
 
             val tokenHash = TokenCrypto.sha256Hex(rawToken)
-            val session =
-                sessionRepository.findByTokenHash(tokenHash).bind()
+            val now = clock()
+
+            when (
+                val cached =
+                    principalCache.getAndClaimActivityUpdate(
+                        kind = CachedCredentialKind.SESSION,
+                        hash = tokenHash,
+                        nowMs = now,
+                        touchThresholdMs = lastSeenTouchThresholdMs,
+                    )
+            ) {
+                is PrincipalCacheLookup.Hit -> {
+                    if (cached.shouldPersistActivity) {
+                        persistActivityWrite(CachedCredentialKind.SESSION, tokenHash) {
+                            sessionRepository.touchLastSeen(cached.entry.credentialId, now)
+                        }.bind()
+                    }
+                    return@either cached.entry.principal
+                }
+
+                is PrincipalCacheLookup.ExpiredCredential -> {
+                    sessionRepository.deleteByTokenHash(tokenHash).bind()
+                    raise(MiruError.Unauthorized("Session expired"))
+                }
+
+                PrincipalCacheLookup.Miss -> Unit
+            }
+
+            val generation = principalCache.currentGeneration()
+            val context =
+                sessionRepository.findSessionAuthContextByTokenHash(tokenHash).bind()
                     ?: raise(MiruError.Unauthorized("Session not found"))
 
-            val now = clock()
-            if (session.expiresAtMs <= now) {
+            if (context.session.expiresAtMs <= now) {
                 sessionRepository.deleteByTokenHash(tokenHash).bind()
                 raise(MiruError.Unauthorized("Session expired"))
             }
 
-            val account =
-                accountRepository.findById(session.accountId).bind()
-                    ?: raise(MiruError.Unauthorized("Account not found"))
-            ensure(!account.disabled) {
-                MiruError.Unauthorized("Account is disabled")
+            if (context.account.disabled) {
+                principalCache.invalidateByAccountId(context.account.id)
+                raise(MiruError.Unauthorized("Account is disabled"))
             }
 
-            sessionRepository.touchLastSeen(session.id, now).bind()
-            val linkedIds = accountRepository.findLinkedMediaUserIds(account.id).bind()
-            account.toPrincipal(linkedIds, AuthSource.SESSION_COOKIE)
+            val effectiveLastSeenAtMs =
+                if (BoundedPrincipalCache.shouldPersistActivity(context.session.lastSeenAtMs, now, lastSeenTouchThresholdMs)) {
+                    sessionRepository.touchLastSeen(context.session.id, now).bind()
+                    now
+                } else {
+                    context.session.lastSeenAtMs
+                }
+
+            val principal = context.account.toPrincipal(context.linkedMediaUserIds, AuthSource.SESSION_COOKIE)
+            principalCache.putIfGeneration(
+                entry =
+                    CachedAuthEntry(
+                        kind = CachedCredentialKind.SESSION,
+                        credentialHash = tokenHash,
+                        credentialId = context.session.id,
+                        accountId = context.account.id,
+                        principal = principal,
+                        credentialExpiresAtMs = context.session.expiresAtMs,
+                        cachedAtMs = now,
+                        cacheExpiresAtMs = now + principalCacheTtlMs,
+                        lastActivityAtMs = effectiveLastSeenAtMs,
+                    ),
+                expectedGeneration = generation,
+            )
+            principal
         }
 
     suspend fun authenticateApiKey(rawKey: String): Either<MiruError, MiruPrincipal> =
@@ -281,29 +359,59 @@ class AuthService(
             }
 
             val keyHash = TokenCrypto.sha256Hex(trimmed)
-            val record =
-                apiKeyRepository.findByKeyHash(keyHash).bind()
+            val now = clock()
+
+            when (
+                val cached =
+                    principalCache.getAndClaimActivityUpdate(
+                        kind = CachedCredentialKind.API_KEY,
+                        hash = keyHash,
+                        nowMs = now,
+                        touchThresholdMs = lastSeenTouchThresholdMs,
+                    )
+            ) {
+                is PrincipalCacheLookup.Hit -> {
+                    if (cached.shouldPersistActivity) {
+                        persistActivityWrite(CachedCredentialKind.API_KEY, keyHash) {
+                            apiKeyRepository.updateLastUsed(cached.entry.credentialId, now)
+                        }.bind()
+                    }
+                    return@either cached.entry.principal
+                }
+
+                is PrincipalCacheLookup.ExpiredCredential -> {
+                    raise(MiruError.Unauthorized("API key has expired"))
+                }
+
+                PrincipalCacheLookup.Miss -> Unit
+            }
+
+            val generation = principalCache.currentGeneration()
+            val context =
+                apiKeyRepository.findApiKeyAuthContextByKeyHash(keyHash).bind()
                     ?: raise(MiruError.Unauthorized("Invalid API key"))
 
-            val now = clock()
-            ensure(record.revokedAtMs == null) {
+            ensure(context.apiKey.revokedAtMs == null) {
                 MiruError.Unauthorized("API key has been revoked")
             }
-            ensure(record.expiresAtMs == null || record.expiresAtMs > now) {
+            ensure(context.apiKey.expiresAtMs == null || context.apiKey.expiresAtMs > now) {
                 MiruError.Unauthorized("API key has expired")
             }
-
-            val account =
-                accountRepository.findById(record.accountId).bind()
-                    ?: raise(MiruError.Unauthorized("Account not found"))
-            ensure(!account.disabled) {
-                MiruError.Unauthorized("Account is disabled")
+            if (context.account.disabled) {
+                principalCache.invalidateByAccountId(context.account.id)
+                raise(MiruError.Unauthorized("Account is disabled"))
             }
 
-            apiKeyRepository.updateLastUsed(record.id, now).bind()
-            val linkedIds = accountRepository.findLinkedMediaUserIds(account.id).bind()
-            val accountRole = parseRole(account.role)
-            val keyRole = parseRole(record.role)
+            val effectiveLastUsedAtMs =
+                if (BoundedPrincipalCache.shouldPersistActivity(context.apiKey.lastUsedAtMs, now, lastSeenTouchThresholdMs)) {
+                    apiKeyRepository.updateLastUsed(context.apiKey.id, now).bind()
+                    now
+                } else {
+                    context.apiKey.lastUsedAtMs
+                }
+
+            val accountRole = parseRole(context.account.role)
+            val keyRole = parseRole(context.apiKey.role)
             val effectiveRole =
                 if (accountRole == MiruRole.USER) {
                     MiruRole.USER
@@ -311,15 +419,50 @@ class AuthService(
                     keyRole
                 }
 
-            MiruPrincipal(
-                accountId = account.id,
-                username = account.username,
-                email = account.email,
-                role = effectiveRole,
-                linkedMediaUserIds = linkedIds,
-                authSource = AuthSource.API_KEY,
-                authProvider = account.authProvider,
+            val principal =
+                MiruPrincipal(
+                    accountId = context.account.id,
+                    username = context.account.username,
+                    email = context.account.email,
+                    role = effectiveRole,
+                    linkedMediaUserIds = context.linkedMediaUserIds,
+                    authSource = AuthSource.API_KEY,
+                    authProvider = context.account.authProvider,
+                )
+            principalCache.putIfGeneration(
+                entry =
+                    CachedAuthEntry(
+                        kind = CachedCredentialKind.API_KEY,
+                        credentialHash = keyHash,
+                        credentialId = context.apiKey.id,
+                        accountId = context.account.id,
+                        principal = principal,
+                        credentialExpiresAtMs = context.apiKey.expiresAtMs,
+                        cachedAtMs = now,
+                        cacheExpiresAtMs = now + principalCacheTtlMs,
+                        lastActivityAtMs = effectiveLastUsedAtMs,
+                    ),
+                expectedGeneration = generation,
             )
+            principal
+        }
+
+    private suspend inline fun persistActivityWrite(
+        kind: CachedCredentialKind,
+        hash: String,
+        crossinline block: suspend () -> Either<MiruError.PersistenceError, Boolean>,
+    ): Either<MiruError.PersistenceError, Unit> =
+        when (val result = block()) {
+            is Either.Left -> {
+                principalCache.invalidateByKey(kind, hash)
+                result
+            }
+            is Either.Right -> {
+                if (!result.value) {
+                    principalCache.invalidateByKey(kind, hash)
+                }
+                Either.Right(Unit)
+            }
         }
 
     suspend fun resolveAvatarUrl(principal: MiruPrincipal): Either<MiruError, String?> =
@@ -430,6 +573,7 @@ class AuthService(
                     ?: raise(MiruError.NotFound(resource = "Account", id = account.id))
 
             sessionRepository.deleteByAccountId(account.id).bind()
+            principalCache.invalidateSessionsByAccountId(account.id)
             logger.info("Password changed for local account '{}'", updated.username)
 
             if (principal.authSource == AuthSource.SESSION_COOKIE) {
@@ -533,6 +677,7 @@ class AuthService(
             if (nextDisabled || roleDowngraded || newPasswordHash != null) {
                 sessionRepository.deleteByAccountId(id).bind()
             }
+            principalCache.invalidateByAccountId(id)
 
             val links = accountRepository.findLinkedMediaUserIds(id).bind()
             AccountWithLinks(account = updated, linkedMediaUserIds = links)
@@ -559,6 +704,7 @@ class AuthService(
             ensure(deleted) {
                 MiruError.NotFound(resource = "Account", id = id)
             }
+            principalCache.invalidateByAccountId(id)
         }
 
     /**
@@ -578,6 +724,7 @@ class AuthService(
             val now = clock()
             val manual = MediaUserLinkMode.MANUAL.name
             replaceLinksOrConflict(accountId, normalizedLinks, now, linkMode = manual).bind()
+            principalCache.invalidateByAccountId(accountId)
             AccountWithLinks(
                 account = account.copy(mediaUserLinkMode = manual, updatedAtMs = now),
                 linkedMediaUserIds = normalizedLinks,
@@ -603,6 +750,7 @@ class AuthService(
             val updated =
                 accountRepository.updateMediaUserLinkMode(accountId, mode.name, clock()).bind()
                     ?: raise(MiruError.NotFound(resource = "Account", id = accountId))
+            principalCache.invalidateByAccountId(accountId)
             val links =
                 if (mode == MediaUserLinkMode.AUTO && emailLinker != null) {
                     emailLinker.relink(updated).bind()
@@ -688,6 +836,7 @@ class AuthService(
             val existing =
                 apiKeyRepository.findById(id).bind()
                     ?: raise(MiruError.NotFound(resource = "ApiKey", id = id))
+            principalCache.invalidateByKey(CachedCredentialKind.API_KEY, existing.keyHash)
             if (existing.revokedAtMs == null) {
                 apiKeyRepository.revoke(id, clock()).bind()
             }
@@ -987,6 +1136,9 @@ class AuthService(
         private const val DAYS_90 = 90L
         private const val DAYS_365 = 365L
         const val DEFAULT_SESSION_TTL_MS = 7L * 24L * 60L * 60L * 1000L
+        const val DEFAULT_LAST_SEEN_TOUCH_THRESHOLD_MS = 60_000L
+        const val DEFAULT_PRINCIPAL_CACHE_TTL_MS = 15_000L
+        const val DEFAULT_PRINCIPAL_CACHE_MAX_ENTRIES = 1_024
         const val DEFAULT_THEME = "system"
         const val DEFAULT_TIME_FORMAT = "24h"
         const val DEFAULT_DATE_FORMAT = "iso"

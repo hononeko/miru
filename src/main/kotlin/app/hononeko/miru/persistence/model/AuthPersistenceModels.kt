@@ -67,3 +67,15 @@ data class UserPreferencesRecord(
     val analyticsMetric: String = "plays",
     val updatedAtMs: Long,
 )
+
+data class SessionAuthContext(
+    val session: AuthSessionRecord,
+    val account: AuthAccountRecord,
+    val linkedMediaUserIds: Set<String>,
+)
+
+data class ApiKeyAuthContext(
+    val apiKey: ApiKeyRecord,
+    val account: AuthAccountRecord,
+    val linkedMediaUserIds: Set<String>,
+)

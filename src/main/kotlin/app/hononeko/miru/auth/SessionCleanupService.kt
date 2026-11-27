@@ -26,6 +26,7 @@ class SessionCleanupService(
         CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("auth-session-cleanup")),
     private val cleanupInterval: Duration = DEFAULT_CLEANUP_INTERVAL,
     private val clock: () -> Long = System::currentTimeMillis,
+    private val onExpiredCleaned: (Long) -> Unit = {},
 ) : RealtimeLifecycle {
     init {
         require(cleanupInterval.isPositive()) { "cleanupInterval must be positive" }
@@ -50,8 +51,12 @@ class SessionCleanupService(
         current?.cancelAndJoin()
     }
 
-    suspend fun cleanupOnce(): Either<MiruError.PersistenceError, Int> =
-        sessionRepository.deleteExpired(clock())
+    suspend fun cleanupOnce(): Either<MiruError.PersistenceError, Int> {
+        val nowMs = clock()
+        return sessionRepository.deleteExpired(nowMs).onRight {
+            onExpiredCleaned(nowMs)
+        }
+    }
 
     private suspend fun runLoop() {
         runSafeCleanup("startup session cleanup")

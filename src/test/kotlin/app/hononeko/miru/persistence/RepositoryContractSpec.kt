@@ -153,7 +153,9 @@ fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
         authAccountLifecycleTests { ctx }
         authAccountLinkModeTests { ctx }
         authSessionTests { ctx }
+        authSessionContextTests { ctx }
         apiKeyTests { ctx }
+        apiKeyContextTests { ctx }
         userPreferencesTests { ctx }
         historyAndStatsServiceTests { ctx }
         advancedAnalyticsServiceTests { ctx }
@@ -2240,6 +2242,113 @@ private fun FunSpecRootScope.authSessionTests(ctxProvider: () -> ContractContext
     }
 }
 
+private fun FunSpecRootScope.authSessionContextTests(ctxProvider: () -> ContractContext) {
+    context("AuthSessionRepository consolidated context") {
+        test("findSessionAuthContextByTokenHash loads session, account, and linked media users in one query") {
+            val ctx = ctxProvider()
+            ctx.authSessions.findSessionAuthContextByTokenHash("missing-tok-hash").shouldBeRight().shouldBeNull()
+
+            ctx.servers
+                .upsert(
+                    MediaServerRecord(
+                        id = "srv-ctx-sess",
+                        name = "Ctx Plex",
+                        serverType = "PLEX",
+                        machineId = "mach-ctx-sess",
+                        baseUrl = "http://plex.ctx:32400",
+                        createdAtMs = 1_000L,
+                        updatedAtMs = 1_000L,
+                    ),
+                ).shouldBeRight()
+            ctx.users
+                .upsert(
+                    UserRecord(
+                        id = "mu-ctx-b",
+                        serverId = "srv-ctx-sess",
+                        externalUserId = "ext-b",
+                        username = "userb",
+                        createdAtMs = 1_000L,
+                        updatedAtMs = 1_000L,
+                    ),
+                ).shouldBeRight()
+            ctx.users
+                .upsert(
+                    UserRecord(
+                        id = "mu-ctx-a",
+                        serverId = "srv-ctx-sess",
+                        externalUserId = "ext-a",
+                        username = "usera",
+                        createdAtMs = 1_000L,
+                        updatedAtMs = 1_000L,
+                    ),
+                ).shouldBeRight()
+
+            val noLinksAccount =
+                AuthAccountRecord(
+                    id = "acc-ctx-nolinks",
+                    username = "ctxnolinks",
+                    usernameNormalized = "ctxnolinks",
+                    passwordHash = "hash-1",
+                    role = "USER",
+                    disabled = false,
+                    createdAtMs = 1_000L,
+                    updatedAtMs = 1_000L,
+                )
+            val withLinksAccount =
+                AuthAccountRecord(
+                    id = "acc-ctx-links",
+                    username = "ctxlinks",
+                    usernameNormalized = "ctxlinks",
+                    email = "ctx@miru.local",
+                    passwordHash = "hash-2",
+                    role = "ADMIN",
+                    disabled = true,
+                    authProvider = "OIDC",
+                    externalSubject = "oidc-sub-ctx",
+                    mediaUserLinkMode = "AUTO",
+                    roleMode = "AUTO",
+                    emailVerified = true,
+                    createdAtMs = 2_000L,
+                    updatedAtMs = 2_500L,
+                )
+            ctx.authAccounts.insert(noLinksAccount).shouldBeRight()
+            ctx.authAccounts.insert(withLinksAccount).shouldBeRight()
+            ctx.authAccounts.replaceLinkedMediaUserIds("acc-ctx-links", setOf("mu-ctx-b", "mu-ctx-a"), 3_000L).shouldBeRight()
+
+            val sessNoLinks =
+                AuthSessionRecord(
+                    id = "sess-ctx-1",
+                    accountId = "acc-ctx-nolinks",
+                    tokenHash = "tok-ctx-1",
+                    createdAtMs = 4_000L,
+                    expiresAtMs = 50_000L,
+                    lastSeenAtMs = 4_500L,
+                )
+            val sessWithLinks =
+                AuthSessionRecord(
+                    id = "sess-ctx-2",
+                    accountId = "acc-ctx-links",
+                    tokenHash = "tok-ctx-2",
+                    createdAtMs = 5_000L,
+                    expiresAtMs = 60_000L,
+                    lastSeenAtMs = 5_500L,
+                )
+            ctx.authSessions.insert(sessNoLinks).shouldBeRight()
+            ctx.authSessions.insert(sessWithLinks).shouldBeRight()
+
+            val noLinksContext = ctx.authSessions.findSessionAuthContextByTokenHash("tok-ctx-1").shouldBeRight().shouldNotBeNull()
+            noLinksContext.session shouldBe sessNoLinks
+            noLinksContext.account shouldBe noLinksAccount
+            noLinksContext.linkedMediaUserIds shouldBe emptySet()
+
+            val withLinksContext = ctx.authSessions.findSessionAuthContextByTokenHash("tok-ctx-2").shouldBeRight().shouldNotBeNull()
+            withLinksContext.session shouldBe sessWithLinks
+            withLinksContext.account shouldBe withLinksAccount
+            withLinksContext.linkedMediaUserIds shouldContainExactly listOf("mu-ctx-a", "mu-ctx-b")
+        }
+    }
+}
+
 private fun FunSpecRootScope.apiKeyTests(ctxProvider: () -> ContractContext) {
     context("ApiKeyRepository") {
         test("persists API keys, updates lastUsed, revokes, deletes, and cascades on account delete") {
@@ -2309,6 +2418,115 @@ private fun FunSpecRootScope.apiKeyTests(ctxProvider: () -> ContractContext) {
 
             ctx.authAccounts.delete("acc-k2").shouldBeRight() shouldBe true
             ctx.apiKeys.findById("key-2").shouldBeRight().shouldBeNull()
+        }
+    }
+}
+
+private fun FunSpecRootScope.apiKeyContextTests(ctxProvider: () -> ContractContext) {
+    context("ApiKeyRepository consolidated context") {
+        test("findApiKeyAuthContextByKeyHash loads api key, account, and linked media users in one query") {
+            val ctx = ctxProvider()
+            ctx.apiKeys.findApiKeyAuthContextByKeyHash("missing-key-hash").shouldBeRight().shouldBeNull()
+
+            ctx.servers
+                .upsert(
+                    MediaServerRecord(
+                        id = "srv-ctx-key",
+                        name = "Ctx Key Plex",
+                        serverType = "PLEX",
+                        machineId = "mach-ctx-key",
+                        baseUrl = "http://plex.ctxkey:32400",
+                        createdAtMs = 1_000L,
+                        updatedAtMs = 1_000L,
+                    ),
+                ).shouldBeRight()
+            ctx.users
+                .upsert(
+                    UserRecord(
+                        id = "mu-key-2",
+                        serverId = "srv-ctx-key",
+                        externalUserId = "ext-k2",
+                        username = "kuser2",
+                        createdAtMs = 1_000L,
+                        updatedAtMs = 1_000L,
+                    ),
+                ).shouldBeRight()
+            ctx.users
+                .upsert(
+                    UserRecord(
+                        id = "mu-key-1",
+                        serverId = "srv-ctx-key",
+                        externalUserId = "ext-k1",
+                        username = "kuser1",
+                        createdAtMs = 1_000L,
+                        updatedAtMs = 1_000L,
+                    ),
+                ).shouldBeRight()
+
+            val accNoLinks =
+                AuthAccountRecord(
+                    id = "acc-key-ctx-1",
+                    username = "keyctx1",
+                    usernameNormalized = "keyctx1",
+                    passwordHash = "hash-k1",
+                    role = "USER",
+                    createdAtMs = 1_000L,
+                    updatedAtMs = 1_000L,
+                )
+            val accWithLinks =
+                AuthAccountRecord(
+                    id = "acc-key-ctx-2",
+                    username = "keyctx2",
+                    usernameNormalized = "keyctx2",
+                    email = "keyctx2@miru.local",
+                    passwordHash = "hash-k2",
+                    role = "ADMIN",
+                    disabled = false,
+                    createdAtMs = 2_000L,
+                    updatedAtMs = 2_000L,
+                )
+            ctx.authAccounts.insert(accNoLinks).shouldBeRight()
+            ctx.authAccounts.insert(accWithLinks).shouldBeRight()
+            ctx.authAccounts.replaceLinkedMediaUserIds("acc-key-ctx-2", setOf("mu-key-2", "mu-key-1"), 3_000L).shouldBeRight()
+
+            val key1 =
+                ApiKeyRecord(
+                    id = "key-ctx-1",
+                    accountId = "acc-key-ctx-1",
+                    name = "Key No Links",
+                    keyPrefix = "miru_nolink1",
+                    keyHash = "key-ctx-hash-1",
+                    role = "USER",
+                    lastUsedAtMs = null,
+                    expiresAtMs = null,
+                    revokedAtMs = null,
+                    createdAtMs = 3_500L,
+                )
+            val key2 =
+                ApiKeyRecord(
+                    id = "key-ctx-2",
+                    accountId = "acc-key-ctx-2",
+                    name = "Key With Links",
+                    keyPrefix = "miru_wlink22",
+                    keyHash = "key-ctx-hash-2",
+                    role = "ADMIN",
+                    lastUsedAtMs = 4_000L,
+                    expiresAtMs = 80_000L,
+                    revokedAtMs = 70_000L,
+                    createdAtMs = 3_800L,
+                )
+            ctx.apiKeys.insert(key1).shouldBeRight()
+            ctx.apiKeys.insert(key2).shouldBeRight()
+
+            val ctx1 = ctx.apiKeys.findApiKeyAuthContextByKeyHash("key-ctx-hash-1").shouldBeRight().shouldNotBeNull()
+            ctx1.apiKey shouldBe key1
+            ctx1.account shouldBe accNoLinks
+            ctx1.linkedMediaUserIds shouldBe emptySet()
+
+            val ctx2 = ctx.apiKeys.findApiKeyAuthContextByKeyHash("key-ctx-hash-2").shouldBeRight().shouldNotBeNull()
+            ctx2.apiKey shouldBe key2
+            ctx2.account shouldBe accWithLinks
+            ctx2.linkedMediaUserIds shouldContainExactly listOf("mu-key-1", "mu-key-2")
         }
     }
 }

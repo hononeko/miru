@@ -10,6 +10,7 @@ import app.hononeko.miru.persistence.repository.UserRepository
 import arrow.core.Either
 import arrow.core.raise.either
 import org.slf4j.LoggerFactory
+import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * Links SSO accounts in [MediaUserLinkMode.AUTO] to the media users that share their verified email.
@@ -27,8 +28,14 @@ class EmailMediaUserLinker(
     private val userRepository: UserRepository,
     private val authConfig: AuthConfig,
     private val clock: () -> Long = { System.currentTimeMillis() },
+    private val onAccountLinksChanged: ((String) -> Unit)? = null,
 ) {
     private val logger = LoggerFactory.getLogger(EmailMediaUserLinker::class.java)
+    private val linksChangedListeners = CopyOnWriteArrayList<(String) -> Unit>()
+
+    fun addOnLinksChangedListener(listener: (String) -> Unit) {
+        linksChangedListeners.add(listener)
+    }
 
     /** Whether email linking is on: SSO enabled and OIDC_AUTO_LINK_BY_EMAIL true. */
     val enabled: Boolean
@@ -79,6 +86,8 @@ class EmailMediaUserLinker(
             }
             allLinks.entries.removeAll { it.value == account.id }
             expected.forEach { allLinks[it] = account.id }
+            onAccountLinksChanged?.invoke(account.id)
+            linksChangedListeners.forEach { listener -> listener(account.id) }
             logger.info("Updated email-linked media users for SSO account '{}' ({} linked)", account.username, expected.size)
             LinkResult(expected, changed = true)
         }

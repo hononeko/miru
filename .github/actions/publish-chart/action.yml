@@ -1,0 +1,94 @@
+name: Publish Helm chart
+description: >-
+  Packages charts/miru as one version, with appVersion and image.tag set to it so that the chart runs the Miru image of
+  the same version, pushes it to oci://ghcr.io/<owner>/charts/miru and attests its provenance. main.yml publishes each
+  release candidate (X.Y.Z-rc.N) and cd.yml each release (X.Y.Z). Needs a checkout and the `packages: write`,
+  `attestations: write` and `id-token: write` permissions.
+
+inputs:
+  version:
+    description: Version of the chart and of the image it runs, e.g. 1.2.0 or 1.2.0-rc.3
+    required: true
+  dry-run:
+    description: '"true" to package and check the chart without pushing it'
+    required: false
+    default: "false"
+  token:
+    description: 'Token with the `packages: write` permission on the chart package'
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  path:
+    description: Path of the packaged chart (miru-<version>.tgz)
+    value: ${{ steps.package.outputs.path }}
+  digest:
+    description: Digest of the pushed chart; empty in a dry run
+    value: ${{ steps.push.outputs.digest }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Helm
+      uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+      with:
+        version: "v4.3.2"
+
+    # The chart in the repository has placeholder versions (0.0.0 and edge). They are stamped in a copy, so that the
+    # checkout stays as it is, and the rendered Deployment is checked to run the image of this version.
+    - name: Package Helm chart
+      id: package
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        IMAGE: ghcr.io/${{ github.repository_owner }}/miru
+      run: |
+        set -euo pipefail
+        src="$RUNNER_TEMP/chart-src/miru"
+        mkdir -p "$(dirname "$src")"
+        rm -rf "$src"
+        cp -R charts/miru "$src"
+        sed -i -E '/^image:/,/^[^[:space:]#]/ s/^  tag: .*/  tag: "'"$VERSION"'"/' "$src/values.yaml"
+        default_image=$(helm template miru "$src" --set auth.mode=none --show-only templates/deployment.yaml \
+          | sed -n -E 's/^ +image: "(.*)"$/\1/p')
+        if [ "$default_image" != "$IMAGE:$VERSION" ]; then
+          echo "::error::The chart's default image is '$default_image', not '$IMAGE:$VERSION'"
+          exit 1
+        fi
+        helm package "$src" --version "$VERSION" --app-version "$VERSION" --destination "$RUNNER_TEMP/chart"
+        echo "path=$RUNNER_TEMP/chart/miru-$VERSION.tgz" >> "$GITHUB_OUTPUT"
+
+    - name: Push Helm chart
+      id: push
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        DRY_RUN: ${{ inputs.dry-run }}
+        CHART: ${{ steps.package.outputs.path }}
+        REGISTRY_TOKEN: ${{ inputs.token }}
+        REPO: oci://ghcr.io/${{ github.repository_owner }}/charts
+      run: |
+        set -euo pipefail
+        if [ "$DRY_RUN" = "true" ]; then
+          echo "Dry run: would push $CHART to $REPO"
+          echo "Dry run: would push the chart \`miru-$VERSION.tgz\` to \`$REPO\`" >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
+        echo "$REGISTRY_TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+        helm push "$CHART" "$REPO" | tee "$RUNNER_TEMP/chart-push.txt"
+        digest=$(sed -n 's/^Digest: //p' "$RUNNER_TEMP/chart-push.txt")
+        if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+          echo "::error::helm push did not report the digest of $REPO/miru:$VERSION"
+          exit 1
+        fi
+        echo "digest=$digest" >> "$GITHUB_OUTPUT"
+        echo "Pushed the chart \`$REPO/miru:$VERSION\` (\`$digest\`)" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Attest Helm chart provenance
+      if: inputs.dry-run != 'true'
+      uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+      with:
+        subject-name: ghcr.io/${{ github.repository_owner }}/charts/miru
+        subject-digest: ${{ steps.push.outputs.digest }}
+        push-to-registry: true
+        github-token: ${{ inputs.token }}

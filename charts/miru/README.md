@@ -31,6 +31,8 @@ Each Miru release publishes the chart with the same version, and the chart's def
 
 Installing from a checkout (`helm install miru ./charts/miru ...`) runs the `edge` image, the latest build of `main`, to match the chart on `main`.
 
+Each push to `main` with something to release also publishes a release candidate chart, `X.Y.Z-rc.N`, which runs the release candidate image of the same version. Helm installs one only when you ask for it, with `--version 1.3.0-rc.4` or `--devel` for the newest; a plain `helm install` or `helm upgrade` stays on releases. The release `X.Y.Z` deletes its release candidate charts and images, so pin a release rather than a release candidate in anything that has to keep working.
+
 The image version is `image.tag` in the chart's values: `helm show values oci://ghcr.io/hononeko/charts/miru --version 1.3.0` shows `tag: "1.3.0"` (charts before 1.3.0 show `tag: ""`, which runs the chart's own version). Set it in your values to run another Miru version with the same chart, for example `edge` or an older release:
 
 ```yaml

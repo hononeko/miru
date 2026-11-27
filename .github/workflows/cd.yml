@@ -2,8 +2,9 @@ name: Continuous Delivery & Release
 
 # Promotes the release candidate published by main.yml for this commit to the stable version: publishes its tested
 # layers as X.Y.Z and `latest`, publishes the Helm chart X.Y.Z (whose default image is X.Y.Z) to
-# oci://ghcr.io/<owner>/charts/miru, creates the GitHub Release with the packaged chart, and prunes old RCs. The image
-# has a config of its own, as the release candidate reports X.Y.Z-rc.N as its version.
+# oci://ghcr.io/<owner>/charts/miru, creates the GitHub Release with the packaged chart, and prunes the release
+# candidate images and charts it replaces. The image has a config of its own, as the release candidate reports
+# X.Y.Z-rc.N as its version.
 on:
   workflow_dispatch:
     inputs:
@@ -152,63 +153,22 @@ jobs:
           done
           echo "Tagged \`$DIGEST\` as \`$VERSION\` and \`latest\`" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Set up Helm
-        uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
-        with:
-          version: "v4.3.2"
-
-      # The chart in the repository has placeholder versions; the release stamps them, and image.tag in values.yaml,
-      # so the chart's default image, as `helm show values` shows it, is the image promoted above.
-      - name: Package Helm chart
-        run: |
-          set -euo pipefail
-          sed -i -E '/^image:/,/^[^[:space:]#]/ s/^  tag: .*/  tag: "'"$VERSION"'"/' charts/miru/values.yaml
-          default_image=$(helm template miru charts/miru --set auth.mode=none --show-only templates/deployment.yaml \
-            | sed -n -E 's/^ +image: "(.*)"$/\1/p')
-          if [ "$default_image" != "$IMAGE:$VERSION" ]; then
-            echo "::error::The chart's default image is '$default_image', not '$IMAGE:$VERSION'"
-            exit 1
-          fi
-          helm package charts/miru --version "$VERSION" --app-version "$VERSION" --destination "$RUNNER_TEMP/chart"
-
+      # Its default image, as `helm show values` shows it, is the image promoted above.
       - name: Publish Helm chart
         id: chart
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          chart="$RUNNER_TEMP/chart/miru-$VERSION.tgz"
-          repo="oci://$REGISTRY/$GITHUB_REPOSITORY_OWNER/charts"
-          if [ "$DRY_RUN" = "true" ]; then
-            echo "Dry run: would push $chart to $repo"
-            echo "Dry run: would push the chart \`miru-$VERSION.tgz\` to \`$repo\`" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          echo "$GH_TOKEN" | helm registry login "$REGISTRY" --username "$GITHUB_ACTOR" --password-stdin
-          helm push "$chart" "$repo" | tee "$RUNNER_TEMP/chart-push.txt"
-          digest=$(sed -n 's/^Digest: //p' "$RUNNER_TEMP/chart-push.txt")
-          if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "::error::helm push did not report the digest of $repo/miru:$VERSION"
-            exit 1
-          fi
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
-          echo "Pushed the chart \`$repo/miru:$VERSION\` (\`$digest\`)" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Attest Helm chart provenance
-        if: ${{ !inputs.dry_run }}
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        uses: ./.github/actions/publish-chart
         with:
-          subject-name: ${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/miru
-          subject-digest: ${{ steps.chart.outputs.digest }}
-          push-to-registry: true
+          version: ${{ env.VERSION }}
+          dry-run: ${{ inputs.dry_run }}
 
       - name: Tag & create GitHub Release
         if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ github.token }}
+          CHART: ${{ steps.chart.outputs.path }}
         run: |
           gh release create "$VERSION_TAG" --target "$GITHUB_SHA" --title "$VERSION_TAG" --notes-file release-notes.md \
-            "$RUNNER_TEMP/chart/miru-$VERSION.tgz"
+            "$CHART"
 
   prune:
     name: Prune Release Candidates
@@ -243,5 +203,41 @@ jobs:
           package: miru
           use-regex: true
           delete-tags: ${{ steps.select.outputs.pattern }}
+          validate: true
+          dry-run: ${{ inputs.dry_run }}
+
+      # Release candidate charts have no commit tag, so they are selected by version: every X.Y.Z-rc.N up to this
+      # release. An RC of a lower version comes from a commit before a later commit raised the bump; a higher one, from
+      # a commit merged after this release started, is kept.
+      - name: Select release candidate charts
+        id: select-charts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          tags=$(gh api --paginate "orgs/$GITHUB_REPOSITORY_OWNER/packages/container/charts%2Fmiru/versions" \
+            --jq '.[].metadata.container.tags[]')
+          selected=()
+          while read -r tag; do
+            [[ "$tag" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-rc\.[0-9]+$ ]] || continue
+            if [ "$(printf '%s\n' "${BASH_REMATCH[1]}" "$VERSION" | sort -V | tail -n 1)" = "$VERSION" ]; then
+              selected+=("${tag//./\\.}")
+            fi
+          done <<< "$tags"
+          pattern=""
+          if [ "${#selected[@]}" -gt 0 ]; then pattern="^($(IFS='|'; echo "${selected[*]}"))$"; fi
+          echo "pattern=$pattern" >> "$GITHUB_OUTPUT"
+          echo "Pruning charts matching: ${pattern:-nothing}"
+
+      # Skipped when nothing matches: without delete-tags, the action would delete every untagged image, among them
+      # the attestations of the released charts.
+      - name: Prune release candidate charts
+        if: steps.select-charts.outputs.pattern != ''
+        uses: dataaxiom/ghcr-cleanup-action@ac45a8c04b1eb4b27974ca79a0a74f344c93664b # v1.3.0
+        with:
+          package: charts/miru
+          use-regex: true
+          delete-tags: ${{ steps.select-charts.outputs.pattern }}
           validate: true
           dry-run: ${{ inputs.dry_run }}

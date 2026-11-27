@@ -20,9 +20,30 @@ class DatabaseHandle(
     val dataSource: HikariDataSource,
     val database: Database,
     val dialect: DatabaseDialect,
+    val readDataSource: HikariDataSource = dataSource,
+    val readDatabase: Database = database,
 ) : AutoCloseable {
     override fun close() {
-        dataSource.close()
+        var firstError: Throwable? = null
+        if (readDataSource !== dataSource) {
+            try {
+                readDataSource.close()
+            } catch (ex: Throwable) {
+                firstError = ex
+            }
+        }
+        try {
+            dataSource.close()
+        } catch (ex: Throwable) {
+            if (firstError == null) {
+                firstError = ex
+            } else {
+                firstError.addSuppressed(ex)
+            }
+        }
+        if (firstError != null) {
+            throw firstError
+        }
     }
 }
 
@@ -32,9 +53,11 @@ object DatabaseFactory {
     private const val SQLITE_LOCATION = "classpath:db/migration/sqlite"
     private const val POSTGRES_LOCATION = "classpath:db/migration/postgres"
     private const val SQLITE_INIT_SQL = "PRAGMA foreign_keys = ON;"
+    private const val SQLITE_READ_INIT_SQL = "PRAGMA query_only = ON; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;"
 
     fun createAndMigrate(config: DatabaseConfig): Either<MiruError.PersistenceError, DatabaseHandle> {
         var dataSource: HikariDataSource? = null
+        var readDataSource: HikariDataSource? = null
         return try {
             val dialect =
                 when (config) {
@@ -61,11 +84,24 @@ object DatabaseFactory {
                     .migrate()
 
             val database = Database.connect(datasource = dataSource)
+            val separateReadPool = config is DatabaseConfig.Sqlite && !isInMemorySqlite(config.path)
+            val resolvedReadDataSource: HikariDataSource
+            val resolvedReadDatabase: Database
+            if (separateReadPool) {
+                val reader = HikariDataSource(buildSqliteReadHikariConfig(config))
+                readDataSource = reader
+                resolvedReadDataSource = reader
+                resolvedReadDatabase = Database.connect(datasource = reader)
+            } else {
+                resolvedReadDataSource = dataSource
+                resolvedReadDatabase = database
+            }
 
             logger.info(
-                "Database initialized (dialect={}, migrationsExecuted={})",
+                "Database initialized (dialect={}, migrationsExecuted={}, readPoolSize={})",
                 dialect,
                 result.migrationsExecuted,
+                if (separateReadPool) resolvedReadDataSource.maximumPoolSize else dataSource.maximumPoolSize,
             )
 
             Either.Right(
@@ -73,9 +109,14 @@ object DatabaseFactory {
                     dataSource = dataSource,
                     database = database,
                     dialect = dialect,
+                    readDataSource = resolvedReadDataSource,
+                    readDatabase = resolvedReadDatabase,
                 ),
             )
         } catch (ex: Exception) {
+            if (readDataSource != null && readDataSource !== dataSource) {
+                runCatching { readDataSource.close() }
+            }
             runCatching { dataSource?.close() }
             val secretToRedact = (config as? DatabaseConfig.Postgres)?.password
             val sanitizedMessage = sanitizeErrorMessage(ex.message, secretToRedact)
@@ -93,6 +134,7 @@ object DatabaseFactory {
         when (config) {
             is DatabaseConfig.Sqlite -> {
                 require(config.path.isNotBlank()) { "SQLite path must not be blank" }
+                require(config.readPoolSize >= 1) { "SQLite read pool size must be >= 1" }
                 ensureSqliteParentDirectory(config.path)
                 HikariConfig().apply {
                     poolName = "miru-sqlite"
@@ -119,10 +161,28 @@ object DatabaseFactory {
             }
         }
 
+    private fun buildSqliteReadHikariConfig(config: DatabaseConfig.Sqlite): HikariConfig =
+        HikariConfig().apply {
+            poolName = "miru-sqlite-reader"
+            driverClassName = "org.sqlite.JDBC"
+            jdbcUrl = "jdbc:sqlite:${config.path}"
+            maximumPoolSize = config.readPoolSize
+            connectionInitSql = SQLITE_READ_INIT_SQL
+            addDataSourceProperty("busy_timeout", "5000")
+            addDataSourceProperty("foreign_keys", "true")
+        }
+
+    internal fun isInMemorySqlite(path: String): Boolean {
+        val normalized = path.trim().lowercase()
+        return normalized == ":memory:" ||
+            (normalized.startsWith("file:") && (normalized.contains("mode=memory") || normalized.contains(":memory:")))
+    }
+
     private fun ensureSqliteParentDirectory(path: String) {
-        if (path != ":memory:" && !path.startsWith("file:")) {
+        val trimmed = path.trim()
+        if (!isInMemorySqlite(trimmed) && !trimmed.lowercase().startsWith("file:")) {
             Path
-                .of(path)
+                .of(trimmed)
                 .toAbsolutePath()
                 .normalize()
                 .parent

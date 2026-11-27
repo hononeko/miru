@@ -3,6 +3,7 @@ package app.hononeko.miru.persistence.repository
 import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.persistence.DatabaseHandle
 import app.hononeko.miru.persistence.exposedQuery
+import app.hononeko.miru.persistence.exposedReadQuery
 import app.hononeko.miru.persistence.model.ApiKeyRecord
 import app.hononeko.miru.persistence.model.AuthAccountRecord
 import app.hononeko.miru.persistence.model.AuthSessionRecord
@@ -160,8 +161,12 @@ interface UserPreferencesRepository {
 
 class ExposedAuthAccountRepository(
     private val database: Database,
+    private val readDatabase: Database = database,
 ) : AuthAccountRepository {
-    constructor(handle: DatabaseHandle) : this(handle.database)
+    constructor(handle: DatabaseHandle) : this(
+        database = handle.database,
+        readDatabase = handle.readDatabase,
+    )
 
     override suspend fun insert(account: AuthAccountRecord): Either<MiruError.PersistenceError, AuthAccountRecord> =
         database.exposedQuery("auth_account_insert") {
@@ -185,7 +190,7 @@ class ExposedAuthAccountRepository(
         }
 
     override suspend fun findById(id: String): Either<MiruError.PersistenceError, AuthAccountRecord?> =
-        database.exposedQuery("auth_account_find_by_id") {
+        readDatabase.exposedReadQuery("auth_account_find_by_id") {
             AuthAccountsTable
                 .selectAll()
                 .where { AuthAccountsTable.id eq id }
@@ -196,7 +201,7 @@ class ExposedAuthAccountRepository(
     override suspend fun findByNormalizedUsername(
         usernameNormalized: String,
     ): Either<MiruError.PersistenceError, AuthAccountRecord?> =
-        database.exposedQuery("auth_account_find_by_username") {
+        readDatabase.exposedReadQuery("auth_account_find_by_username") {
             AuthAccountsTable
                 .selectAll()
                 .where { AuthAccountsTable.usernameNormalized eq usernameNormalized }
@@ -208,7 +213,7 @@ class ExposedAuthAccountRepository(
         authProvider: String,
         externalSubject: String,
     ): Either<MiruError.PersistenceError, AuthAccountRecord?> =
-        database.exposedQuery("auth_account_find_by_provider_subject") {
+        readDatabase.exposedReadQuery("auth_account_find_by_provider_subject") {
             AuthAccountsTable
                 .selectAll()
                 .where {
@@ -250,7 +255,7 @@ class ExposedAuthAccountRepository(
         }
 
     override suspend fun findAll(): Either<MiruError.PersistenceError, List<AuthAccountRecord>> =
-        database.exposedQuery("auth_account_find_all") {
+        readDatabase.exposedReadQuery("auth_account_find_all") {
             AuthAccountsTable
                 .selectAll()
                 .orderBy(AuthAccountsTable.createdAtMs to SortOrder.ASC, AuthAccountsTable.id to SortOrder.ASC)
@@ -258,12 +263,12 @@ class ExposedAuthAccountRepository(
         }
 
     override suspend fun count(): Either<MiruError.PersistenceError, Long> =
-        database.exposedQuery("auth_account_count") {
+        readDatabase.exposedReadQuery("auth_account_count") {
             AuthAccountsTable.selectAll().count()
         }
 
     override suspend fun countAdmins(): Either<MiruError.PersistenceError, Long> =
-        database.exposedQuery("auth_account_count_admins") {
+        readDatabase.exposedReadQuery("auth_account_count_admins") {
             AuthAccountsTable
                 .selectAll()
                 .where { AuthAccountsTable.role eq "ADMIN" }
@@ -271,7 +276,7 @@ class ExposedAuthAccountRepository(
         }
 
     override suspend fun countActiveAdmins(): Either<MiruError.PersistenceError, Long> =
-        database.exposedQuery("auth_account_count_active_admins") {
+        readDatabase.exposedReadQuery("auth_account_count_active_admins") {
             AuthAccountsTable
                 .selectAll()
                 .where { (AuthAccountsTable.role eq "ADMIN") and (AuthAccountsTable.disabled eq false) }
@@ -322,7 +327,7 @@ class ExposedAuthAccountRepository(
         }
 
     override suspend fun findLinkedMediaUserIds(accountId: String): Either<MiruError.PersistenceError, Set<String>> =
-        database.exposedQuery("auth_account_find_linked_media_users") {
+        readDatabase.exposedReadQuery("auth_account_find_linked_media_users") {
             AuthAccountMediaUsersTable
                 .selectAll()
                 .where { AuthAccountMediaUsersTable.accountId eq accountId }
@@ -412,8 +417,12 @@ class ExposedAuthAccountRepository(
 
 class ExposedAuthSessionRepository(
     private val database: Database,
+    private val readDatabase: Database = database,
 ) : AuthSessionRepository {
-    constructor(handle: DatabaseHandle) : this(handle.database)
+    constructor(handle: DatabaseHandle) : this(
+        database = handle.database,
+        readDatabase = handle.readDatabase,
+    )
 
     override suspend fun insert(session: AuthSessionRecord): Either<MiruError.PersistenceError, AuthSessionRecord> =
         database.exposedQuery("auth_session_insert") {
@@ -429,7 +438,7 @@ class ExposedAuthSessionRepository(
         }
 
     override suspend fun findByTokenHash(tokenHash: String): Either<MiruError.PersistenceError, AuthSessionRecord?> =
-        database.exposedQuery("auth_session_find_by_token_hash") {
+        readDatabase.exposedReadQuery("auth_session_find_by_token_hash") {
             AuthSessionsTable
                 .selectAll()
                 .where { AuthSessionsTable.tokenHash eq tokenHash }
@@ -465,8 +474,12 @@ class ExposedAuthSessionRepository(
 
 class ExposedApiKeyRepository(
     private val database: Database,
+    private val readDatabase: Database = database,
 ) : ApiKeyRepository {
-    constructor(handle: DatabaseHandle) : this(handle.database)
+    constructor(handle: DatabaseHandle) : this(
+        database = handle.database,
+        readDatabase = handle.readDatabase,
+    )
 
     override suspend fun insert(apiKey: ApiKeyRecord): Either<MiruError.PersistenceError, ApiKeyRecord> =
         database.exposedQuery("api_key_insert") {
@@ -486,7 +499,7 @@ class ExposedApiKeyRepository(
         }
 
     override suspend fun findByKeyHash(keyHash: String): Either<MiruError.PersistenceError, ApiKeyRecord?> =
-        database.exposedQuery("api_key_find_by_key_hash") {
+        readDatabase.exposedReadQuery("api_key_find_by_key_hash") {
             ApiKeysTable
                 .selectAll()
                 .where { ApiKeysTable.keyHash eq keyHash }
@@ -495,7 +508,7 @@ class ExposedApiKeyRepository(
         }
 
     override suspend fun findById(id: String): Either<MiruError.PersistenceError, ApiKeyRecord?> =
-        database.exposedQuery("api_key_find_by_id") {
+        readDatabase.exposedReadQuery("api_key_find_by_id") {
             ApiKeysTable
                 .selectAll()
                 .where { ApiKeysTable.id eq id }
@@ -504,7 +517,7 @@ class ExposedApiKeyRepository(
         }
 
     override suspend fun findAll(accountId: String?): Either<MiruError.PersistenceError, List<ApiKeyRecord>> =
-        database.exposedQuery("api_key_find_all") {
+        readDatabase.exposedReadQuery("api_key_find_all") {
             val query =
                 if (accountId != null) {
                     ApiKeysTable.selectAll().where { ApiKeysTable.accountId eq accountId }
@@ -544,13 +557,17 @@ class ExposedApiKeyRepository(
 
 class ExposedUserPreferencesRepository(
     private val database: Database,
+    private val readDatabase: Database = database,
 ) : UserPreferencesRepository {
-    constructor(handle: DatabaseHandle) : this(handle.database)
+    constructor(handle: DatabaseHandle) : this(
+        database = handle.database,
+        readDatabase = handle.readDatabase,
+    )
 
     override suspend fun findByAccountId(
         accountId: String,
     ): Either<MiruError.PersistenceError, UserPreferencesRecord?> =
-        database.exposedQuery("user_preferences_find_by_account_id") {
+        readDatabase.exposedReadQuery("user_preferences_find_by_account_id") {
             UserPreferencesTable
                 .selectAll()
                 .where { UserPreferencesTable.accountId eq accountId }

@@ -6,6 +6,7 @@ import io.kotest.assertions.arrow.core.shouldBeRight
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldNotContain
+import io.kotest.matchers.types.shouldBeSameInstanceAs
 import org.testcontainers.postgresql.PostgreSQLContainer
 import java.sql.DriverManager
 
@@ -42,10 +43,12 @@ class PostgresRepositoryIntegrationTest :
             }
         }
 
-        test("passes DatabaseReadinessCheck and redacts passwords on connection errors") {
+        test("passes DatabaseReadinessCheck, shares single pool handle, and redacts passwords on connection errors") {
             val db = requireHandle()
             db.dialect shouldBe DatabaseDialect.POSTGRES
-            DatabaseReadinessCheck(db.dataSource).check().shouldBeRight()
+            db.readDataSource shouldBeSameInstanceAs db.dataSource
+            db.readDatabase shouldBeSameInstanceAs db.database
+            DatabaseReadinessCheck(db).check().shouldBeRight()
 
             val secretPassword = "super-secret-pg-password-999"
             val failed =

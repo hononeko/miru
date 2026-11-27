@@ -3,6 +3,7 @@ package app.hononeko.miru.persistence.repository
 import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.persistence.DatabaseHandle
 import app.hononeko.miru.persistence.exposedQuery
+import app.hononeko.miru.persistence.exposedReadQuery
 import app.hononeko.miru.persistence.model.ActiveSessionKey
 import app.hononeko.miru.persistence.model.ActiveSessionRecord
 import app.hononeko.miru.persistence.table.ActiveSessionsTable
@@ -35,8 +36,12 @@ interface ActiveSessionRepository {
 
 class ExposedActiveSessionRepository(
     private val database: Database,
+    private val readDatabase: Database = database,
 ) : ActiveSessionRepository {
-    constructor(handle: DatabaseHandle) : this(handle.database)
+    constructor(handle: DatabaseHandle) : this(
+        database = handle.database,
+        readDatabase = handle.readDatabase,
+    )
 
     override suspend fun upsert(session: ActiveSessionRecord): Either<MiruError.PersistenceError, Unit> =
         database
@@ -90,7 +95,7 @@ class ExposedActiveSessionRepository(
             }.map { }
 
     override suspend fun findByKey(key: ActiveSessionKey): Either<MiruError.PersistenceError, ActiveSessionRecord?> =
-        database.exposedQuery("active_session_find_by_key") {
+        readDatabase.exposedReadQuery("active_session_find_by_key") {
             ActiveSessionsTable
                 .selectAll()
                 .where {
@@ -102,7 +107,7 @@ class ExposedActiveSessionRepository(
         }
 
     override suspend fun findByServer(serverId: String): Either<MiruError.PersistenceError, List<ActiveSessionRecord>> =
-        database.exposedQuery("active_session_find_by_server") {
+        readDatabase.exposedReadQuery("active_session_find_by_server") {
             ActiveSessionsTable
                 .selectAll()
                 .where { ActiveSessionsTable.serverId eq serverId }
@@ -114,7 +119,7 @@ class ExposedActiveSessionRepository(
         }
 
     override suspend fun findAll(): Either<MiruError.PersistenceError, List<ActiveSessionRecord>> =
-        database.exposedQuery("active_session_find_all") {
+        readDatabase.exposedReadQuery("active_session_find_all") {
             ActiveSessionsTable
                 .selectAll()
                 .orderBy(

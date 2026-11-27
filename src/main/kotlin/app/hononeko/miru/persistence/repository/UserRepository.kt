@@ -3,6 +3,7 @@ package app.hononeko.miru.persistence.repository
 import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.persistence.DatabaseHandle
 import app.hononeko.miru.persistence.exposedQuery
+import app.hononeko.miru.persistence.exposedReadQuery
 import app.hononeko.miru.persistence.model.UserRecord
 import app.hononeko.miru.persistence.table.UsersTable
 import arrow.core.Either
@@ -43,8 +44,12 @@ interface UserRepository {
 
 class ExposedUserRepository(
     private val database: Database,
+    private val readDatabase: Database = database,
 ) : UserRepository {
-    constructor(handle: DatabaseHandle) : this(handle.database)
+    constructor(handle: DatabaseHandle) : this(
+        database = handle.database,
+        readDatabase = handle.readDatabase,
+    )
 
     override suspend fun upsert(user: UserRecord): Either<MiruError.PersistenceError, UserRecord> =
         database.exposedQuery("user_upsert") {
@@ -106,7 +111,7 @@ class ExposedUserRepository(
         }
 
     override suspend fun findById(id: String): Either<MiruError.PersistenceError, UserRecord?> =
-        database.exposedQuery("user_find_by_id") {
+        readDatabase.exposedReadQuery("user_find_by_id") {
             UsersTable
                 .selectAll()
                 .where { UsersTable.id eq id }
@@ -117,7 +122,7 @@ class ExposedUserRepository(
     override suspend fun findByIds(ids: Collection<String>): Either<MiruError.PersistenceError, List<UserRecord>> {
         val uniqueIds = ids.distinct()
         if (uniqueIds.isEmpty()) return Either.Right(emptyList())
-        return database.exposedQuery("user_find_by_ids") {
+        return readDatabase.exposedReadQuery("user_find_by_ids") {
             UsersTable
                 .selectAll()
                 .where { UsersTable.id inList uniqueIds }
@@ -129,7 +134,7 @@ class ExposedUserRepository(
         serverId: String,
         externalUserId: String,
     ): Either<MiruError.PersistenceError, UserRecord?> =
-        database.exposedQuery("user_find_by_external_id") {
+        readDatabase.exposedReadQuery("user_find_by_external_id") {
             UsersTable
                 .selectAll()
                 .where { (UsersTable.serverId eq serverId) and (UsersTable.externalUserId eq externalUserId) }
@@ -138,7 +143,7 @@ class ExposedUserRepository(
         }
 
     override suspend fun findByServer(serverId: String): Either<MiruError.PersistenceError, List<UserRecord>> =
-        database.exposedQuery("user_find_by_server") {
+        readDatabase.exposedReadQuery("user_find_by_server") {
             UsersTable
                 .selectAll()
                 .where { UsersTable.serverId eq serverId }
@@ -147,7 +152,7 @@ class ExposedUserRepository(
         }
 
     override suspend fun findAll(): Either<MiruError.PersistenceError, List<UserRecord>> =
-        database.exposedQuery("user_find_all") {
+        readDatabase.exposedReadQuery("user_find_all") {
             UsersTable
                 .selectAll()
                 .orderBy(UsersTable.username to SortOrder.ASC, UsersTable.id to SortOrder.ASC)

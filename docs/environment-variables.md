@@ -25,6 +25,7 @@ For examples, see [`docker-compose.yml`](docker-compose.yml), the [Helm chart](.
 | --- | --- | --- |
 | `DB_ENGINE` | `sqlite` | `sqlite` or `postgres` (`postgresql` is accepted too). |
 | `SQLITE_PATH` | `./data/miru.db`; `/data/miru.db` in the container image | Path of the SQLite database file. Must not be blank when `DB_ENGINE=sqlite`. |
+| `SQLITE_READ_POOL_SIZE` | `4` | Maximum number of pooled read-only SQLite WAL connections for file-backed databases, at least 1. Ignored for `:memory:` databases, which share the single connection. |
 | `DATABASE_URL` | *(none)* | JDBC URL, starting with `jdbc:postgresql://`, for example `jdbc:postgresql://postgres:5432/miru`. **Required** when `DB_ENGINE=postgres`. |
 | `DATABASE_USER` | *(none)* | PostgreSQL user. **Required** when `DB_ENGINE=postgres`. |
 | `DATABASE_PASSWORD` 🔒 | *(none)* | PostgreSQL password. **Required** when `DB_ENGINE=postgres`. |

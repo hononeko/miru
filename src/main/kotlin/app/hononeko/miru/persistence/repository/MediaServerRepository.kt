@@ -3,6 +3,7 @@ package app.hononeko.miru.persistence.repository
 import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.persistence.DatabaseHandle
 import app.hononeko.miru.persistence.exposedQuery
+import app.hononeko.miru.persistence.exposedReadQuery
 import app.hononeko.miru.persistence.model.MediaServerRecord
 import app.hononeko.miru.persistence.table.LibrarySectionsTable
 import app.hononeko.miru.persistence.table.MediaServersTable
@@ -73,8 +74,12 @@ interface MediaServerRepository {
 
 class ExposedMediaServerRepository(
     private val database: Database,
+    private val readDatabase: Database = database,
 ) : MediaServerRepository {
-    constructor(handle: DatabaseHandle) : this(handle.database)
+    constructor(handle: DatabaseHandle) : this(
+        database = handle.database,
+        readDatabase = handle.readDatabase,
+    )
 
     override suspend fun upsert(server: MediaServerRecord): Either<MiruError.PersistenceError, MediaServerRecord> =
         database.exposedQuery("media_server_upsert") {
@@ -202,7 +207,7 @@ class ExposedMediaServerRepository(
         }
 
     override suspend fun countServerData(id: String): Either<MiruError.PersistenceError, ServerDataCounts> =
-        database.exposedQuery("media_server_count_data") {
+        readDatabase.exposedReadQuery("media_server_count_data") {
             ServerDataCounts(
                 plays = PlaybackHistoryTable.selectAll().where { PlaybackHistoryTable.serverId eq id }.count(),
                 users = UsersTable.selectAll().where { UsersTable.serverId eq id }.count(),
@@ -211,7 +216,7 @@ class ExposedMediaServerRepository(
         }
 
     override suspend fun countAllServerData(): Either<MiruError.PersistenceError, Map<String, ServerDataCounts>> =
-        database.exposedQuery("media_server_count_all_data") {
+        readDatabase.exposedReadQuery("media_server_count_all_data") {
             val playCountExpr = PlaybackHistoryTable.id.count()
             val playsByServer =
                 PlaybackHistoryTable
@@ -244,7 +249,7 @@ class ExposedMediaServerRepository(
         }
 
     override suspend fun findById(id: String): Either<MiruError.PersistenceError, MediaServerRecord?> =
-        database.exposedQuery("media_server_find_by_id") {
+        readDatabase.exposedReadQuery("media_server_find_by_id") {
             MediaServersTable
                 .selectAll()
                 .where { MediaServersTable.id eq id }
@@ -253,7 +258,7 @@ class ExposedMediaServerRepository(
         }
 
     override suspend fun findByMachineId(machineId: String): Either<MiruError.PersistenceError, MediaServerRecord?> =
-        database.exposedQuery("media_server_find_by_machine_id") {
+        readDatabase.exposedReadQuery("media_server_find_by_machine_id") {
             MediaServersTable
                 .selectAll()
                 .where { MediaServersTable.machineId eq machineId }
@@ -262,7 +267,7 @@ class ExposedMediaServerRepository(
         }
 
     override suspend fun findAll(): Either<MiruError.PersistenceError, List<MediaServerRecord>> =
-        database.exposedQuery("media_server_find_all") {
+        readDatabase.exposedReadQuery("media_server_find_all") {
             MediaServersTable
                 .selectAll()
                 .orderBy(MediaServersTable.createdAtMs to SortOrder.ASC, MediaServersTable.id to SortOrder.ASC)

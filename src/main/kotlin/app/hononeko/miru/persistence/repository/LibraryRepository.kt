@@ -4,6 +4,7 @@ import app.hononeko.miru.MiruJson
 import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.persistence.DatabaseHandle
 import app.hononeko.miru.persistence.exposedQuery
+import app.hononeko.miru.persistence.exposedReadQuery
 import app.hononeko.miru.persistence.model.GrandparentItemRecord
 import app.hononeko.miru.persistence.model.LibraryGrowthDayRecord
 import app.hononeko.miru.persistence.model.LibrarySectionRecord
@@ -148,8 +149,12 @@ interface LibraryRepository {
 
 class ExposedLibraryRepository(
     private val database: Database,
+    private val readDatabase: Database = database,
 ) : LibraryRepository {
-    constructor(handle: DatabaseHandle) : this(handle.database)
+    constructor(handle: DatabaseHandle) : this(
+        database = handle.database,
+        readDatabase = handle.readDatabase,
+    )
 
     override suspend fun upsertSection(section: LibrarySectionRecord): Either<MiruError.PersistenceError, Unit> =
         database
@@ -173,7 +178,7 @@ class ExposedLibraryRepository(
             }.map { }
 
     override suspend fun findAllSections(): Either<MiruError.PersistenceError, List<LibrarySectionRecord>> =
-        database.exposedQuery("library_find_all_sections") {
+        readDatabase.exposedReadQuery("library_find_all_sections") {
             LibrarySectionsTable
                 .selectAll()
                 .orderBy(
@@ -187,7 +192,7 @@ class ExposedLibraryRepository(
         serverId: String,
         sectionKey: String,
     ): Either<MiruError.PersistenceError, LibrarySectionRecord?> =
-        database.exposedQuery("library_find_section") {
+        readDatabase.exposedReadQuery("library_find_section") {
             LibrarySectionsTable
                 .selectAll()
                 .where {
@@ -197,7 +202,7 @@ class ExposedLibraryRepository(
         }
 
     override suspend fun findSectionsByKey(sectionKey: String): Either<MiruError.PersistenceError, List<LibrarySectionRecord>> =
-        database.exposedQuery("library_find_sections_by_key") {
+        readDatabase.exposedReadQuery("library_find_sections_by_key") {
             LibrarySectionsTable
                 .selectAll()
                 .where { LibrarySectionsTable.sectionKey eq sectionKey }
@@ -206,7 +211,7 @@ class ExposedLibraryRepository(
         }
 
     override suspend fun findSectionsByServer(serverId: String): Either<MiruError.PersistenceError, List<LibrarySectionRecord>> =
-        database.exposedQuery("library_find_sections_by_server") {
+        readDatabase.exposedReadQuery("library_find_sections_by_server") {
             LibrarySectionsTable
                 .selectAll()
                 .where { LibrarySectionsTable.serverId eq serverId }
@@ -238,9 +243,9 @@ class ExposedLibraryRepository(
         fromMs: Long?,
         toMs: Long?,
     ): Either<MiruError.PersistenceError, List<LibrarySnapshotRecord>> =
-        database.exposedQuery("library_find_snapshots") {
+        readDatabase.exposedReadQuery("library_find_snapshots") {
             val safeLimit = limit.coerceAtLeast(0)
-            if (safeLimit == 0) return@exposedQuery emptyList()
+            if (safeLimit == 0) return@exposedReadQuery emptyList()
 
             var condition: Op<Boolean> =
                 (LibrarySnapshotsTable.serverId eq serverId) and (LibrarySnapshotsTable.sectionKey eq sectionKey)
@@ -262,9 +267,9 @@ class ExposedLibraryRepository(
         fromMs: Long?,
         toMs: Long?,
     ): Either<MiruError.PersistenceError, List<LibraryGrowthDayRecord>> =
-        database.exposedQuery("library_find_daily_growth") {
+        readDatabase.exposedReadQuery("library_find_daily_growth") {
             val safeLimit = limit.coerceAtLeast(0)
-            if (safeLimit == 0) return@exposedQuery emptyList()
+            if (safeLimit == 0) return@exposedReadQuery emptyList()
 
             val args =
                 mutableListOf<Pair<IColumnType<*>, Any?>>(
@@ -373,7 +378,7 @@ class ExposedLibraryRepository(
         ratingKeys: Set<String>,
     ): Either<MiruError.PersistenceError, Map<String, String>> {
         if (ratingKeys.isEmpty()) return Either.Right(emptyMap())
-        return database.exposedQuery("library_find_grandparent_keys") {
+        return readDatabase.exposedReadQuery("library_find_grandparent_keys") {
             ratingKeys
                 .chunked(BATCH_SIZE)
                 .flatMap { chunk ->
@@ -393,7 +398,7 @@ class ExposedLibraryRepository(
     override suspend fun findGrandparents(
         serverId: String,
     ): Either<MiruError.PersistenceError, List<GrandparentItemRecord>> =
-        database.exposedQuery("library_find_grandparents") {
+        readDatabase.exposedReadQuery("library_find_grandparents") {
             MediaItemsCacheTable
                 .select(
                     MediaItemsCacheTable.sectionKey,
@@ -416,7 +421,7 @@ class ExposedLibraryRepository(
         }
 
     override suspend fun lacksGrandparentKeys(serverId: String): Either<MiruError.PersistenceError, Boolean> =
-        database.exposedQuery("library_lacks_grandparent_keys") {
+        readDatabase.exposedReadQuery("library_lacks_grandparent_keys") {
             val cachedItems =
                 (MediaItemsCacheTable.serverId eq serverId) and
                     (MediaItemsCacheTable.mediaType inList listOf("episode", "track"))
@@ -434,9 +439,9 @@ class ExposedLibraryRepository(
         sectionKey: String?,
         limit: Int,
     ): Either<MiruError.PersistenceError, List<MediaItemCacheRecord>> =
-        database.exposedQuery("library_find_recently_added") {
+        readDatabase.exposedReadQuery("library_find_recently_added") {
             val safeLimit = limit.coerceAtLeast(0)
-            if (safeLimit == 0) return@exposedQuery emptyList()
+            if (safeLimit == 0) return@exposedReadQuery emptyList()
 
             val condition =
                 if (sectionKey != null) {
@@ -461,7 +466,7 @@ class ExposedLibraryRepository(
         sort: StaleMediaSort,
         limit: Int,
     ): Either<MiruError.PersistenceError, StaleMediaReportRecord> =
-        database.exposedQuery("library_find_stale_media") {
+        readDatabase.exposedReadQuery("library_find_stale_media") {
             val safeLimit = limit.coerceAtLeast(0)
             val (stalePredicate, filterArgs) = buildStalePredicate(serverId, sectionKey, unwatchedCutoffMs, neverPlayedOnly)
             val fromAndWhere =
@@ -503,7 +508,7 @@ class ExposedLibraryRepository(
 
             val (totalStaleCount, totalReclaimableBytes, neverPlayedCount) = summary
             if (totalStaleCount == 0 || safeLimit == 0) {
-                return@exposedQuery StaleMediaReportRecord(
+                return@exposedReadQuery StaleMediaReportRecord(
                     items = emptyList(),
                     totalStaleCount = totalStaleCount,
                     totalReclaimableBytes = totalReclaimableBytes,
@@ -716,7 +721,7 @@ class ExposedLibraryRepository(
     override suspend fun findUserLibraryAccessByServer(
         serverId: String,
     ): Either<MiruError.PersistenceError, List<UserLibraryAccessRecord>> =
-        database.exposedQuery("library_find_user_access_by_server") {
+        readDatabase.exposedReadQuery("library_find_user_access_by_server") {
             UserLibraryAccessTable
                 .selectAll()
                 .where { UserLibraryAccessTable.serverId eq serverId }
@@ -730,7 +735,7 @@ class ExposedLibraryRepository(
         if (mediaUserIds.isEmpty()) {
             return Either.Right(ResolvedLibraryAccess.EMPTY)
         }
-        return database.exposedQuery("library_find_accessible_for_users") {
+        return readDatabase.exposedReadQuery("library_find_accessible_for_users") {
             val userRows =
                 UsersTable
                     .select(
@@ -742,7 +747,7 @@ class ExposedLibraryRepository(
                     .toList()
 
             if (userRows.isEmpty()) {
-                return@exposedQuery ResolvedLibraryAccess.EMPTY
+                return@exposedReadQuery ResolvedLibraryAccess.EMPTY
             }
 
             val allLibrariesServerIds = linkedSetOf<String>()
@@ -758,7 +763,7 @@ class ExposedLibraryRepository(
 
             val filteredPending = pendingUserPairs.filter { (serverId, _) -> serverId !in allLibrariesServerIds }
             if (filteredPending.isEmpty()) {
-                return@exposedQuery ResolvedLibraryAccess(
+                return@exposedReadQuery ResolvedLibraryAccess(
                     allLibrariesServerIds = allLibrariesServerIds,
                     allowedSections = emptySet(),
                 )
@@ -800,7 +805,7 @@ class ExposedLibraryRepository(
         if (trimmedKey.isEmpty()) {
             return Either.Right(emptySet())
         }
-        return database.exposedQuery("library_find_sections_by_rating_key") {
+        return readDatabase.exposedReadQuery("library_find_sections_by_rating_key") {
             val result = linkedSetOf<Pair<String, String>>()
 
             MediaItemsCacheTable

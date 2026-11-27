@@ -3,6 +3,7 @@ package app.hononeko.miru.persistence.repository
 import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.persistence.DatabaseHandle
 import app.hononeko.miru.persistence.exposedQuery
+import app.hononeko.miru.persistence.exposedReadQuery
 import app.hononeko.miru.persistence.model.GuardrailMode
 import app.hononeko.miru.persistence.model.GuardrailRuleRecord
 import app.hononeko.miru.persistence.model.GuardrailRuleType
@@ -42,11 +43,15 @@ interface StreamTerminationAuditRepository {
 
 class ExposedGuardrailRuleRepository(
     private val database: Database,
+    private val readDatabase: Database = database,
 ) : GuardrailRuleRepository {
-    constructor(handle: DatabaseHandle) : this(handle.database)
+    constructor(handle: DatabaseHandle) : this(
+        database = handle.database,
+        readDatabase = handle.readDatabase,
+    )
 
     override suspend fun findAll(): Either<MiruError.PersistenceError, List<GuardrailRuleRecord>> =
-        database.exposedQuery("guardrail_rule_find_all") {
+        readDatabase.exposedReadQuery("guardrail_rule_find_all") {
             GuardrailRulesTable
                 .selectAll()
                 .orderBy(GuardrailRulesTable.ruleType to SortOrder.ASC)
@@ -54,7 +59,7 @@ class ExposedGuardrailRuleRepository(
         }
 
     override suspend fun findByRuleType(ruleType: GuardrailRuleType): Either<MiruError.PersistenceError, GuardrailRuleRecord?> =
-        database.exposedQuery("guardrail_rule_find_by_type") {
+        readDatabase.exposedReadQuery("guardrail_rule_find_by_type") {
             GuardrailRulesTable
                 .selectAll()
                 .where { GuardrailRulesTable.ruleType eq ruleType.name }
@@ -87,8 +92,12 @@ class ExposedGuardrailRuleRepository(
 
 class ExposedStreamTerminationAuditRepository(
     private val database: Database,
+    private val readDatabase: Database = database,
 ) : StreamTerminationAuditRepository {
-    constructor(handle: DatabaseHandle) : this(handle.database)
+    constructor(handle: DatabaseHandle) : this(
+        database = handle.database,
+        readDatabase = handle.readDatabase,
+    )
 
     override suspend fun insert(
         record: StreamTerminationAuditRecord,
@@ -120,7 +129,7 @@ class ExposedStreamTerminationAuditRepository(
     override suspend fun query(filter: TerminationAuditFilter): Either<MiruError.PersistenceError, TerminationAuditPage> {
         val safeLimit = filter.limit.coerceAtLeast(0)
         val safeOffset = filter.offset.coerceAtLeast(0)
-        return database.exposedQuery("stream_termination_audit_query") {
+        return readDatabase.exposedReadQuery("stream_termination_audit_query") {
             val predicates = mutableListOf<Op<Boolean>>()
             filter.source?.let { predicates += StreamTerminationAuditTable.auditSource eq it.name }
             filter.action?.let { predicates += StreamTerminationAuditTable.action eq it.name }

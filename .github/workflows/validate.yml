@@ -53,6 +53,13 @@ jobs:
 
           check "${secret[@]}"
           check --set auth.mode=none
+          check --set auth.mode=none \
+            --set auth.oidc.enabled=true \
+            --set auth.adminUsername=admin \
+            --set persistence.storageClassName=- \
+            --set ingress.enabled=true \
+            --set 'ingress.hosts[0].host=' \
+            --set 'ingress.hosts[0].paths[0].path=/'
 
           check \
             --set database.engine=postgres \
@@ -106,6 +113,7 @@ jobs:
           expect_failure --set 'auth.sessionSecret=                                '
           expect_failure "${secret[@]}" --set security.encryptionKey=too-short
           expect_failure --set existingSecret=miru-secrets --set plex.token=token
+          expect_failure "${secret[@]}" --set auth.allowLocalLogin=false
           expect_failure "${secret[@]}" --set strategy.type=RollingUpdate
           expect_failure "${secret[@]}" --set strategy.rollingUpdate.maxUnavailable=0
           expect_failure "${secret[@]}" --set replicaCount=2

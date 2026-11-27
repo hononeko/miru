@@ -2,12 +2,50 @@
   "$schema": "https://json-schema.org/draft-07/schema#",
   "title": "Miru Helm Chart Values",
   "type": "object",
+  "definitions": {
+    "probe": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "httpGet": {
+          "type": "object",
+          "properties": {
+            "path": { "type": "string", "minLength": 1 },
+            "port": { "type": ["string", "integer"] },
+            "host": { "type": "string" },
+            "scheme": { "type": "string", "enum": ["HTTP", "HTTPS"] },
+            "httpHeaders": { "type": "array" }
+          }
+        },
+        "tcpSocket": { "type": "object" },
+        "exec": { "type": "object" },
+        "grpc": { "type": "object" },
+        "initialDelaySeconds": { "type": "integer", "minimum": 0 },
+        "periodSeconds": { "type": "integer", "minimum": 1 },
+        "timeoutSeconds": { "type": "integer", "minimum": 1 },
+        "successThreshold": { "type": "integer", "minimum": 1 },
+        "failureThreshold": { "type": "integer", "minimum": 1 },
+        "terminationGracePeriodSeconds": { "type": "integer", "minimum": 1 }
+      }
+    }
+  },
   "properties": {
     "replicaCount": {
       "description": "0 or 1: Miru has no leader election, so a second pod would record every stream twice.",
       "type": "integer",
       "minimum": 0,
       "maximum": 1
+    },
+    "revisionHistoryLimit": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "terminationGracePeriodSeconds": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "enableServiceLinks": {
+      "type": "boolean"
     },
     "strategy": {
       "type": "object",
@@ -35,6 +73,10 @@
         },
         "tag": {
           "type": "string"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^(|sha256:[a-fA-F0-9]{64})$"
         }
       },
       "required": ["repository", "pullPolicy"]
@@ -115,17 +157,14 @@
     "resources": {
       "type": "object"
     },
+    "startupProbe": {
+      "$ref": "#/definitions/probe"
+    },
     "livenessProbe": {
-      "type": "object",
-      "properties": {
-        "enabled": { "type": "boolean" }
-      }
+      "$ref": "#/definitions/probe"
     },
     "readinessProbe": {
-      "type": "object",
-      "properties": {
-        "enabled": { "type": "boolean" }
-      }
+      "$ref": "#/definitions/probe"
     },
     "service": {
       "type": "object",
@@ -136,7 +175,8 @@
         },
         "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
         "metricsPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
-        "annotations": { "type": "object" }
+        "annotations": { "type": "object" },
+        "metricsAnnotations": { "type": "object" }
       }
     },
     "ingress": {
@@ -183,7 +223,9 @@
             "type": "object",
             "properties": {
               "name": { "type": "string", "minLength": 1 },
-              "namespace": { "type": "string" }
+              "namespace": { "type": "string" },
+              "sectionName": { "type": "string" },
+              "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
             },
             "required": ["name"]
           }
@@ -207,38 +249,54 @@
         "egress": {
           "type": "object",
           "properties": {
+            "dns": {
+              "type": "object",
+              "properties": {
+                "to": { "type": "array" }
+              }
+            },
             "plex": {
               "type": "object",
               "properties": {
                 "enabled": { "type": "boolean" },
-                "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+                "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+                "to": { "type": "array" }
               }
             },
             "jellyfin": {
               "type": "object",
               "properties": {
                 "enabled": { "type": "boolean" },
-                "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+                "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+                "to": { "type": "array" }
               }
             },
             "https": {
               "type": "object",
               "properties": {
                 "enabled": { "type": "boolean" },
-                "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+                "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+                "to": { "type": "array" }
               }
             },
             "postgres": {
               "type": "object",
               "properties": {
                 "enabled": { "type": "boolean" },
-                "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+                "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+                "to": { "type": "array" }
               }
             }
           }
         },
         "extraIngress": { "type": "array" },
         "extraEgress": { "type": "array" }
+      }
+    },
+    "tmpVolume": {
+      "type": "object",
+      "properties": {
+        "sizeLimit": { "type": ["string", "null"] }
       }
     },
     "persistence": {
@@ -312,14 +370,14 @@
     "security": {
       "type": "object",
       "properties": {
-        "encryptionKey": { "type": "string" }
+        "encryptionKey": { "type": ["string", "null"] }
       }
     },
     "plex": {
       "type": "object",
       "properties": {
         "url": { "type": "string" },
-        "token": { "type": "string" },
+        "token": { "type": ["string", "null"] },
         "pollIntervalSeconds": { "type": "integer", "minimum": 5 },
         "websocketEnabled": { "type": "boolean" },
         "clientIdentifier": { "type": "string" },
@@ -330,7 +388,7 @@
       "type": "object",
       "properties": {
         "url": { "type": "string" },
-        "apiKey": { "type": "string" },
+        "apiKey": { "type": ["string", "null"] },
         "pollIntervalSeconds": { "type": "integer", "minimum": 5 },
         "websocketEnabled": { "type": "boolean" },
         "clientIdentifier": { "type": "string" }
@@ -413,7 +471,7 @@
           "type": "string",
           "enum": ["local", "oidc", "none"]
         },
-        "sessionSecret": { "type": "string" },
+        "sessionSecret": { "type": ["string", "null"] },
         "allowLocalLogin": { "type": "boolean" },
         "cookieSecure": {
           "type": ["string", "boolean"],
@@ -437,7 +495,7 @@
             "enabled": { "type": "boolean" },
             "issuerUrl": { "type": "string" },
             "clientId": { "type": "string" },
-            "clientSecret": { "type": "string" },
+            "clientSecret": { "type": ["string", "null"] },
             "redirectUri": { "type": "string" },
             "displayName": { "type": "string" },
             "scopes": { "type": "string" },
@@ -452,6 +510,9 @@
     },
     "extraEnv": { "type": "array" },
     "extraEnvFrom": { "type": "array" },
+    "extraVolumes": { "type": "array" },
+    "extraVolumeMounts": { "type": "array" },
+    "priorityClassName": { "type": "string" },
     "nodeSelector": { "type": "object" },
     "tolerations": { "type": "array" },
     "affinity": { "type": "object" }

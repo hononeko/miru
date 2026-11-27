@@ -10,12 +10,17 @@ metadata:
   labels:
     {{- include "miru.labels" . | nindent 4 }}
     app.kubernetes.io/component: metrics
+  {{- with .Values.service.metricsAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   type: ClusterIP
   ports:
     - port: {{ .Values.service.metricsPort }}
       targetPort: metrics
       protocol: TCP
+      appProtocol: http
       name: metrics
   selector:
     {{- include "miru.selectorLabels" . | nindent 4 }}

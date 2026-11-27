@@ -122,7 +122,7 @@ httpRoute:
 
 ### 4. `NetworkPolicy`
 
-Enable `networkPolicy.enabled=true` to restrict inbound traffic to the `http` port (and `metrics` port when `metrics.enabled=true`) and outbound traffic to DNS (`53`), Plex (`32400`), Jellyfin (`8096`), HTTPS (`443`), plus PostgreSQL (`5432`) when `database.engine=postgres`. Plex and Jellyfin are allowed by default so a server connected from the Admin UI is reachable; turn off the one you don't use with `networkPolicy.egress.plex.enabled=false` or `networkPolicy.egress.jellyfin.enabled=false`, and change `networkPolicy.egress.*.port` if your server listens elsewhere:
+Enable `networkPolicy.enabled=true` to restrict inbound traffic to the `http` port (and `metrics` port when `metrics.enabled=true`) and outbound traffic to DNS (`53`), Plex (`32400`), Jellyfin (`8096`), HTTPS (`443`), plus PostgreSQL (`5432`) when `database.engine=postgres`. Plex and Jellyfin are allowed by default so a server connected from the Admin UI is reachable; turn off the one you don't use with `networkPolicy.egress.plex.enabled=false` or `networkPolicy.egress.jellyfin.enabled=false`, change `networkPolicy.egress.*.port` if your server listens elsewhere, and optionally restrict destinations with `networkPolicy.egress.<target>.to`:
 
 ```yaml
 networkPolicy:
@@ -135,6 +135,12 @@ networkPolicy:
     - namespaceSelector:
         matchLabels:
           kubernetes.io/metadata.name: monitoring
+  egress:
+    postgres:
+      to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: database
 ```
 
 ### 5. Prometheus & Grafana
@@ -179,7 +185,7 @@ kubectl -n miru delete pvc miru-data
 
 ## Pod Security Standard
 
-The chart enforces Kubernetes `restricted` Pod Security Standard settings by default (`runAsNonRoot: true`, `runAsUser: 10001`, `runAsGroup: 10001`, `fsGroup: 10001`, `readOnlyRootFilesystem: true`, `allowPrivilegeEscalation: false`, `capabilities.drop: ["ALL"]`, `seccompProfile.type: RuntimeDefault`, `automountServiceAccountToken: false`).
+The chart enforces Kubernetes `restricted` Pod Security Standard settings by default (`runAsNonRoot: true`, `runAsUser: 10001`, `runAsGroup: 10001`, `fsGroup: 10001`, `readOnlyRootFilesystem: true`, `allowPrivilegeEscalation: false`, `capabilities.drop: ["ALL"]`, `seccompProfile.type: RuntimeDefault`, `automountServiceAccountToken: false`, `enableServiceLinks: false`), bounds `/tmp` via `tmpVolume.sizeLimit` (`512Mi`), and supports SHA-256 image digest pinning (`image.digest`).
 
 The chart doesn't create the namespace. Label it to have Kubernetes enforce the `restricted` profile for every pod in it, as in the [Quick Start](#quick-start-sqlite):
 

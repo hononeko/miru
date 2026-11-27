@@ -7,6 +7,8 @@ type: application
 # oci://ghcr.io/hononeko/charts/miru.
 version: 0.0.0
 appVersion: "edge"
+kubeVersion: ">=1.26.0-0"
+icon: https://raw.githubusercontent.com/hononeko/miru/main/web/static/icon-512.png
 home: https://github.com/hononeko/miru
 sources:
   - https://github.com/hononeko/miru

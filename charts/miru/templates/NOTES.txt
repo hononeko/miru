@@ -12,6 +12,16 @@
    http{{ if $.Values.ingress.tls }}s{{ end }}://{{ $host.host }}{{ .path }}
   {{- end }}
 {{- end }}
+{{- else if eq .Values.service.type "NodePort" }}
+   export NODE_PORT=$(kubectl get --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}" services {{ include "miru.fullname" . }})
+   export NODE_IP=$(kubectl get nodes --namespace {{ .Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
+   echo "http://${NODE_IP}:${NODE_PORT}"
+{{- else if eq .Values.service.type "LoadBalancer" }}
+   NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+   You can watch the status by running:
+     kubectl -n {{ .Release.Namespace }} get svc -w {{ include "miru.fullname" . }}
+   export SERVICE_IP=$(kubectl -n {{ .Release.Namespace }} get svc {{ include "miru.fullname" . }} --template "{{"{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}"}}")
+   echo "http://${SERVICE_IP}:{{ .Values.service.port }}"
 {{- else }}
    kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "miru.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
    Then open http://127.0.0.1:{{ .Values.service.port }}
@@ -25,6 +35,6 @@
 
 {{- if and (include "miru.persistenceEnabled" .) .Values.persistence.keep (not .Values.persistence.existingClaim) }}
 
-NOTE: `helm uninstall` keeps the {{ include "miru.fullname" . }}-data PersistentVolumeClaim and the playback history on it.
-Delete it with: kubectl -n {{ .Release.Namespace }} delete pvc {{ include "miru.fullname" . }}-data
+NOTE: `helm uninstall` keeps the {{ include "miru.pvcName" . }} PersistentVolumeClaim and the playback history on it.
+Delete it with: kubectl -n {{ .Release.Namespace }} delete pvc {{ include "miru.pvcName" . }}
 {{- end }}

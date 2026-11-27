@@ -5,6 +5,15 @@
 # with no leader election, so a second pod would record every stream twice. The schema rejects values above 1.
 replicaCount: 1
 
+# -- Number of old ReplicaSets to retain for rollback.
+revisionHistoryLimit: 3
+
+# -- Seconds Kubernetes waits for Miru to drain sessions, stop background tasks, and close the database before SIGKILL.
+terminationGracePeriodSeconds: 30
+
+# -- Disable Kubernetes service-link env var injection (<SERVICE>_PORT, etc.), which otherwise collides with MIRU_PORT when the Service is named miru.
+enableServiceLinks: false
+
 # -- Recreate lets the new pod attach the ReadWriteOnce SQLite volume after the old pod stops; the chart
 # refuses RollingUpdate with SQLite persistence. With PostgreSQL (database.engine=postgres), RollingUpdate keeps
 # the UI up during upgrades, but the old and new pod both track sessions for a few seconds, so a stream that
@@ -17,6 +26,8 @@ image:
   pullPolicy: IfNotPresent
   # -- Overrides the image tag whose default is the chart appVersion.
   tag: ""
+  # -- Optional SHA-256 digest to pin the image (e.g. "sha256:..."). When set without tag, pulls by digest only.
+  digest: ""
 
 imagePullSecrets: []
 nameOverride: ""
@@ -62,6 +73,16 @@ resources:
     cpu: 500m
     memory: 512Mi
 
+# -- Protects JVM startup and Flyway migrations so livenessProbe does not restart slow cold starts.
+startupProbe:
+  enabled: true
+  httpGet:
+    path: /healthz
+    port: http
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 24
+
 livenessProbe:
   enabled: true
   httpGet:
@@ -69,6 +90,8 @@ livenessProbe:
     port: http
   initialDelaySeconds: 5
   periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
 
 readinessProbe:
   enabled: true
@@ -77,6 +100,8 @@ readinessProbe:
     port: http
   initialDelaySeconds: 5
   periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
 
 service:
   type: ClusterIP
@@ -84,6 +109,8 @@ service:
   # -- Port of the separate ClusterIP `<fullname>-metrics` Service, used when metrics.port differs from server.port.
   metricsPort: 9090
   annotations: {}
+  # -- Annotations for the separate `<fullname>-metrics` ClusterIP Service.
+  metricsAnnotations: {}
 
 ingress:
   enabled: false
@@ -119,25 +146,42 @@ networkPolicy:
   enabled: false
   # -- Optional pod/namespace selectors for inbound web traffic; empty allows all sources on the http port.
   ingressFrom: []
-  # -- Optional pod/namespace selectors for inbound metrics scraping; empty allows all sources on the metrics port.
+  # -- Optional pod/namespace selectors for inbound metrics scraping. Empty allows all sources on the dedicated
+  # metrics port; when metrics.port equals server.port, non-empty metricsFrom is also allowed on the http port.
   metricsFrom: []
   egress:
+    dns:
+      # -- Optional pod/namespace/ipBlock selectors for DNS egress (port 53); empty allows all destinations.
+      to: []
     plex:
       enabled: true
       port: 32400
+      # -- Optional destination selectors (podSelector/namespaceSelector/ipBlock); empty allows all destinations on plex.port.
+      to: []
     jellyfin:
       # -- On by default, like Plex, so a Jellyfin server connected from the Admin UI is reachable. Set to false if you do not use Jellyfin.
       enabled: true
       port: 8096
+      # -- Optional destination selectors; empty allows all destinations on jellyfin.port.
+      to: []
     https:
       enabled: true
       port: 443
+      # -- Optional destination selectors; empty allows all destinations on https.port.
+      to: []
     postgres:
       # -- Enabled automatically when database.engine is postgres/postgresql, or set explicitly to true.
       enabled: false
       port: 5432
+      # -- Optional destination selectors; empty allows all destinations on postgres.port.
+      to: []
   extraIngress: []
   extraEgress: []
+
+# -- Writable /tmp emptyDir volume (used for JVM/SQLite scratch files and Tautulli DB imports up to 256MiB).
+tmpVolume:
+  # -- Cap /tmp size to bound ephemeral storage usage. Set to "" for no limit.
+  sizeLimit: 512Mi
 
 # -- Persistent storage for SQLite. Disabled automatically when database.engine is postgres/postgresql.
 persistence:
@@ -290,6 +334,13 @@ extraEnv: []
 # -- Additional envFrom entries (ConfigMap/Secret refs) appended to the Miru container.
 extraEnvFrom: []
 
+# -- Additional volumes appended to the Miru pod (e.g. custom CA certificate bundles).
+extraVolumes: []
+
+# -- Additional volumeMounts appended to the Miru container.
+extraVolumeMounts: []
+
+priorityClassName: ""
 nodeSelector: {}
 tolerations: []
 affinity: {}

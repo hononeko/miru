@@ -62,13 +62,49 @@ Create the name of the service account to use
 {{- end }}
 
 {{/*
+Resolve the container image reference, supporting optional SHA-256 digest pinning.
+*/}}
+{{- define "miru.image" -}}
+{{- if .Values.image.digest -}}
+{{- if .Values.image.tag -}}
+{{- printf "%s:%s@%s" .Values.image.repository .Values.image.tag .Values.image.digest -}}
+{{- else -}}
+{{- printf "%s@%s" .Values.image.repository .Values.image.digest -}}
+{{- end -}}
+{{- else -}}
+{{- printf "%s:%s" .Values.image.repository (.Values.image.tag | default .Chart.AppVersion) -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+Name of the ConfigMap holding non-secret application settings (truncated before suffix to stay <= 63 chars).
+*/}}
+{{- define "miru.configMapName" -}}
+{{- printf "%s-config" (include "miru.fullname" . | trunc 56 | trimSuffix "-") }}
+{{- end }}
+
+{{/*
+Name of the PersistentVolumeClaim created for SQLite data (truncated before suffix to stay <= 63 chars).
+*/}}
+{{- define "miru.pvcName" -}}
+{{- printf "%s-data" (include "miru.fullname" . | trunc 58 | trimSuffix "-") }}
+{{- end }}
+
+{{/*
+Name of the Grafana dashboard ConfigMap (truncated before suffix to stay <= 63 chars).
+*/}}
+{{- define "miru.grafanaDashboardConfigMapName" -}}
+{{- printf "%s-grafana-dashboard" (include "miru.fullname" . | trunc 45 | trimSuffix "-") }}
+{{- end }}
+
+{{/*
 Resolve the Secret name to mount via envFrom
 */}}
 {{- define "miru.secretName" -}}
 {{- if .Values.existingSecret }}
 {{- .Values.existingSecret }}
 {{- else }}
-{{- printf "%s-secrets" (include "miru.fullname" .) }}
+{{- printf "%s-secrets" (include "miru.fullname" . | trunc 55 | trimSuffix "-") }}
 {{- end }}
 {{- end }}
 
@@ -118,16 +154,21 @@ Refuse to render settings that would deploy a pod that cannot start or that woul
 {{- fail (printf "existingSecret is set, so the chart creates no Secret and would ignore %s. Put these in the %q Secret instead." (join ", " $ignored) .Values.existingSecret) -}}
 {{- end -}}
 {{- else -}}
-{{- if and (ne (lower .Values.auth.mode) "none") (lt (len (include "miru.sessionSecret" .)) 32) -}}
+{{- $sessionSecret := include "miru.sessionSecret" . | trim -}}
+{{- if and (ne (lower .Values.auth.mode) "none") (lt (len $sessionSecret) 32) -}}
 {{- fail "auth.sessionSecret must be at least 32 characters unless auth.mode is none. Set it with --set auth.sessionSecret=\"$(openssl rand -base64 48)\", or use existingSecret." -}}
 {{- end -}}
-{{- $encryptionKey := include "miru.encryptionKey" . -}}
+{{- $encryptionKey := include "miru.encryptionKey" . | trim -}}
 {{- if and $encryptionKey (lt (len $encryptionKey) 32) -}}
 {{- fail "security.encryptionKey must be at least 32 characters when set, for example $(openssl rand -base64 48)." -}}
 {{- end -}}
 {{- end -}}
-{{- if and (include "miru.persistenceEnabled" .) (eq (get (.Values.strategy | default dict) "type") "RollingUpdate") -}}
+{{- $strategy := .Values.strategy | default dict -}}
+{{- if and (include "miru.persistenceEnabled" .) (eq (get $strategy "type") "RollingUpdate") -}}
 {{- fail "strategy.type=RollingUpdate cannot be used with SQLite persistence: the new pod would wait for the volume the old pod holds, or both would write the same database file. Use strategy.type=Recreate." -}}
+{{- end -}}
+{{- if and (eq (get $strategy "type") "Recreate") (get $strategy "rollingUpdate") -}}
+{{- fail "strategy.rollingUpdate cannot be set when strategy.type is Recreate." -}}
 {{- end -}}
 {{- end }}
 
@@ -150,10 +191,10 @@ true
 {{- end }}
 
 {{/*
-Name of the ClusterIP Service that exposes the dedicated metrics port
+Name of the ClusterIP Service that exposes the dedicated metrics port (truncated before suffix to avoid colliding with fullname).
 */}}
 {{- define "miru.metricsServiceName" -}}
-{{- printf "%s-metrics" (include "miru.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- printf "%s-metrics" (include "miru.fullname" . | trunc 55 | trimSuffix "-") }}
 {{- end }}
 
 {{/*

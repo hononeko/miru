@@ -22,16 +22,19 @@ spec:
         {{- range .hosts }}
         - {{ . | quote }}
         {{- end }}
-      secretName: {{ .secretName }}
+      {{- with .secretName }}
+      secretName: {{ . }}
+      {{- end }}
     {{- end }}
   {{- end }}
+  {{- with .Values.ingress.hosts }}
   rules:
-    {{- range .Values.ingress.hosts }}
+    {{- range . }}
     - host: {{ .host | quote }}
       http:
         paths:
           {{- range .paths }}
-          - path: {{ .path }}
+          - path: {{ .path | quote }}
             pathType: {{ .pathType | default "Prefix" }}
             backend:
               service:
@@ -40,4 +43,5 @@ spec:
                   number: {{ $svcPort }}
           {{- end }}
     {{- end }}
+  {{- end }}
 {{- end }}

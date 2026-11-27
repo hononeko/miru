@@ -28,6 +28,12 @@ spec:
       from:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+    {{- else if and .Values.metrics.enabled .Values.networkPolicy.metricsFrom }}
+    - ports:
+        - port: http
+          protocol: TCP
+      from:
+        {{- toYaml .Values.networkPolicy.metricsFrom | nindent 8 }}
     {{- end }}
     {{- with .Values.networkPolicy.extraIngress }}
     {{- toYaml . | nindent 4 }}
@@ -39,29 +45,49 @@ spec:
           protocol: UDP
         - port: 53
           protocol: TCP
+      {{- with (.Values.networkPolicy.egress.dns | default dict).to }}
+      to:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     {{- if .Values.networkPolicy.egress.plex.enabled }}
     # Plex Media Server
     - ports:
         - port: {{ .Values.networkPolicy.egress.plex.port }}
           protocol: TCP
+      {{- with .Values.networkPolicy.egress.plex.to }}
+      to:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     {{- end }}
     {{- if .Values.networkPolicy.egress.jellyfin.enabled }}
     # Jellyfin Media Server
     - ports:
         - port: {{ .Values.networkPolicy.egress.jellyfin.port }}
           protocol: TCP
+      {{- with .Values.networkPolicy.egress.jellyfin.to }}
+      to:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     {{- end }}
     {{- if .Values.networkPolicy.egress.https.enabled }}
     # plex.tv, OIDC providers, avatar CDNs, and HTTPS webhooks
     - ports:
         - port: {{ .Values.networkPolicy.egress.https.port }}
           protocol: TCP
+      {{- with .Values.networkPolicy.egress.https.to }}
+      to:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     {{- end }}
     {{- if or .Values.networkPolicy.egress.postgres.enabled (ne (lower .Values.database.engine) "sqlite") }}
     # PostgreSQL
     - ports:
         - port: {{ .Values.networkPolicy.egress.postgres.port }}
           protocol: TCP
+      {{- with .Values.networkPolicy.egress.postgres.to }}
+      to:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     {{- end }}
     {{- with .Values.networkPolicy.extraEgress }}
     {{- toYaml . | nindent 4 }}

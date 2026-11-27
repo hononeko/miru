@@ -155,7 +155,7 @@ Refuse to render settings that would deploy a pod that cannot start or that woul
 {{- end -}}
 {{- else -}}
 {{- $sessionSecret := include "miru.sessionSecret" . | trim -}}
-{{- if and (ne (lower .Values.auth.mode) "none") (lt (len $sessionSecret) 32) -}}
+{{- if and (include "miru.authEnabled" .) (lt (len $sessionSecret) 32) -}}
 {{- fail "auth.sessionSecret must be at least 32 characters unless auth.mode is none. Set it with --set auth.sessionSecret=\"$(openssl rand -base64 48)\", or use existingSecret." -}}
 {{- end -}}
 {{- $encryptionKey := include "miru.encryptionKey" . | trim -}}
@@ -163,12 +163,33 @@ Refuse to render settings that would deploy a pod that cannot start or that woul
 {{- fail "security.encryptionKey must be at least 32 characters when set, for example $(openssl rand -base64 48)." -}}
 {{- end -}}
 {{- end -}}
+{{- if and (eq (lower .Values.auth.mode) "local") (not .Values.auth.allowLocalLogin) (not .Values.auth.oidc.enabled) -}}
+{{- fail "auth.allowLocalLogin=false with auth.mode=local requires auth.oidc.enabled=true (or set auth.mode=none to disable built-in authentication)." -}}
+{{- end -}}
 {{- $strategy := .Values.strategy | default dict -}}
 {{- if and (include "miru.persistenceEnabled" .) (eq (get $strategy "type") "RollingUpdate") -}}
 {{- fail "strategy.type=RollingUpdate cannot be used with SQLite persistence: the new pod would wait for the volume the old pod holds, or both would write the same database file. Use strategy.type=Recreate." -}}
 {{- end -}}
 {{- if and (eq (get $strategy "type") "Recreate") (get $strategy "rollingUpdate") -}}
 {{- fail "strategy.rollingUpdate cannot be set when strategy.type is Recreate." -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+Whether Miru built-in authentication is active (auth.mode != none)
+*/}}
+{{- define "miru.authEnabled" -}}
+{{- if ne (lower .Values.auth.mode) "none" -}}
+true
+{{- end -}}
+{{- end }}
+
+{{/*
+Whether OIDC single sign-on is active
+*/}}
+{{- define "miru.oidcEnabled" -}}
+{{- if and (include "miru.authEnabled" .) (or .Values.auth.oidc.enabled (eq (lower .Values.auth.mode) "oidc")) -}}
+true
 {{- end -}}
 {{- end }}
 

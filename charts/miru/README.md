@@ -106,6 +106,8 @@ httpRoute:
 
 > [!NOTE]
 > Live dashboard updates use Server-Sent Events (`/api/v1/streams/events`) with a 15-second keepalive. Disable response buffering or increase idle timeouts on your ingress controller or gateway if connections close early.
+>
+> When Miru is behind a single trusted ingress controller or gateway, set `server.trustProxyHeaders: true` so rate limiting uses the real client IP from `X-Forwarded-For` (and optionally `auth.cookieSecure: true` if always served over HTTPS).
 
 Each entry in `httpRoute.rules` is passed through as written (`matches`, `filters`, `timeouts`, `name`, ...), and gets a `backendRefs` to the Miru Service when it has none. For example, to turn off the gateway's request timeout for the SSE stream:
 
@@ -162,6 +164,8 @@ The metrics port is served by a separate `ClusterIP` Service, `<release>-metrics
 
 ### 6. Single Sign-On (OIDC)
 
+Local username/password login (`auth.mode: local`, `auth.oidc.enabled: false`) is the default; OIDC is optional. Enable it alongside local login (`auth.mode: local` + `auth.oidc.enabled: true`) or as the only login method (`auth.mode: oidc`):
+
 ```yaml
 auth:
   mode: oidc # or "local" with oidc.enabled: true
@@ -173,6 +177,39 @@ auth:
     redirectUri: https://miru.example.com/api/v1/auth/oidc/callback
     adminGroups: miru-admins
     userGroups: miru-users
+```
+
+### 7. Disabling Built-In Auth (Forward-Auth / Trusted Network)
+
+If an external proxy (Authelia, Authentik Outpost, oauth2-proxy, Cloudflare Access, Tailscale, etc.) handles authentication in front of Miru, set `auth.mode: none` so users are not prompted twice. No `auth.sessionSecret` is required (keep `security.encryptionKey` if you sign into Plex from the Admin UI).
+
+> [!IMPORTANT]
+> With `auth.mode: none`, any pod in the cluster can reach `svc/miru:8080` directly and bypass your forward-auth proxy unless you keep `service.type: ClusterIP` and restrict `networkPolicy.ingressFrom` to the ingress controller or gateway namespace (plus Kometa if `tautulliCompat.enabled: true`).
+
+```yaml
+auth:
+  mode: none
+
+server:
+  trustProxyHeaders: true
+
+ingress:
+  enabled: true
+  className: traefik
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: auth-forwardauth@kubernetescrd
+  hosts:
+    - host: miru.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+networkPolicy:
+  enabled: true
+  ingressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ingress-system
 ```
 
 ## Storage

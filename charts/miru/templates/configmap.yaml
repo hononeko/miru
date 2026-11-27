@@ -66,6 +66,7 @@ data:
   GUARDRAIL_CONCURRENT_STREAMS_MESSAGE: {{ .Values.guardrails.concurrentStreams.message | quote }}
   {{- end }}
   AUTH_MODE: {{ .Values.auth.mode | quote }}
+  {{- if include "miru.authEnabled" . }}
   AUTH_ALLOW_LOCAL_LOGIN: {{ .Values.auth.allowLocalLogin | quote }}
   {{- with .Values.auth.adminUsername }}
   MIRU_ADMIN_USERNAME: {{ . | quote }}
@@ -76,7 +77,9 @@ data:
   AUTH_RATE_LIMIT_LOGIN_MAX_ATTEMPTS: {{ .Values.auth.rateLimit.loginMaxAttempts | int | quote }}
   AUTH_RATE_LIMIT_ACCOUNT_MAX_FAILURES: {{ .Values.auth.rateLimit.accountMaxFailures | int | quote }}
   AUTH_RATE_LIMIT_SETUP_MAX_ATTEMPTS: {{ .Values.auth.rateLimit.setupMaxAttempts | int | quote }}
-  OIDC_ENABLED: {{ or .Values.auth.oidc.enabled (eq (lower .Values.auth.mode) "oidc") | quote }}
+  {{- end }}
+  {{- if include "miru.oidcEnabled" . }}
+  OIDC_ENABLED: "true"
   {{- if .Values.auth.oidc.issuerUrl }}
   OIDC_ISSUER_URL: {{ .Values.auth.oidc.issuerUrl | quote }}
   {{- end }}
@@ -98,4 +101,7 @@ data:
   OIDC_AUTO_LINK_BY_EMAIL: {{ .Values.auth.oidc.autoLinkByEmail | quote }}
   {{- if .Values.auth.oidc.postLogoutRedirectUri }}
   OIDC_POST_LOGOUT_REDIRECT_URI: {{ .Values.auth.oidc.postLogoutRedirectUri | quote }}
+  {{- end }}
+  {{- else }}
+  OIDC_ENABLED: "false"
   {{- end }}

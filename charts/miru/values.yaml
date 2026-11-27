@@ -187,6 +187,7 @@ tmpVolume:
 persistence:
   enabled: true
   existingClaim: ""
+  # -- StorageClass name. Leave empty for the cluster default, or set to "-" to disable dynamic provisioning (storageClassName: "").
   storageClassName: ""
   accessModes:
     - ReadWriteOnce

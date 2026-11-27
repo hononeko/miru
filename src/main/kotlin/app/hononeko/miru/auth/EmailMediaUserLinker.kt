@@ -46,7 +46,9 @@ class EmailMediaUserLinker(
             if (!manages(account) || account.emailVerified == null) {
                 return@either accountRepository.findLinkedMediaUserIds(account.id).bind()
             }
-            syncAccount(account, userRepository.findAll().bind()).bind().links
+            val mediaUsers = userRepository.findAll().bind()
+            val allLinks = accountRepository.findAllMediaUserLinks().bind().toMutableMap()
+            syncAccount(account, mediaUsers, allLinks).bind().links
         }
 
     /** Relinks every account this linker manages and returns how many accounts' links changed. */
@@ -55,16 +57,18 @@ class EmailMediaUserLinker(
             val accounts = accountRepository.findAll().bind().filter { manages(it) && it.emailVerified != null }
             if (accounts.isEmpty()) return@either 0
             val mediaUsers = userRepository.findAll().bind()
-            accounts.count { account -> syncAccount(account, mediaUsers).bind().changed }
+            val allLinks = accountRepository.findAllMediaUserLinks().bind().toMutableMap()
+            accounts.count { account -> syncAccount(account, mediaUsers, allLinks).bind().changed }
         }
 
     private suspend fun syncAccount(
         account: AuthAccountRecord,
         mediaUsers: List<UserRecord>,
+        allLinks: MutableMap<String, String>,
     ): Either<MiruError, LinkResult> =
         either {
             val current = accountRepository.findLinkedMediaUserIds(account.id).bind()
-            val expected = expectedLinks(account, mediaUsers, current)
+            val expected = expectedLinks(account, mediaUsers, current, allLinks)
             if (expected == current) {
                 return@either LinkResult(current, changed = false)
             }
@@ -73,6 +77,8 @@ class EmailMediaUserLinker(
                 // An admin made the account MANUAL in the meantime; their links stand.
                 return@either LinkResult(accountRepository.findLinkedMediaUserIds(account.id).bind(), changed = false)
             }
+            allLinks.entries.removeAll { it.value == account.id }
+            expected.forEach { allLinks[it] = account.id }
             logger.info("Updated email-linked media users for SSO account '{}' ({} linked)", account.username, expected.size)
             LinkResult(expected, changed = true)
         }
@@ -81,27 +87,43 @@ class EmailMediaUserLinker(
         account: AuthAccountRecord,
         mediaUsers: List<UserRecord>,
         current: Set<String>,
+        allLinks: Map<String, String>,
     ): Set<String> {
         val verifiedEmail = account.email?.takeIf { it.isNotBlank() && account.emailVerified == true } ?: return emptySet()
         val matchesByServer =
             mediaUsers
                 .filter { it.email != null && it.email.equals(verifiedEmail, ignoreCase = true) }
                 .groupBy { it.serverId }
-        // An account is linked to at most one user per server. When several users on one server share the
-        // email, Miru can't tell which is this person's: it keeps the one already linked, if any, and
-        // otherwise links none there rather than guess.
+        // An account is linked to at most one user per server, and each media user belongs to at most
+        // one Miru account. When several users on one server share the email, Miru can't tell which is
+        // this person's: it keeps the one already linked, if any, and otherwise links none there.
         return matchesByServer
             .mapNotNull { (serverId, users) ->
-                users.singleOrNull()?.id
-                    ?: users.map { it.id }.singleOrNull { it in current }
-                    ?: null.also {
+                val candidate =
+                    users.singleOrNull()?.id
+                        ?: users.map { it.id }.singleOrNull { it in current }
+                        ?: null.also {
+                            logger.warn(
+                                "Not linking SSO account '{}' by email on server {}: {} media users there share its email",
+                                account.username,
+                                serverId,
+                                users.size,
+                            )
+                        }
+                candidate?.takeIf { candidateId ->
+                    val owner = allLinks[candidateId]
+                    if (owner != null && owner != account.id) {
                         logger.warn(
-                            "Not linking SSO account '{}' by email on server {}: {} media users there share its email",
+                            "Not linking SSO account '{}' to media user {} on server {}: already linked to another account",
                             account.username,
+                            candidateId,
                             serverId,
-                            users.size,
                         )
+                        false
+                    } else {
+                        true
                     }
+                }
             }.toSet()
     }
 

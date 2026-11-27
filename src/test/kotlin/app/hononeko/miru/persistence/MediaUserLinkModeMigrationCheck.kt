@@ -93,6 +93,27 @@ internal fun assertMediaUserLinkModeBackfill(config: DatabaseConfig) {
                 "oidc-one-match-removed" to "MANUAL",
                 "local" to "MANUAL",
             )
+
+        // V14: duplicate media_user_id links are deduplicated deterministically (preferring MANUAL over AUTO,
+        // then earliest created_at_ms, then lowest account_id) and enforced by a unique index.
+        val ownership =
+            handle.dataSource.connection.use { conn ->
+                conn.createStatement().use { stmt ->
+                    stmt.executeQuery("SELECT media_user_id, account_id FROM auth_account_media_users ORDER BY media_user_id").use { rs ->
+                        buildMap {
+                            while (rs.next()) put(rs.getString(1), rs.getString(2))
+                        }
+                    }
+                }
+            }
+        ownership shouldBe
+            mapOf(
+                "mu-alice" to "local",
+                "mu-bob" to "oidc-hand-picked",
+                "mu-erin-1" to "oidc-one-match-removed",
+                "mu-erin-2" to "oidc-both-matches",
+                "mu-nomail" to "oidc-emailless-user",
+            )
     } finally {
         handle.close()
     }

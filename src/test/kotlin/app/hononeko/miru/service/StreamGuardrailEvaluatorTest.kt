@@ -252,4 +252,49 @@ class StreamGuardrailEvaluatorTest :
             evaluator.evaluate(listOf(missing), rules, nowMs = 70_000L).shouldBeEmpty()
             evaluator.evaluate(listOf(paused), rules, nowMs = 80_000L).shouldBeEmpty()
         }
+
+        test("CONCURRENT_STREAMS evaluates per media server user independently across servers") {
+            val evaluator = StreamGuardrailEvaluator()
+            val rules =
+                mapOf(
+                    GuardrailRuleType.CONCURRENT_STREAMS to
+                        EffectiveGuardrailRule(
+                            ruleType = GuardrailRuleType.CONCURRENT_STREAMS,
+                            mode = GuardrailMode.ENFORCE,
+                            threshold = 2,
+                            message = "Too many concurrent streams",
+                        ),
+                )
+
+            // Same person on Plex (2 streams) + Jellyfin (1 stream): each media user is <= 2, so no violation.
+            val plex1 =
+                testSession(
+                    sessionKey = "p1",
+                    userId = "u-plex-elena",
+                    startedAtMs = 1_000L,
+                ).copy(serverId = "srv-plex")
+            val plex2 =
+                testSession(
+                    sessionKey = "p2",
+                    userId = "u-plex-elena",
+                    startedAtMs = 2_000L,
+                ).copy(serverId = "srv-plex")
+            val jf1 =
+                testSession(
+                    sessionKey = "j1",
+                    userId = "u-jf-elena",
+                    startedAtMs = 3_000L,
+                ).copy(serverId = "srv-jf")
+            evaluator.evaluate(listOf(plex1, plex2, jf1), rules, nowMs = 5_000L).shouldBeEmpty()
+
+            // A 3rd stream on u-plex-elena violates the per-media-user limit.
+            val plex3 =
+                testSession(
+                    sessionKey = "p3",
+                    userId = "u-plex-elena",
+                    startedAtMs = 4_000L,
+                ).copy(serverId = "srv-plex")
+            val decisions = evaluator.evaluate(listOf(plex1, plex2, plex3, jf1), rules, nowMs = 6_000L)
+            decisions.map { it.session.sessionKey } shouldContainExactly listOf("p3")
+        }
     })

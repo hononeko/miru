@@ -268,7 +268,7 @@
 			const [accRes, keyRes, usrRes, healthRes, readyRes, plexRes, jellyfinRes, srvRes, guardrailsRes, auditRes] = await Promise.all([
 				api.GET('/api/v1/admin/accounts'),
 				api.GET('/api/v1/admin/api-keys'),
-				api.GET('/api/v1/users'),
+				api.GET('/api/v1/users', { params: { query: { merged: false } } }),
 				api.GET('/healthz'),
 				api.GET('/readyz'),
 				api.GET('/api/v1/admin/plex/status'),

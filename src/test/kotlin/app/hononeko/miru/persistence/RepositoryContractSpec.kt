@@ -709,6 +709,38 @@ private fun FunSpecRootScope.mediaPlaySummaryTests(ctxProvider: () -> ContractCo
             seriesScoped.totalWatchDurationSec shouldBe 2_400L
 
             ctx.history.summarizeSeriesByTitle("Breaking Bad", allowedUserIds = emptySet()).shouldBeRight() shouldBe MediaPlaySummary.EMPTY
+
+            // Linked media users belonging to the same Miru account are deduplicated in uniqueUsers
+            ctx.authAccounts
+                .insert(
+                    AuthAccountRecord(
+                        id = "acc-shared-person",
+                        username = "sharedperson",
+                        usernameNormalized = "sharedperson",
+                        passwordHash = "hash",
+                        role = "USER",
+                        createdAtMs = 1_000L,
+                        updatedAtMs = 1_000L,
+                    ),
+                ).shouldBeRight()
+            ctx.authAccounts
+                .replaceLinkedMediaUserIds("acc-shared-person", setOf("u-1", "u-2"), createdAtMs = 2_000L)
+                .shouldBeRight()
+
+            val byRatingLinked = ctx.history.summarizeByRatingKey("ep-54321").shouldBeRight()
+            byRatingLinked.totalPlays shouldBe 2L
+            byRatingLinked.uniqueUsers shouldBe 1
+
+            val seriesLinked = ctx.history.summarizeSeriesByTitle("Breaking Bad").shouldBeRight()
+            seriesLinked.totalPlays shouldBe 3L
+            seriesLinked.uniqueUsers shouldBe 1
+
+            // Unlinking u-2 immediately separates uniqueUsers again without modifying playback_history
+            ctx.authAccounts
+                .replaceLinkedMediaUserIds("acc-shared-person", setOf("u-1"), createdAtMs = 3_000L)
+                .shouldBeRight()
+            ctx.history.summarizeByRatingKey("ep-54321").shouldBeRight().uniqueUsers shouldBe 2
+            ctx.history.summarizeSeriesByTitle("Breaking Bad").shouldBeRight().uniqueUsers shouldBe 2
         }
     }
 }
@@ -1836,6 +1868,26 @@ private fun FunSpecRootScope.authAccountLinkModeTests(ctxProvider: () -> Contrac
     }
 }
 
+private suspend fun verifyMediaUserLinkUniqueness(ctx: ContractContext) {
+    ctx.authAccounts.replaceLinkedMediaUserIds("acc-2", setOf("mu-1", "mu-2"), createdAtMs = 2_500L).shouldBeRight()
+    ctx.authAccounts.findLinkedMediaUserIds("acc-2").shouldBeRight() shouldBe setOf("mu-1", "mu-2")
+    ctx.authAccounts.findAllMediaUserLinks().shouldBeRight() shouldBe mapOf("mu-1" to "acc-2", "mu-2" to "acc-2")
+    ctx.authAccounts.findAccountIdByMediaUserId("mu-1").shouldBeRight() shouldBe "acc-2"
+    ctx.authAccounts.findAccountIdByMediaUserId("mu-missing").shouldBeRight().shouldBeNull()
+    ctx.authAccounts.findAccountIdsByMediaUserIds(listOf("mu-1", "mu-missing")).shouldBeRight() shouldBe mapOf("mu-1" to "acc-2")
+    ctx.authAccounts.findAccountIdsByMediaUserIds(emptyList()).shouldBeRight() shouldBe emptyMap()
+
+    // Enforces unique media_user_id ownership at the DB level
+    ctx.authAccounts.replaceLinkedMediaUserIds("acc-1", setOf("mu-1"), createdAtMs = 2_600L).shouldBeLeft()
+
+    ctx.authAccounts.replaceLinkedMediaUserIds("acc-2", setOf("mu-2"), createdAtMs = 3_000L).shouldBeRight()
+    ctx.authAccounts.findLinkedMediaUserIds("acc-2").shouldBeRight() shouldBe setOf("mu-2")
+    ctx.authAccounts.findAccountIdByMediaUserId("mu-1").shouldBeRight().shouldBeNull()
+    // After unlinking from acc-2, acc-1 can claim mu-1
+    ctx.authAccounts.replaceLinkedMediaUserIds("acc-1", setOf("mu-1"), createdAtMs = 3_100L).shouldBeRight()
+    ctx.authAccounts.findAccountIdByMediaUserId("mu-1").shouldBeRight() shouldBe "acc-1"
+}
+
 private fun FunSpecRootScope.authAccountTests(ctxProvider: () -> ContractContext) {
     context("AuthAccountRepository") {
         test("persists accounts, linked media users, and cascades on media user or account deletion") {
@@ -1877,11 +1929,7 @@ private fun FunSpecRootScope.authAccountTests(ctxProvider: () -> ContractContext
             ctx.authAccounts.count().shouldBeRight() shouldBe 2L
             ctx.authAccounts.countAdmins().shouldBeRight() shouldBe 1L
 
-            ctx.authAccounts.replaceLinkedMediaUserIds("acc-2", setOf("mu-1", "mu-2"), createdAtMs = 2_500L).shouldBeRight()
-            ctx.authAccounts.findLinkedMediaUserIds("acc-2").shouldBeRight() shouldBe setOf("mu-1", "mu-2")
-
-            ctx.authAccounts.replaceLinkedMediaUserIds("acc-2", setOf("mu-2"), createdAtMs = 3_000L).shouldBeRight()
-            ctx.authAccounts.findLinkedMediaUserIds("acc-2").shouldBeRight() shouldBe setOf("mu-2")
+            verifyMediaUserLinkUniqueness(ctx)
 
             // Deleting media server cascades to users and auth_account_media_users
             ctx.servers.delete("srv-auth").shouldBeRight() shouldBe true

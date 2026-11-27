@@ -101,7 +101,7 @@ Automated stream guardrails default to `disabled`. Setting a rule's mode to `war
 | `GUARDRAIL_PAUSED_TIMEOUT_MINUTES` | `30` | Continuous pause duration threshold in minutes (`1` to `1440`). Resets when playback resumes. |
 | `GUARDRAIL_PAUSED_TIMEOUT_MESSAGE` | `Your stream was terminated because it remained paused for too long.` | Message displayed on the viewer's Plex client when terminated for remaining paused too long (max 500 characters). |
 | `GUARDRAIL_CONCURRENT_STREAMS_MODE` | `disabled` | `disabled`, `warn` (dry-run), or `enforce` for enforcing a per-user simultaneous stream limit. |
-| `GUARDRAIL_CONCURRENT_STREAMS_MAX` | `2` | Maximum concurrent active streams allowed per media user (`1` to `50`). Excess newest streams are targeted first. |
+| `GUARDRAIL_CONCURRENT_STREAMS_MAX` | `2` | Maximum concurrent active streams allowed per media server user (`users.id`, `1` to `50`). Evaluated independently per media server user even when multiple server profiles are linked to one Miru account. Excess newest streams are targeted first. |
 | `GUARDRAIL_CONCURRENT_STREAMS_MESSAGE` | `You have exceeded the maximum number of simultaneous streams allowed for your account.` | Message displayed on the viewer's Plex client when terminated for exceeding the concurrent stream limit (max 500 characters). |
 
 ## Authentication

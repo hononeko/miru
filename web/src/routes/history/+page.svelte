@@ -221,7 +221,6 @@
 	});
 
 	$effect(() => {
-		$effect(() => {
 		if (selectedServerId && serversStore.loaded && !serversStore.byId(selectedServerId)) {
 			selectedServerId = null;
 			userId = '';
@@ -230,6 +229,7 @@
 	});
 
 	// Re-run whenever query inputs change
+	$effect(() => {
 		void authStore.isUnlinkedUser;
 		void q;
 		void selectedServerId;
@@ -314,8 +314,11 @@
 		<div class="flex flex-wrap items-center gap-2">
 			{#if authStore.isAdmin}
 				<select
-					bind:value={userId}
-					onchange={() => (pageNum = 1)}
+					value={userId}
+					onchange={(e) => {
+						userId = e.currentTarget.value;
+						pageNum = 1;
+					}}
 					aria-label="Filter by user"
 					class="rounded-lg border border-input-border bg-surface px-2.5 py-2 text-xs font-medium text-fg-primary focus:border-cyan focus:outline-none focus:ring-2 focus:ring-cyan"
 				>

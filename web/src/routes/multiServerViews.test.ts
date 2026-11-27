@@ -5,6 +5,7 @@ import type { AdminServerStatusDto, UserSummaryDto } from '$api/types';
 import { authStore } from '$stores/auth.svelte';
 import { serversStore } from '$stores/servers.svelte';
 import AdminPage from './admin/+page.svelte';
+import HistoryPage from './history/+page.svelte';
 import UsersPage from './users/+page.svelte';
 
 vi.mock('$app/navigation', () => ({
@@ -247,6 +248,120 @@ describe('Multi-server Admin & Users views', () => {
 			expect(getSpy).toHaveBeenCalledWith('/api/v1/users', { params: { query: { serverId: 'srv-jf' } } });
 			expect(screen.queryByText('PLEX · Home Plex')).toBeNull();
 			expect(screen.getByText('JELLYFIN · Studio Jellyfin')).toBeTruthy();
+		});
+	});
+
+	it('renders unified Miru user card with all linked ServerBadges including Disconnected and requests unmerged users in Admin', async () => {
+		serversStore.servers = [
+			{
+				id: 'srv-plex',
+				name: 'Home Plex',
+				serverType: 'plex',
+				configured: true,
+				reachable: true,
+				websocketEnabled: true,
+				websocketState: 'CONNECTED'
+			},
+			{
+				id: 'srv-jf',
+				name: 'Studio Jellyfin',
+				serverType: 'jellyfin',
+				configured: false,
+				reachable: false,
+				websocketEnabled: false,
+				websocketState: 'DISABLED'
+			}
+		];
+
+		const mergedElena: UserSummaryDto = {
+			id: 'acc-elena',
+			accountId: 'acc-elena',
+			serverId: 'srv-plex',
+			serverName: 'Home Plex',
+			serverType: 'plex',
+			externalUserId: '10',
+			username: 'elena',
+			displayName: 'Elena',
+			isAdmin: false,
+			isStreaming: true,
+			activeStreamCount: 1,
+			lastSeenAtMs: 1_700_000_000_000,
+			totalPlays: 12,
+			totalWatchDurationSec: 3_600,
+			linkedProfiles: [
+				{
+					userId: 'u-plex-elena',
+					serverId: 'srv-plex',
+					serverName: 'Home Plex',
+					serverType: 'plex',
+					externalUserId: '10',
+					username: 'elena',
+					displayName: 'Elena',
+					isAdmin: false,
+					lastSeenAtMs: 1_700_000_000_000
+				},
+				{
+					userId: 'u-jf-elena',
+					serverId: 'srv-jf',
+					serverName: 'Studio Jellyfin',
+					serverType: 'jellyfin',
+					externalUserId: 'jf-10',
+					username: 'elena_jf',
+					displayName: 'Elena',
+					isAdmin: false,
+					lastSeenAtMs: 1_700_000_000_000
+				}
+			]
+		};
+
+		vi.spyOn(api, 'GET').mockImplementation((async () => ({
+			data: { users: [mergedElena] },
+			response: new Response(null, { status: 200 })
+		})) as never);
+
+		render(UsersPage);
+		await waitFor(() => {
+			expect(screen.getByRole('heading', { name: 'Elena' })).toBeTruthy();
+			expect(screen.getByText('PLEX · Home Plex')).toBeTruthy();
+			expect(screen.getByText('JELLYFIN · Studio Jellyfin · Disconnected')).toBeTruthy();
+			expect(screen.getByText('LIVE · 1')).toBeTruthy();
+		});
+		expect(screen.getByRole('link', { name: /Elena/ }).getAttribute('href')).toBe('/users/acc-elena');
+
+		cleanup();
+		mockAdminApi(['u-plex-alice']);
+		const adminGetSpy = vi.spyOn(api, 'GET');
+		render(AdminPage);
+		await waitFor(() => {
+			expect(adminGetSpy).toHaveBeenCalledWith('/api/v1/users', { params: { query: { merged: false } } });
+		});
+
+		cleanup();
+		vi.restoreAllMocks();
+		const historyGetSpy = vi.spyOn(api, 'GET').mockImplementation((async (url: string) => {
+			if (url === '/api/v1/users') {
+				return { data: { users: [mergedElena] }, response: new Response(null, { status: 200 }) };
+			}
+			return {
+				data: { items: [], page: 1, pageSize: 25, totalCount: 0, totalPages: 0 },
+				response: new Response(null, { status: 200 })
+			};
+		}) as never);
+		render(HistoryPage);
+		const userSelect = (await screen.findByLabelText('Filter by user')) as HTMLSelectElement;
+		await waitFor(() => {
+			expect(Array.from(userSelect.options).map((o) => o.value)).toEqual(['', 'acc-elena']);
+		});
+		const elenaOpt = Array.from(userSelect.options).find((o) => o.value === 'acc-elena');
+		if (elenaOpt) elenaOpt.selected = true;
+		userSelect.value = 'acc-elena';
+		await fireEvent.change(userSelect, { target: { value: 'acc-elena' } });
+		await waitFor(() => {
+			expect(historyGetSpy).toHaveBeenCalledWith('/api/v1/history', {
+				params: {
+					query: expect.objectContaining({ userId: 'acc-elena' })
+				}
+			});
 		});
 	});
 });

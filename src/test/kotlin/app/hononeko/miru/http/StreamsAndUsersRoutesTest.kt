@@ -84,6 +84,7 @@ private class StreamsUsersHarness(
     val userRepo: ExposedUserRepository,
     val activeSessionRepo: ExposedActiveSessionRepository,
     val historyRepo: ExposedPlaybackHistoryRepository,
+    val accountRepo: ExposedAuthAccountRepository,
     val authService: AuthService,
     val appConfig: AppConfig,
     val liveTechRef: AtomicReference<Map<ActiveSessionKey, StreamTechnicalInfo>> = AtomicReference(emptyMap()),
@@ -96,6 +97,8 @@ private class StreamsUsersHarness(
             playbackHistoryRepository = historyRepo,
             liveTechnicalProvider = { liveTechRef.get() },
             serverNameProvider = { "Main Plex" },
+            mediaServerRepository = serverRepo,
+            authAccountRepository = accountRepo,
         )
 
     override fun close() {
@@ -114,9 +117,10 @@ private fun createStreamsUsersHarness(): StreamsUsersHarness {
             sessionSecret = "super-secret-session-signing-key-32-chars",
         )
     val userRepo = ExposedUserRepository(handle)
+    val accountRepo = ExposedAuthAccountRepository(handle)
     val authService =
         AuthService(
-            accountRepository = ExposedAuthAccountRepository(handle),
+            accountRepository = accountRepo,
             sessionRepository = ExposedAuthSessionRepository(handle),
             apiKeyRepository = ExposedApiKeyRepository(handle),
             userRepository = userRepo,
@@ -138,6 +142,7 @@ private fun createStreamsUsersHarness(): StreamsUsersHarness {
         userRepo = userRepo,
         activeSessionRepo = ExposedActiveSessionRepository(handle),
         historyRepo = ExposedPlaybackHistoryRepository(handle),
+        accountRepo = accountRepo,
         authService = authService,
         appConfig = appConfig,
     )
@@ -848,7 +853,9 @@ class StreamsAndUsersRoutesTest :
                     aliceSummary.totalPlays shouldBe 12L
                     aliceSummary.totalWatchDurationSec shouldBe 7_800L
 
-                    val bobSummary = usersList.first { it.id == "mu-bob" }
+                    val bobSummary = usersList.first { it.id == bobLogin.principal.accountId }
+                    bobSummary.accountId shouldBe bobLogin.principal.accountId
+                    bobSummary.linkedProfiles.map { it.userId } shouldContainExactly listOf("mu-bob")
                     bobSummary.avatarUrl.shouldBeNull()
                     bobSummary.isStreaming shouldBe false
                     bobSummary.activeStreamCount shouldBe 0
@@ -1027,6 +1034,254 @@ class StreamsAndUsersRoutesTest :
                     stream.technical.transcodeVideoCodec shouldBe "h264"
                     stream.technical.transcodeAudioCodec shouldBe "aac"
                     stream.technical.transcodeContainer shouldBe "mp4"
+                }
+            }
+        }
+
+        test(
+            "merges linked media users across servers in /api/v1/users and /api/v1/users/{id}, " +
+                "narrows by serverId, and unmerges on unlink",
+        ) {
+            createStreamsUsersHarness().use { harness ->
+                val adminLogin = harness.authService.setupInitialAdmin("admin", "Admin-password-123").shouldBeRight()
+                harness.serverRepo
+                    .upsert(
+                        MediaServerRecord(
+                            id = "srv-plex",
+                            name = "Home Plex",
+                            serverType = "PLEX",
+                            machineId = "mach-plex",
+                            baseUrl = "http://plex.local:32400",
+                            createdAtMs = 1_000L,
+                            updatedAtMs = 1_000L,
+                        ),
+                    ).shouldBeRight()
+                harness.serverRepo
+                    .upsert(
+                        MediaServerRecord(
+                            id = "srv-jf",
+                            name = "Studio Jellyfin",
+                            serverType = "JELLYFIN",
+                            machineId = "mach-jf",
+                            baseUrl = "http://jf.local:8096",
+                            createdAtMs = 2_000L,
+                            updatedAtMs = 2_000L,
+                        ),
+                    ).shouldBeRight()
+
+                harness.userRepo
+                    .upsert(
+                        UserRecord(
+                            id = "u-plex-elena",
+                            serverId = "srv-plex",
+                            externalUserId = "10",
+                            username = "elena",
+                            displayName = "Elena",
+                            thumbUrl = "https://plex.tv/users/elena/avatar",
+                            lastSeenAtMs = 5_000L,
+                            createdAtMs = 1_000L,
+                            updatedAtMs = 1_000L,
+                        ),
+                    ).shouldBeRight()
+                harness.userRepo
+                    .upsert(
+                        UserRecord(
+                            id = "u-jf-elena",
+                            serverId = "srv-jf",
+                            externalUserId = "jf-10",
+                            username = "elena_jf",
+                            displayName = null,
+                            thumbUrl = null,
+                            lastSeenAtMs = 9_000L,
+                            createdAtMs = 2_000L,
+                            updatedAtMs = 2_000L,
+                        ),
+                    ).shouldBeRight()
+                harness.userRepo
+                    .upsert(
+                        UserRecord(
+                            id = "u-plex-bob",
+                            serverId = "srv-plex",
+                            externalUserId = "20",
+                            username = "bob",
+                            displayName = "Bob",
+                            lastSeenAtMs = 3_000L,
+                            createdAtMs = 1_500L,
+                            updatedAtMs = 1_500L,
+                        ),
+                    ).shouldBeRight()
+
+                val elenaAcc =
+                    harness.authService
+                        .createAccount(
+                            username = "elena-account",
+                            password = "Elena-password-123",
+                            role = MiruRole.USER,
+                            linkedMediaUserIds = setOf("u-plex-elena", "u-jf-elena"),
+                        ).shouldBeRight()
+                val elenaLogin = harness.authService.login("elena-account", "Elena-password-123").shouldBeRight()
+
+                harness.historyRepo
+                    .insert(
+                        PlaybackHistoryRecord(
+                            id = "h-plex-1",
+                            serverId = "srv-plex",
+                            userId = "u-plex-elena",
+                            media =
+                                MediaMetadataRecord(
+                                    ratingKey = "m-1",
+                                    mediaType = "movie",
+                                    title = "Spirited Away",
+                                    librarySectionKey = "sec-p",
+                                    durationMs = 1_000_000L,
+                                ),
+                            viewOffsetMs = 1_000_000L,
+                            watchedDurationSec = 1_200,
+                            pausedDurationSec = 0,
+                            completionPercent = 100.0,
+                            isWatched = true,
+                            streamTech = StreamTechRecord(streamDecision = "direct_play", hwTranscode = false),
+                            player = PlayerRecord(playerName = "Apple TV", playerPlatform = "tvOS", playerProduct = "Plex for Apple TV"),
+                            startedAtMs = 4_000L,
+                            stoppedAtMs = 5_000L,
+                        ),
+                    ).shouldBeRight()
+                harness.historyRepo
+                    .insert(
+                        PlaybackHistoryRecord(
+                            id = "h-jf-1",
+                            serverId = "srv-jf",
+                            userId = "u-jf-elena",
+                            media =
+                                MediaMetadataRecord(
+                                    ratingKey = "jf-1",
+                                    mediaType = "episode",
+                                    title = "Dulcinea",
+                                    grandparentTitle = "The Expanse",
+                                    librarySectionKey = "sec-jf",
+                                    durationMs = 1_000_000L,
+                                ),
+                            viewOffsetMs = 900_000L,
+                            watchedDurationSec = 2_400,
+                            pausedDurationSec = 0,
+                            completionPercent = 90.0,
+                            isWatched = true,
+                            streamTech = StreamTechRecord(streamDecision = "transcode", hwTranscode = true),
+                            player = PlayerRecord(playerName = "Firefox", playerPlatform = "Web", playerProduct = "Jellyfin Web"),
+                            startedAtMs = 8_000L,
+                            stoppedAtMs = 9_000L,
+                        ),
+                    ).shouldBeRight()
+                harness.activeSessionRepo
+                    .upsert(
+                        ActiveSessionRecord(
+                            serverId = "srv-jf",
+                            sessionKey = "jf-s1",
+                            sessionId = "jf-s1",
+                            userId = "u-jf-elena",
+                            media = MediaMetadataRecord("jf-live", "movie", "Arrival", durationMs = 2_000_000L),
+                            viewOffsetMs = 500_000L,
+                            state = "playing",
+                            streamTech = StreamTechRecord(streamDecision = "direct_play"),
+                            player = PlayerRecord(playerName = "Jellyfin Web"),
+                            startedAtMs = 10_000L,
+                            lastSeenAtMs = 11_000L,
+                        ),
+                    ).shouldBeRight()
+
+                testApplication {
+                    setupStreamsApp(harness)
+
+                    // 1. Default merged /api/v1/users returns 1 unified entry for Elena + 1 standalone Bob
+                    val mergedResp =
+                        MiruJson.decodeFromString<UsersListResponse>(
+                            client.get("/api/v1/users") { cookie(SESSION_COOKIE_NAME, adminLogin.signedToken) }.bodyAsText(),
+                        )
+                    mergedResp.users shouldHaveSize 2
+                    val elenaSummary = mergedResp.users.first { it.id == elenaAcc.account.id }
+                    elenaSummary.accountId shouldBe elenaAcc.account.id
+                    elenaSummary.displayName shouldBe "Elena"
+                    elenaSummary.avatarUrl shouldBe "/api/v1/users/u-plex-elena/avatar"
+                    elenaSummary.isStreaming shouldBe true
+                    elenaSummary.activeStreamCount shouldBe 1
+                    elenaSummary.lastSeenAtMs shouldBe 9_000L
+                    elenaSummary.totalPlays shouldBe 2L
+                    elenaSummary.totalWatchDurationSec shouldBe 3_600L
+                    elenaSummary.linkedProfiles.map { it.userId to it.serverId } shouldContainExactly
+                        listOf("u-plex-elena" to "srv-plex", "u-jf-elena" to "srv-jf")
+
+                    // 2. merged=false returns unmerged per-server profiles (for Admin linking)
+                    val unmergedResp =
+                        MiruJson.decodeFromString<UsersListResponse>(
+                            client.get("/api/v1/users?merged=false") { cookie(SESSION_COOKIE_NAME, adminLogin.signedToken) }.bodyAsText(),
+                        )
+                    unmergedResp.users shouldHaveSize 3
+
+                    // 3. Filtering by serverId narrows /api/v1/users
+                    val jfUsersResp =
+                        MiruJson.decodeFromString<UsersListResponse>(
+                            client.get("/api/v1/users?serverId=srv-jf") {
+                                cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                            }.bodyAsText(),
+                        )
+                    jfUsersResp.users.single().let { jf ->
+                        jf.id shouldBe "u-jf-elena"
+                        jf.accountId shouldBe elenaAcc.account.id
+                        jf.totalPlays shouldBe 1L
+                        jf.totalWatchDurationSec shouldBe 2_400L
+                    }
+
+                    // 4. Lookup by canonical accountId AND by either linked users.id all return unified UserDetailResponse
+                    for (lookupId in listOf(elenaAcc.account.id, "u-plex-elena", "u-jf-elena")) {
+                        val detail =
+                            MiruJson.decodeFromString<UserDetailResponse>(
+                                client.get("/api/v1/users/$lookupId") { cookie(SESSION_COOKIE_NAME, adminLogin.signedToken) }.bodyAsText(),
+                            )
+                        detail.user.id shouldBe elenaAcc.account.id
+                        detail.totalPlays shouldBe 2L
+                        detail.totalWatchDurationSec shouldBe 3_600L
+                        detail.activeStreams shouldHaveSize 1
+                        detail.recentPlays.map { it.id to it.serverType } shouldContainExactly
+                            listOf("h-jf-1" to "jellyfin", "h-plex-1" to "plex")
+                        detail.decisionBreakdown.directPlay shouldBe 1L
+                        detail.decisionBreakdown.transcode shouldBe 1L
+                        detail.decisionBreakdown.hwTranscode shouldBe 1L
+                        detail.libraryBreakdown.map { it.librarySectionKey } shouldContainExactly listOf("sec-jf", "sec-p")
+                    }
+
+                    // 5. Narrowing detail by serverId restricts streams, plays, and breakdowns
+                    val plexOnlyDetail =
+                        MiruJson.decodeFromString<UserDetailResponse>(
+                            client.get("/api/v1/users/${elenaAcc.account.id}?serverId=srv-plex") {
+                                cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                            }.bodyAsText(),
+                        )
+                    plexOnlyDetail.user.id shouldBe "u-plex-elena"
+                    plexOnlyDetail.activeStreams.shouldBeEmpty()
+                    plexOnlyDetail.totalPlays shouldBe 1L
+                    plexOnlyDetail.totalWatchDurationSec shouldBe 1_200L
+                    plexOnlyDetail.recentPlays.map { it.id } shouldContainExactly listOf("h-plex-1")
+
+                    // 6. USER RBAC allows own canonical accountId and own linked users.id, rejects others
+                    client.get("/api/v1/users/${elenaAcc.account.id}") {
+                        cookie(SESSION_COOKIE_NAME, elenaLogin.signedToken)
+                    }.status shouldBe HttpStatusCode.OK
+                    client.get("/api/v1/users/u-jf-elena") {
+                        cookie(SESSION_COOKIE_NAME, elenaLogin.signedToken)
+                    }.status shouldBe HttpStatusCode.OK
+                    client.get("/api/v1/users/u-plex-bob") {
+                        cookie(SESSION_COOKIE_NAME, elenaLogin.signedToken)
+                    }.status shouldBe HttpStatusCode.Forbidden
+
+                    // 7. Unlinking Jellyfin user immediately separates its stats without modifying playback_history
+                    harness.authService.setLinkedMediaUsers(elenaAcc.account.id, setOf("u-plex-elena")).shouldBeRight()
+                    val afterUnlink =
+                        MiruJson.decodeFromString<UsersListResponse>(
+                            client.get("/api/v1/users") { cookie(SESSION_COOKIE_NAME, adminLogin.signedToken) }.bodyAsText(),
+                        )
+                    afterUnlink.users shouldHaveSize 3
+                    afterUnlink.users.first { it.id == elenaAcc.account.id }.totalPlays shouldBe 1L
+                    afterUnlink.users.first { it.id == "u-jf-elena" }.totalPlays shouldBe 1L
                 }
             }
         }

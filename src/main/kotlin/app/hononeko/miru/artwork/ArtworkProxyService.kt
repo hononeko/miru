@@ -3,9 +3,11 @@ package app.hononeko.miru.artwork
 import app.hononeko.miru.adapter.MediaServerAdapter
 import app.hononeko.miru.auth.MiruPrincipal
 import app.hononeko.miru.domain.error.MiruError
+import app.hononeko.miru.persistence.repository.AuthAccountRepository
 import app.hononeko.miru.persistence.repository.LibraryRepository
 import app.hononeko.miru.persistence.repository.UserRepository
 import app.hononeko.miru.service.MediaSectionAccessChecker
+import app.hononeko.miru.service.ViewerIdentityResolver
 import arrow.core.Either
 import arrow.core.getOrElse
 import arrow.core.raise.either
@@ -111,6 +113,7 @@ class ArtworkProxyService(
     private val adapterForServer: (suspend (String?) -> MediaServerAdapter?)? = null,
     private val allServerAdaptersProvider: (suspend () -> List<Pair<String?, MediaServerAdapter>>)? = null,
     private val serverBaseUrlsProvider: (() -> List<String>)? = null,
+    private val authAccountRepository: AuthAccountRepository? = null,
 ) {
     constructor(
         adapter: MediaServerAdapter,
@@ -281,11 +284,30 @@ class ArtworkProxyService(
                     fieldErrors = mapOf("id" to "must not be blank"),
                 )
             }
-            principal.requireMediaUserAccess(trimmedUserId).bind()
+            ViewerIdentityResolver.requireTargetViewerAccess(principal, trimmedUserId).bind()
 
+            val directUser = userRepository.findById(trimmedUserId).bind()
             val user =
-                userRepository.findById(trimmedUserId).bind()
-                    ?: raise(MiruError.NotFound(resource = "User", id = trimmedUserId))
+                if (directUser != null) {
+                    directUser
+                } else {
+                    val linkedIds =
+                        authAccountRepository
+                            ?.findById(trimmedUserId)
+                            ?.bind()
+                            ?.let { authAccountRepository.findLinkedMediaUserIds(it.id).bind() }
+                            .orEmpty()
+                    val profiles =
+                        if (linkedIds.isEmpty()) {
+                            emptyList()
+                        } else {
+                            userRepository.findByIds(linkedIds).bind().sortedWith(ViewerIdentityResolver.stableProfileComparator)
+                        }
+                    if (profiles.isEmpty()) {
+                        raise(MiruError.NotFound(resource = "User", id = trimmedUserId))
+                    }
+                    profiles.firstOrNull { !it.thumbUrl.isNullOrBlank() } ?: profiles.first()
+                }
 
             val rawThumbUrl =
                 user.thumbUrl?.trim()?.takeIf { it.isNotEmpty() }
@@ -293,7 +315,7 @@ class ArtworkProxyService(
 
             val target = validateAvatarTarget(rawThumbUrl).bind()
 
-            val cacheKey = "avatar:$trimmedUserId:${BoundedArtworkCache.sha256Hex(rawThumbUrl).take(AVATAR_CACHE_KEY_HASH_LEN)}"
+            val cacheKey = "avatar:${user.id}:${BoundedArtworkCache.sha256Hex(rawThumbUrl).take(AVATAR_CACHE_KEY_HASH_LEN)}"
             cache.get(cacheKey)?.let { return@either it }
 
             when (target) {

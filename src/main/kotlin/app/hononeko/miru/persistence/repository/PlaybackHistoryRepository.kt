@@ -16,6 +16,7 @@ import app.hononeko.miru.persistence.model.OverviewStatsRow
 import app.hononeko.miru.persistence.model.PlaybackHistoryRecord
 import app.hononeko.miru.persistence.model.PlaybackHistoryStatsRow
 import app.hononeko.miru.persistence.model.UserPlaybackSummary
+import app.hononeko.miru.persistence.table.AuthAccountMediaUsersTable
 import app.hononeko.miru.persistence.table.MediaItemsCacheTable
 import app.hononeko.miru.persistence.table.PlaybackHistoryTable
 import app.hononeko.miru.persistence.table.UsersTable
@@ -100,6 +101,24 @@ interface PlaybackHistoryRepository {
     ): Either<MiruError.PersistenceError, List<PlaybackHistoryRecord>>
 
     suspend fun listByUser(userId: String): Either<MiruError.PersistenceError, List<PlaybackHistoryRecord>>
+
+    suspend fun listByUsers(
+        userIds: Set<String>,
+        serverId: String? = null,
+    ): Either<MiruError.PersistenceError, List<PlaybackHistoryRecord>> =
+        when {
+            userIds.isEmpty() -> Either.Right(emptyList())
+            userIds.size == 1 && serverId == null -> listByUser(userIds.first())
+            else ->
+                query(
+                    HistoryFilter(
+                        serverId = serverId,
+                        userIds = userIds,
+                        limit = Int.MAX_VALUE,
+                        offset = 0,
+                    ),
+                ).map { it.items }
+        }
 
     suspend fun listForStats(
         serverId: String? = null,
@@ -738,6 +757,20 @@ class ExposedPlaybackHistoryRepository(
                 return@exposedReadQuery MediaPlaySummary.EMPTY
             }
 
+            val linksByMediaUser =
+                if (uniqueUsers.isEmpty()) {
+                    emptyMap()
+                } else {
+                    AuthAccountMediaUsersTable
+                        .select(AuthAccountMediaUsersTable.mediaUserId, AuthAccountMediaUsersTable.accountId)
+                        .where { AuthAccountMediaUsersTable.mediaUserId inList uniqueUsers }
+                        .associate { it[AuthAccountMediaUsersTable.mediaUserId] to it[AuthAccountMediaUsersTable.accountId] }
+                }
+            val deduplicatedUsersCount =
+                uniqueUsers
+                    .mapTo(hashSetOf()) { rawUserId -> linksByMediaUser[rawUserId] ?: rawUserId }
+                    .size
+
             val resolvedLastUserId = lastUserId
             val lastWatchedUsername =
                 resolvedLastUserId?.let { uid ->
@@ -755,7 +788,7 @@ class ExposedPlaybackHistoryRepository(
 
             MediaPlaySummary(
                 totalPlays = totalPlays,
-                uniqueUsers = uniqueUsers.size,
+                uniqueUsers = deduplicatedUsersCount,
                 lastWatchedAtMs = lastWatchedAtMs,
                 lastWatchedUserId = resolvedLastUserId,
                 lastWatchedUsername = lastWatchedUsername,
@@ -794,6 +827,27 @@ class ExposedPlaybackHistoryRepository(
                 .orderBy(PlaybackHistoryTable.stoppedAtMs to SortOrder.DESC, PlaybackHistoryTable.id to SortOrder.ASC)
                 .map { it.toPlaybackHistoryRecord() }
         }
+
+    override suspend fun listByUsers(
+        userIds: Set<String>,
+        serverId: String?,
+    ): Either<MiruError.PersistenceError, List<PlaybackHistoryRecord>> {
+        if (userIds.isEmpty()) return Either.Right(emptyList())
+        return readDatabase.exposedReadQuery("playback_history_list_by_users") {
+            val baseCondition: Op<Boolean> = PlaybackHistoryTable.userId inList userIds
+            val condition =
+                if (serverId != null) {
+                    baseCondition and (PlaybackHistoryTable.serverId eq serverId)
+                } else {
+                    baseCondition
+                }
+            PlaybackHistoryTable
+                .selectAll()
+                .where { condition }
+                .orderBy(PlaybackHistoryTable.stoppedAtMs to SortOrder.DESC, PlaybackHistoryTable.id to SortOrder.ASC)
+                .map { it.toPlaybackHistoryRecord() }
+        }
+    }
 
     private fun buildFilterCondition(filter: HistoryFilter): Op<Boolean> {
         val predicates = mutableListOf<Op<Boolean>>()

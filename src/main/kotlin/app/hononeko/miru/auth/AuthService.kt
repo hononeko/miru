@@ -26,6 +26,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
+import java.sql.SQLException
 import java.util.UUID
 
 data class LoginResult(
@@ -358,7 +359,7 @@ class AuthService(
         either {
             val validated = validateCredentials(username, password, email).bind()
             val normalizedLinks = linkedMediaUserIds.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
-            validateMediaUserLinks(normalizedLinks).bind()
+            validateMediaUserLinks(normalizedLinks, excludingAccountId = null).bind()
 
             val existing = accountRepository.findByNormalizedUsername(validated.usernameNormalized).bind()
             ensure(existing == null) {
@@ -380,7 +381,7 @@ class AuthService(
                 )
             accountRepository.insert(account).bind()
             if (normalizedLinks.isNotEmpty()) {
-                accountRepository.replaceLinkedMediaUserIds(account.id, normalizedLinks, now).bind()
+                replaceLinksOrConflict(account.id, normalizedLinks, now).bind()
             }
             AccountWithLinks(account = account, linkedMediaUserIds = normalizedLinks)
         }
@@ -573,10 +574,10 @@ class AuthService(
                 accountRepository.findById(accountId).bind()
                     ?: raise(MiruError.NotFound(resource = "Account", id = accountId))
             val normalizedLinks = mediaUserIds.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
-            validateMediaUserLinks(normalizedLinks).bind()
+            validateMediaUserLinks(normalizedLinks, excludingAccountId = accountId).bind()
             val now = clock()
             val manual = MediaUserLinkMode.MANUAL.name
-            accountRepository.replaceLinkedMediaUserIds(accountId, normalizedLinks, now, linkMode = manual).bind()
+            replaceLinksOrConflict(accountId, normalizedLinks, now, linkMode = manual).bind()
             AccountWithLinks(
                 account = account.copy(mediaUserLinkMode = manual, updatedAtMs = now),
                 linkedMediaUserIds = normalizedLinks,
@@ -765,11 +766,16 @@ class AuthService(
         }
 
     /**
-     * Checks that every media user exists and that no two are on the same media server: a Miru account
-     * stands for one person, who has one account on each media server.
+     * Checks that every media user exists, that no two are on the same media server (a Miru account
+     * stands for one person, who has one account on each media server), and that none of them is
+     * already owned by a different Miru account.
      */
-    private suspend fun validateMediaUserLinks(mediaUserIds: Set<String>): Either<MiruError, Unit> =
+    private suspend fun validateMediaUserLinks(
+        mediaUserIds: Set<String>,
+        excludingAccountId: String?,
+    ): Either<MiruError, Unit> =
         either {
+            if (mediaUserIds.isEmpty()) return@either
             val users =
                 mediaUserIds.map { mediaUserId ->
                     userRepository.findById(mediaUserId).bind()
@@ -783,7 +789,50 @@ class AuthService(
                     fieldErrors = mapOf("linkedMediaUserIds" to "links $names, who are on the same media server"),
                 )
             }
+            val ownersByMediaUser = accountRepository.findAccountIdsByMediaUserIds(mediaUserIds).bind()
+            val conflictEntry = ownersByMediaUser.entries.firstOrNull { (_, ownerId) -> ownerId != excludingAccountId }
+            if (conflictEntry != null) {
+                val (conflictingMediaUserId, ownerAccountId) = conflictEntry
+                val conflictingUser = users.first { it.id == conflictingMediaUserId }
+                val ownerAccount = accountRepository.findById(ownerAccountId).bind()
+                val ownerLabel = ownerAccount?.username ?: ownerAccountId
+                raise(
+                    MiruError.Conflict(
+                        "Media user '${conflictingUser.username}' is already linked to account '$ownerLabel'",
+                    ),
+                )
+            }
         }
+
+    private suspend fun replaceLinksOrConflict(
+        accountId: String,
+        mediaUserIds: Set<String>,
+        createdAtMs: Long,
+        linkMode: String? = null,
+    ): Either<MiruError, Unit> =
+        accountRepository.replaceLinkedMediaUserIds(accountId, mediaUserIds, createdAtMs, linkMode).mapLeft { err ->
+            if (isUniqueConstraintViolation(err.cause)) {
+                MiruError.Conflict("One or more media users are already linked to another account")
+            } else {
+                err
+            }
+        }
+
+    private fun isUniqueConstraintViolation(cause: Throwable?): Boolean {
+        var current: Throwable? = cause
+        while (current != null) {
+            if (current is SQLException) {
+                if (current.sqlState == POSTGRES_UNIQUE_VIOLATION_SQLSTATE) return true
+                val msg = current.message.orEmpty()
+                if (current.sqlState == SQLITE_CONSTRAINT_SQLSTATE && msg.contains("UNIQUE", ignoreCase = true)) {
+                    return true
+                }
+                if (msg.contains("UNIQUE constraint failed", ignoreCase = true)) return true
+            }
+            current = current.cause
+        }
+        return false
+    }
 
     private fun validateCredentials(
         username: String,
@@ -950,5 +999,7 @@ class AuthService(
         val ALLOWED_STATS_RANGES = listOf("7d", "30d", "90d", "all")
         val ALLOWED_ANALYTICS_METRICS = listOf("plays", "duration")
         private val USERNAME_REGEX = Regex("^[A-Za-z0-9._-]+$")
+        private const val POSTGRES_UNIQUE_VIOLATION_SQLSTATE = "23505"
+        private const val SQLITE_CONSTRAINT_SQLSTATE = "23000"
     }
 }

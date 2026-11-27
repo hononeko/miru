@@ -18,11 +18,13 @@ import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.lessEq
 import org.jetbrains.exposed.v1.core.longParam
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.update
 import org.jetbrains.exposed.v1.jdbc.upsert
@@ -85,6 +87,17 @@ interface AuthAccountRepository {
     suspend fun delete(id: String): Either<MiruError.PersistenceError, Boolean>
 
     suspend fun findLinkedMediaUserIds(accountId: String): Either<MiruError.PersistenceError, Set<String>>
+
+    /** Returns a map of `media_user_id -> account_id` across all linked media users. */
+    suspend fun findAllMediaUserLinks(): Either<MiruError.PersistenceError, Map<String, String>>
+
+    /** Returns the owning Miru `account_id` for [mediaUserId], or `null` if unlinked. */
+    suspend fun findAccountIdByMediaUserId(mediaUserId: String): Either<MiruError.PersistenceError, String?>
+
+    /** Returns `media_user_id -> account_id` for every linked ID in [mediaUserIds]. */
+    suspend fun findAccountIdsByMediaUserIds(
+        mediaUserIds: Collection<String>,
+    ): Either<MiruError.PersistenceError, Map<String, String>>
 
     /**
      * Replaces the account's linked media users. When [linkMode] is given, the account's
@@ -335,6 +348,40 @@ class ExposedAuthAccountRepository(
                 .map { it[AuthAccountMediaUsersTable.mediaUserId] }
                 .toSet()
         }
+
+    override suspend fun findAllMediaUserLinks(): Either<MiruError.PersistenceError, Map<String, String>> =
+        readDatabase.exposedReadQuery("auth_account_find_all_media_user_links") {
+            AuthAccountMediaUsersTable
+                .select(AuthAccountMediaUsersTable.mediaUserId, AuthAccountMediaUsersTable.accountId)
+                .orderBy(AuthAccountMediaUsersTable.mediaUserId to SortOrder.ASC)
+                .associate { row ->
+                    row[AuthAccountMediaUsersTable.mediaUserId] to row[AuthAccountMediaUsersTable.accountId]
+                }
+        }
+
+    override suspend fun findAccountIdByMediaUserId(mediaUserId: String): Either<MiruError.PersistenceError, String?> =
+        readDatabase.exposedReadQuery("auth_account_find_account_by_media_user") {
+            AuthAccountMediaUsersTable
+                .select(AuthAccountMediaUsersTable.accountId)
+                .where { AuthAccountMediaUsersTable.mediaUserId eq mediaUserId }
+                .singleOrNull()
+                ?.get(AuthAccountMediaUsersTable.accountId)
+        }
+
+    override suspend fun findAccountIdsByMediaUserIds(
+        mediaUserIds: Collection<String>,
+    ): Either<MiruError.PersistenceError, Map<String, String>> {
+        val uniqueIds = mediaUserIds.distinct()
+        if (uniqueIds.isEmpty()) return Either.Right(emptyMap())
+        return readDatabase.exposedReadQuery("auth_account_find_accounts_by_media_users") {
+            AuthAccountMediaUsersTable
+                .select(AuthAccountMediaUsersTable.mediaUserId, AuthAccountMediaUsersTable.accountId)
+                .where { AuthAccountMediaUsersTable.mediaUserId inList uniqueIds }
+                .associate { row ->
+                    row[AuthAccountMediaUsersTable.mediaUserId] to row[AuthAccountMediaUsersTable.accountId]
+                }
+        }
+    }
 
     override suspend fun replaceLinkedMediaUserIds(
         accountId: String,

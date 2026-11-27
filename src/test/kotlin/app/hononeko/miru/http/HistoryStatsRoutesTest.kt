@@ -80,6 +80,8 @@ private fun createHistoryHarness(authMode: AuthMode = AuthMode.LOCAL): HistoryTe
     val handle = DatabaseFactory.createAndMigrate(DatabaseConfig.Sqlite(dbPath)).shouldBeRight()
     val userRepo = ExposedUserRepository(handle)
     val historyRepo = ExposedPlaybackHistoryRepository(handle)
+    val accountRepo = ExposedAuthAccountRepository(handle)
+    val serverRepo = ExposedMediaServerRepository(handle)
     val authConfig =
         AuthConfig(
             mode = authMode,
@@ -87,7 +89,7 @@ private fun createHistoryHarness(authMode: AuthMode = AuthMode.LOCAL): HistoryTe
         )
     val authService =
         AuthService(
-            accountRepository = ExposedAuthAccountRepository(handle),
+            accountRepository = accountRepo,
             sessionRepository = ExposedAuthSessionRepository(handle),
             apiKeyRepository = ExposedApiKeyRepository(handle),
             userRepository = userRepo,
@@ -100,6 +102,8 @@ private fun createHistoryHarness(authMode: AuthMode = AuthMode.LOCAL): HistoryTe
             playbackHistoryRepository = historyRepo,
             userRepository = userRepo,
             clock = { FIXED_NOW_MS },
+            mediaServerRepository = serverRepo,
+            authAccountRepository = accountRepo,
         )
     val appConfig =
         AppConfig(
@@ -112,7 +116,7 @@ private fun createHistoryHarness(authMode: AuthMode = AuthMode.LOCAL): HistoryTe
     return HistoryTestHarness(
         tempDir = dir,
         dbHandle = handle,
-        serverRepo = ExposedMediaServerRepository(handle),
+        serverRepo = serverRepo,
         userRepo = userRepo,
         historyRepo = historyRepo,
         authService = authService,
@@ -1082,7 +1086,8 @@ class HistoryStatsRoutesTest :
                     wrappedResp.status shouldBe HttpStatusCode.OK
                     val wrapped = MiruJson.decodeFromString<WrappedStatsResponse>(wrappedResp.bodyAsText())
                     wrapped.year shouldBe 2026
-                    wrapped.userId shouldBe "u-alice"
+                    wrapped.userId shouldBe aliceAccount.account.id
+                    wrapped.accountId shouldBe aliceAccount.account.id
                     wrapped.username shouldBe "alice"
                     wrapped.totalPlays shouldBe 3L
                     wrapped.completedPlays shouldBe 3L
@@ -1336,7 +1341,7 @@ class HistoryStatsRoutesTest :
                     val scopedApril14 = scopedOverview.playsPerDay.first { it.date == "2026-04-14" }
                     scopedApril14.playCount shouldBe 2L
                     scopedApril14.media.map { it.title } shouldContainExactly listOf("Frieren")
-                    scopedApril14.users.map { it.userId } shouldContainExactly listOf("u-alice")
+                    scopedApril14.users.map { it.userId } shouldContainExactly listOf(aliceAccount.account.id)
 
                     val bobStats =
                         MiruJson.decodeFromString<UserStatsResponse>(
@@ -1350,6 +1355,304 @@ class HistoryStatsRoutesTest :
                     bobApril14.media.map { it.title to it.playCount } shouldContainExactly
                         listOf("Short Clip" to 3L, "Long Epic" to 1L)
                     bobApril14.users.map { it.displayName } shouldContainExactly listOf("Bob")
+                }
+            }
+        }
+
+        test(
+            "aggregates history, overview, user stats, heatmap, clients, and wrapped " +
+                "across linked server profiles and narrows by serverId",
+        ) {
+            createHistoryHarness().use { harness ->
+                val adminLogin = harness.authService.setupInitialAdmin("admin", "Admin-strong-password-123").shouldBeRight()
+                harness.serverRepo
+                    .upsert(
+                        MediaServerRecord(
+                            id = "srv-plex",
+                            name = "Home Plex",
+                            serverType = "PLEX",
+                            machineId = "mach-plex",
+                            baseUrl = "http://plex.local:32400",
+                            createdAtMs = 1_000L,
+                            updatedAtMs = 1_000L,
+                        ),
+                    ).shouldBeRight()
+                harness.serverRepo
+                    .upsert(
+                        MediaServerRecord(
+                            id = "srv-jf",
+                            name = "Studio Jellyfin",
+                            serverType = "JELLYFIN",
+                            machineId = "mach-jf",
+                            baseUrl = "http://jf.local:8096",
+                            createdAtMs = 2_000L,
+                            updatedAtMs = 2_000L,
+                        ),
+                    ).shouldBeRight()
+
+                harness.userRepo
+                    .upsert(
+                        UserRecord(
+                            id = "u-plex-elena",
+                            serverId = "srv-plex",
+                            externalUserId = "10",
+                            username = "elena",
+                            displayName = "Elena",
+                            createdAtMs = 1_000L,
+                            updatedAtMs = 1_000L,
+                        ),
+                    ).shouldBeRight()
+                harness.userRepo
+                    .upsert(
+                        UserRecord(
+                            id = "u-jf-elena",
+                            serverId = "srv-jf",
+                            externalUserId = "jf-10",
+                            username = "elena_jf",
+                            displayName = "Elena JF",
+                            createdAtMs = 2_000L,
+                            updatedAtMs = 2_000L,
+                        ),
+                    ).shouldBeRight()
+                harness.userRepo
+                    .upsert(
+                        UserRecord(
+                            id = "u-plex-bob",
+                            serverId = "srv-plex",
+                            externalUserId = "20",
+                            username = "bob",
+                            displayName = "Bob",
+                            createdAtMs = 1_500L,
+                            updatedAtMs = 1_500L,
+                        ),
+                    ).shouldBeRight()
+
+                val elenaAccount =
+                    harness.authService
+                        .createAccount(
+                            username = "elena-miru",
+                            password = "Elena-strong-password-123",
+                            role = MiruRole.USER,
+                            linkedMediaUserIds = setOf("u-plex-elena", "u-jf-elena"),
+                        ).shouldBeRight()
+                val elenaLogin = harness.authService.login("elena-miru", "Elena-strong-password-123").shouldBeRight()
+
+                // Day 1 (Apr 12): Plex play; Day 2 (Apr 13): Jellyfin play; Day 3 (Apr 14): Plex + Jellyfin plays -> 3-day binge streak!
+                val appleTvPlayer =
+                    PlayerRecord(
+                        playerName = "Apple TV",
+                        playerPlatform = "tvOS",
+                        playerProduct = "Plex for Apple TV",
+                        playerMachineId = "atv-elena",
+                        ipAddress = "10.0.0.10",
+                        location = "lan",
+                    )
+                val jfWebPlayer =
+                    PlayerRecord(
+                        playerName = "Jellyfin Web",
+                        playerPlatform = "Web",
+                        playerProduct = "Jellyfin Web",
+                        playerMachineId = "jf-elena",
+                        ipAddress = "10.0.0.11",
+                        location = "lan",
+                    )
+                val records =
+                    listOf(
+                        historyMovieRecord(
+                            id = "m-plex-1",
+                            userId = "u-plex-elena",
+                            ratingKey = "mov-1",
+                            title = "Spirited Away",
+                            year = 2001,
+                            thumbPath = null,
+                            watchedDurationSec = 1_000,
+                            pausedDurationSec = 0,
+                            completionPercent = 95.0,
+                            streamTech = StreamTechRecord(streamDecision = "direct_play", hwTranscode = false),
+                            player = appleTvPlayer,
+                            startedAt = "2026-04-12T18:00:00Z",
+                            stoppedAt = "2026-04-12T18:20:00Z",
+                        ).copy(serverId = "srv-plex"),
+                        historyMovieRecord(
+                            id = "m-jf-1",
+                            userId = "u-jf-elena",
+                            ratingKey = "mov-1",
+                            title = "Spirited Away",
+                            year = 2001,
+                            thumbPath = null,
+                            watchedDurationSec = 2_000,
+                            pausedDurationSec = 0,
+                            completionPercent = 95.0,
+                            streamTech = StreamTechRecord(streamDecision = "transcode", hwTranscode = true),
+                            player = jfWebPlayer,
+                            startedAt = "2026-04-13T18:00:00Z",
+                            stoppedAt = "2026-04-13T18:40:00Z",
+                        ).copy(serverId = "srv-jf"),
+                        historyMovieRecord(
+                            id = "m-plex-2",
+                            userId = "u-plex-elena",
+                            ratingKey = "mov-2",
+                            title = "Arrival",
+                            year = 2016,
+                            thumbPath = null,
+                            watchedDurationSec = 1_500,
+                            pausedDurationSec = 0,
+                            completionPercent = 95.0,
+                            streamTech = StreamTechRecord(streamDecision = "direct_play", hwTranscode = false),
+                            player = appleTvPlayer,
+                            startedAt = "2026-04-14T18:00:00Z",
+                            stoppedAt = "2026-04-14T18:30:00Z",
+                        ).copy(serverId = "srv-plex"),
+                        historyMovieRecord(
+                            id = "m-jf-2",
+                            userId = "u-jf-elena",
+                            ratingKey = "mov-3",
+                            title = "Dune",
+                            year = 2021,
+                            thumbPath = null,
+                            watchedDurationSec = 2_500,
+                            pausedDurationSec = 0,
+                            completionPercent = 95.0,
+                            streamTech = StreamTechRecord(streamDecision = "direct_stream", hwTranscode = false),
+                            player = jfWebPlayer,
+                            startedAt = "2026-04-14T20:00:00Z",
+                            stoppedAt = "2026-04-14T20:45:00Z",
+                        ).copy(serverId = "srv-jf"),
+                        historyMovieRecord(
+                            id = "m-bob-1",
+                            userId = "u-plex-bob",
+                            ratingKey = "mov-9",
+                            title = "Akira",
+                            year = 1988,
+                            thumbPath = null,
+                            watchedDurationSec = 500,
+                            pausedDurationSec = 0,
+                            completionPercent = 95.0,
+                            streamTech = StreamTechRecord(streamDecision = "direct_play", hwTranscode = false),
+                            player =
+                                PlayerRecord(
+                                    playerName = "Plex Web",
+                                    playerPlatform = "Web",
+                                    playerProduct = "Plex Web",
+                                    playerMachineId = "pw-bob",
+                                    ipAddress = "10.0.0.12",
+                                    location = "lan",
+                                ),
+                            startedAt = "2026-04-14T21:00:00Z",
+                            stoppedAt = "2026-04-14T21:10:00Z",
+                        ).copy(serverId = "srv-plex"),
+                    )
+                records.forEach { harness.historyRepo.insert(it).shouldBeRight() }
+
+                testApplication {
+                    setupApp(harness)
+
+                    // 1. Overview deduplicates Elena across Plex & Jellyfin (activeUsers = 2: Elena + Bob)
+                    val overview =
+                        MiruJson.decodeFromString<OverviewStatsResponse>(
+                            client.get("/api/v1/stats/overview?range=7d") {
+                                cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                            }.bodyAsText(),
+                        )
+                    overview.activeUsers shouldBe 2
+                    overview.totalPlays shouldBe 5L
+                    val apr14 = overview.playsPerDay.first { it.date == "2026-04-14" }
+                    apr14.users.map { Triple(it.userId, it.playCount, it.watchDurationSec) } shouldContainExactly
+                        listOf(
+                            Triple(elenaAccount.account.id, 2L, 4_000L),
+                            Triple("u-plex-bob", 1L, 500L),
+                        )
+
+                    // 2. History filters across all linked profiles by accountId or linked users.id, and intersects with serverId
+                    val historyByAccount =
+                        MiruJson.decodeFromString<HistoryListResponse>(
+                            client.get("/api/v1/history?userId=${elenaAccount.account.id}") {
+                                cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                            }.bodyAsText(),
+                        )
+                    historyByAccount.totalCount shouldBe 4L
+                    historyByAccount.items.map { it.serverId }.toSet() shouldBe setOf("srv-plex", "srv-jf")
+
+                    val historyByPlexId =
+                        MiruJson.decodeFromString<HistoryListResponse>(
+                            client.get("/api/v1/history?userId=u-plex-elena") {
+                                cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                            }.bodyAsText(),
+                        )
+                    historyByPlexId.totalCount shouldBe 4L
+
+                    val historyJfOnly =
+                        MiruJson.decodeFromString<HistoryListResponse>(
+                            client.get("/api/v1/history?userId=${elenaAccount.account.id}&serverId=srv-jf") {
+                                cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                            }.bodyAsText(),
+                        )
+                    historyJfOnly.totalCount shouldBe 2L
+                    historyJfOnly.items.all { it.serverId == "srv-jf" } shouldBe true
+
+                    // 3. /api/v1/users/{id}/stats aggregates binge streak (3d), maxDailyPlays (2),
+                    //    and narrows by serverId
+                    val elenaStats =
+                        MiruJson.decodeFromString<UserStatsResponse>(
+                            client.get("/api/v1/users/${elenaAccount.account.id}/stats?range=7d") {
+                                cookie(SESSION_COOKIE_NAME, elenaLogin.signedToken)
+                            }.bodyAsText(),
+                        )
+                    elenaStats.userId shouldBe elenaAccount.account.id
+                    elenaStats.totalPlays shouldBe 4L
+                    elenaStats.totalWatchDurationSec shouldBe 7_000L
+                    elenaStats.longestBingeStreakDays shouldBe 3
+                    elenaStats.maxDailyPlays shouldBe 2
+                    elenaStats.mostRewatched.single().let { rewatched ->
+                        rewatched.ratingKey shouldBe "mov-1"
+                        rewatched.playCount shouldBe 2L
+                    }
+
+                    val elenaPlexStats =
+                        MiruJson.decodeFromString<UserStatsResponse>(
+                            client.get("/api/v1/users/${elenaAccount.account.id}/stats?range=7d&serverId=srv-plex") {
+                                cookie(SESSION_COOKIE_NAME, elenaLogin.signedToken)
+                            }.bodyAsText(),
+                        )
+                    elenaPlexStats.userId shouldBe "u-plex-elena"
+                    elenaPlexStats.totalPlays shouldBe 2L
+                    elenaPlexStats.totalWatchDurationSec shouldBe 2_500L
+
+                    // 4. Heatmap, clients, and wrapped aggregate across linked profiles for canonical accountId or linked users.id
+                    val heatmap =
+                        MiruJson.decodeFromString<HeatmapStatsResponse>(
+                            client.get("/api/v1/stats/heatmap?range=7d&userId=u-jf-elena") {
+                                cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                            }.bodyAsText(),
+                        )
+                    heatmap.totalPlays shouldBe 4L
+                    heatmap.totalWatchDurationSec shouldBe 7_000L
+
+                    val clients =
+                        MiruJson.decodeFromString<ClientStatsResponse>(
+                            client.get("/api/v1/stats/clients?range=7d&userId=${elenaAccount.account.id}") {
+                                cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                            }.bodyAsText(),
+                        )
+                    clients.totalPlays shouldBe 4L
+                    clients.players.map { it.name to it.playCount } shouldContainExactly
+                        listOf("Jellyfin Web" to 2L, "Plex for Apple TV" to 2L)
+
+                    val wrapped =
+                        MiruJson.decodeFromString<WrappedStatsResponse>(
+                            client.get("/api/v1/stats/wrapped/2026?userId=${elenaAccount.account.id}") {
+                                cookie(SESSION_COOKIE_NAME, elenaLogin.signedToken)
+                            }.bodyAsText(),
+                        )
+                    wrapped.userId shouldBe elenaAccount.account.id
+                    wrapped.totalPlays shouldBe 4L
+                    wrapped.totalWatchDurationSec shouldBe 7_000L
+                    wrapped.longestBingeStreakDays shouldBe 3
+
+                    // 5. Fail-closed USER RBAC blocks accessing Bob by media user ID
+                    client.get("/api/v1/users/u-plex-bob/stats") {
+                        cookie(SESSION_COOKIE_NAME, elenaLogin.signedToken)
+                    }.status shouldBe HttpStatusCode.Forbidden
                 }
             }
         }

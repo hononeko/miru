@@ -292,6 +292,7 @@ data class WrappedMonthStatDto(
 data class WrappedStatsResponse(
     val year: Int,
     val userId: String? = null,
+    val accountId: String? = null,
     val username: String? = null,
     val displayName: String? = null,
     val totalPlays: Long,
@@ -329,6 +330,7 @@ data class OverviewStatsResponse(
 @Serializable
 data class UserStatsResponse(
     val userId: String,
+    val accountId: String? = null,
     val username: String,
     val displayName: String? = null,
     val range: String,

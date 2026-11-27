@@ -3,7 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { Search } from '@lucide/svelte';
 	import { api, MiruApiError, unwrap } from '$api/client';
-	import type { UserSummaryDto } from '$api/types';
+	import type { LinkedUserProfileDto, UserSummaryDto } from '$api/types';
 	import Badge from '$components/ui/Badge.svelte';
 	import ProxiedImage from '$components/miru/ProxiedImage.svelte';
 	import ServerBadge from '$components/miru/ServerBadge.svelte';
@@ -53,13 +53,38 @@
 		}
 	});
 
+	function getLinkedProfiles(user: UserSummaryDto): LinkedUserProfileDto[] {
+		if (user.linkedProfiles && user.linkedProfiles.length > 0) {
+			return user.linkedProfiles;
+		}
+		return [
+			{
+				userId: user.id,
+				serverId: user.serverId,
+				serverName: user.serverName,
+				serverType: user.serverType,
+				externalUserId: user.externalUserId,
+				username: user.username,
+				displayName: user.displayName,
+				isAdmin: user.isAdmin,
+				avatarUrl: user.avatarUrl,
+				lastSeenAtMs: user.lastSeenAtMs
+			}
+		];
+	}
+
 	const filteredUsers = $derived.by(() => {
 		const q = query.trim().toLowerCase();
 		if (!q) return users;
 		return users.filter(
 			(u) =>
 				u.username.toLowerCase().includes(q) ||
-				(u.displayName ?? '').toLowerCase().includes(q)
+				(u.displayName ?? '').toLowerCase().includes(q) ||
+				getLinkedProfiles(u).some(
+					(p) =>
+						p.username.toLowerCase().includes(q) ||
+						(p.displayName ?? '').toLowerCase().includes(q)
+				)
 		);
 	});
 
@@ -122,6 +147,11 @@
 	{:else}
 		<div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
 			{#each filteredUsers as user (user.id)}
+				{@const profiles = getLinkedProfiles(user)}
+				{@const showServerBadges =
+					serversStore.hasMultipleServers ||
+					profiles.length > 1 ||
+					profiles.some((p) => serversStore.isDisconnected(p.serverId))}
 				<a
 					href={`/users/${encodeURIComponent(user.id)}`}
 					class={cn(
@@ -153,12 +183,16 @@
 							{#if user.isStreaming}
 								<Badge tone="direct-play" dot pulse>LIVE · {user.activeStreamCount}</Badge>
 							{/if}
-							{#if serversStore.hasMultipleServers || serversStore.isDisconnected(user.serverId)}
-								<ServerBadge
-									serverId={user.serverId}
-									serverType={user.serverType}
-									serverName={user.serverName}
-								/>
+							{#if showServerBadges}
+								<div class="flex flex-wrap justify-end gap-1">
+									{#each profiles as profile (profile.userId)}
+										<ServerBadge
+											serverId={profile.serverId}
+											serverType={profile.serverType}
+											serverName={profile.serverName}
+										/>
+									{/each}
+								</div>
 							{/if}
 						</div>
 					</div>

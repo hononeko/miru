@@ -19,6 +19,7 @@ import app.hononeko.miru.persistence.model.HistorySortDirection
 import app.hononeko.miru.persistence.model.HistorySortField
 import app.hononeko.miru.persistence.model.MediaServerRecord
 import app.hononeko.miru.persistence.model.UserRecord
+import app.hononeko.miru.persistence.repository.AuthAccountRepository
 import app.hononeko.miru.persistence.repository.MediaServerRepository
 import app.hononeko.miru.persistence.repository.PlaybackHistoryRepository
 import app.hononeko.miru.persistence.repository.UserRepository
@@ -92,6 +93,7 @@ class HistoryAndStatsService(
     private val userRepository: UserRepository,
     private val clock: () -> Long = System::currentTimeMillis,
     private val mediaServerRepository: MediaServerRepository? = null,
+    private val authAccountRepository: AuthAccountRepository? = null,
 ) {
     suspend fun queryHistory(
         principal: MiruPrincipal,
@@ -100,11 +102,11 @@ class HistoryAndStatsService(
         either {
             val validated = validateHistoryQuery(params).bind()
 
-            if (validated.userId != null) {
-                principal.requireMediaUserAccess(validated.userId).bind()
-            }
             val scopedUserIds =
-                if (validated.userId == null && !principal.isAdmin()) {
+                if (validated.userId != null) {
+                    ViewerIdentityResolver.requireTargetViewerAccess(principal, validated.userId).bind()
+                    ViewerIdentityResolver.resolveScopedFilterUserIds(authAccountRepository, validated.userId).bind()
+                } else if (!principal.isAdmin()) {
                     principal.linkedMediaUserIds
                 } else {
                     null
@@ -113,7 +115,7 @@ class HistoryAndStatsService(
             val filter =
                 HistoryFilter(
                     serverId = validated.serverId,
-                    userId = validated.userId,
+                    userId = null,
                     userIds = scopedUserIds,
                     mediaType = validated.mediaType,
                     librarySectionKey = validated.librarySectionKey,
@@ -187,14 +189,33 @@ class HistoryAndStatsService(
             val metric = parseMetric(metricRaw).bind()
             val normalizedServerId = normalizeOptionalId(serverId)
             val scopedUserIds = if (principal.isAdmin()) null else principal.linkedMediaUserIds
-            val accumulator = CommonStatsAccumulator(includeDailyBreakdowns = true)
+            val allLinks =
+                if (normalizedServerId == null && authAccountRepository != null) {
+                    authAccountRepository.findAllMediaUserLinks().bind()
+                } else {
+                    emptyMap()
+                }
+            val canonicalUserIdFor: (String) -> String = { uid -> allLinks[uid] ?: uid }
+            val accumulator =
+                CommonStatsAccumulator(
+                    includeDailyBreakdowns = true,
+                    canonicalUserIdFor = canonicalUserIdFor,
+                )
 
             playbackHistoryRepository
                 .forEachOverviewStatsRow(serverId = normalizedServerId, userIds = scopedUserIds, fromMs = range.fromMs) { row ->
                     accumulator.record(row)
                 }.bind()
 
-            val usersById = resolveUsers(accumulator.activeUserIds.toList()).bind()
+            val usersById =
+                ViewerIdentityResolver
+                    .resolveOverviewViewerMap(
+                        userRepository = userRepository,
+                        authAccountRepository = authAccountRepository,
+                        rawUserIds = accumulator.rawActiveUserIds,
+                        serverId = normalizedServerId,
+                        preloadedLinks = allLinks,
+                    ).bind()
             val common = accumulator.build(metric = metric, usersById = usersById)
 
             OverviewStatsResponse(
@@ -215,6 +236,7 @@ class HistoryAndStatsService(
         userId: String,
         rangeRaw: String?,
         metricRaw: String? = null,
+        serverId: String? = null,
     ): Either<MiruError, UserStatsResponse> =
         either {
             val trimmedUserId = userId.trim()
@@ -222,30 +244,50 @@ class HistoryAndStatsService(
                 MiruError.ValidationError("Invalid user id", mapOf("id" to "Must not be blank"))
             }
 
-            principal.requireMediaUserAccess(trimmedUserId).bind()
-            val user =
-                userRepository.findById(trimmedUserId).bind()
-                    ?: raise(MiruError.NotFound(resource = "User", id = trimmedUserId))
+            ViewerIdentityResolver.requireTargetViewerAccess(principal, trimmedUserId).bind()
+            val normalizedServerId = normalizeOptionalId(serverId)
+            val resolved =
+                ViewerIdentityResolver
+                    .resolveViewer(
+                        userRepository = userRepository,
+                        authAccountRepository = authAccountRepository,
+                        targetId = trimmedUserId,
+                        serverId = normalizedServerId,
+                    ).bind()
 
             val range = parseRange(rangeRaw).bind()
             val metric = parseMetric(metricRaw).bind()
-            val commonAcc = CommonStatsAccumulator(includeDailyBreakdowns = true)
+            val commonAcc =
+                CommonStatsAccumulator(
+                    includeDailyBreakdowns = true,
+                    canonicalUserIdFor = { resolved.canonicalId },
+                )
             val detailsAcc = RewatchAndBreakdownAccumulator(trackLibraries = true)
 
             playbackHistoryRepository
-                .forEachStatsRow(userIds = setOf(trimmedUserId), fromMs = range.fromMs) { row ->
+                .forEachStatsRow(
+                    serverId = normalizedServerId,
+                    userIds = resolved.targetMediaUserIds,
+                    fromMs = range.fromMs,
+                ) { row ->
                     commonAcc.record(row)
                     detailsAcc.record(row)
                 }.bind()
 
-            val common = commonAcc.build(metric = metric, usersById = mapOf(user.id to user))
+            val canonicalViewerRecord =
+                resolved.primaryProfile.copy(
+                    id = resolved.canonicalId,
+                    displayName = resolved.primaryDisplayName,
+                )
+            val common = commonAcc.build(metric = metric, usersById = mapOf(resolved.canonicalId to canonicalViewerRecord))
             val longestStreak = computeLongestStreakFromEpochDays(commonAcc.daily.distinctEpochDays())
             val maxDailyPlays = common.playsPerDay.maxOfOrNull { it.playCount.toInt() } ?: 0
 
             UserStatsResponse(
-                userId = user.id,
-                username = user.username,
-                displayName = user.displayName.normalizedDisplayName(),
+                userId = resolved.canonicalId,
+                accountId = resolved.accountId,
+                username = resolved.primaryProfile.username,
+                displayName = resolved.primaryDisplayName,
                 range = range.label,
                 fromMs = range.fromMs,
                 totalPlays = common.totalPlays,
@@ -406,17 +448,22 @@ class HistoryAndStatsService(
             val metric = parseMetric(metricRaw).bind()
             val normalizedServerId = normalizeOptionalId(serverId)
             val trimmedUserId = userId?.trim()?.takeIf { it.isNotEmpty() }
-            val resolvedUser =
+            val resolvedViewer =
                 if (trimmedUserId != null) {
-                    principal.requireMediaUserAccess(trimmedUserId).bind()
-                    userRepository.findById(trimmedUserId).bind()
-                        ?: raise(MiruError.NotFound(resource = "User", id = trimmedUserId))
+                    ViewerIdentityResolver.requireTargetViewerAccess(principal, trimmedUserId).bind()
+                    ViewerIdentityResolver
+                        .resolveViewer(
+                            userRepository = userRepository,
+                            authAccountRepository = authAccountRepository,
+                            targetId = trimmedUserId,
+                            serverId = normalizedServerId,
+                        ).bind()
                 } else {
                     null
                 }
             val scopedUserIds =
                 when {
-                    resolvedUser != null -> setOf(resolvedUser.id)
+                    resolvedViewer != null -> resolvedViewer.targetMediaUserIds
                     principal.isAdmin() -> null
                     else -> principal.linkedMediaUserIds
                 }
@@ -449,9 +496,10 @@ class HistoryAndStatsService(
 
             WrappedStatsResponse(
                 year = year,
-                userId = resolvedUser?.id,
-                username = resolvedUser?.username,
-                displayName = resolvedUser?.displayName.normalizedDisplayName(),
+                userId = resolvedViewer?.canonicalId,
+                accountId = resolvedViewer?.accountId,
+                username = resolvedViewer?.primaryProfile?.username,
+                displayName = resolvedViewer?.primaryDisplayName,
                 totalPlays = common.totalPlays,
                 totalWatchDurationSec = common.totalWatchDurationSec,
                 completedPlays = detailsAcc.completedPlays,
@@ -572,15 +620,15 @@ class HistoryAndStatsService(
             )
         }
 
-    private fun resolveScopedStatsUserIds(
+    private suspend fun resolveScopedStatsUserIds(
         principal: MiruPrincipal,
         userId: String?,
     ): Either<MiruError, Set<String>?> =
         either {
             val trimmed = userId?.trim()?.takeIf { it.isNotEmpty() }
             if (trimmed != null) {
-                principal.requireMediaUserAccess(trimmed).bind()
-                setOf(trimmed)
+                ViewerIdentityResolver.requireTargetViewerAccess(principal, trimmed).bind()
+                ViewerIdentityResolver.resolveScopedFilterUserIds(authAccountRepository, trimmed).bind()
             } else if (principal.isAdmin()) {
                 null
             } else {

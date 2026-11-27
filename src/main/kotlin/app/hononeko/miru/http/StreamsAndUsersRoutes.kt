@@ -75,10 +75,11 @@ fun Route.streamsAndUsersRoutes(
         route("/api/v1/users") {
             get("/{id}") {
                 val userId = call.parameters["id"].orEmpty()
+                val serverId = call.request.queryParameters["serverId"]
                 val result =
                     either {
                         val principal = call.requireMiruPrincipal().bind()
-                        streamsAndUsersService.getUserDetail(principal, userId).bind()
+                        streamsAndUsersService.getUserDetail(principal, userId, serverId = serverId).bind()
                     }
                 call.respondEither(result)
             }
@@ -89,10 +90,11 @@ fun Route.streamsAndUsersRoutes(
         route("/api/v1/users") {
             get {
                 val serverId = call.request.queryParameters["serverId"]
+                val merged = call.request.queryParameters["merged"]?.lowercase() != "false"
                 val result =
                     either {
                         val principal = call.requireMiruPrincipal().bind()
-                        streamsAndUsersService.listUsers(principal, serverId = serverId).bind()
+                        streamsAndUsersService.listUsers(principal, serverId = serverId, merged = merged).bind()
                     }
                 call.respondEither(result)
             }

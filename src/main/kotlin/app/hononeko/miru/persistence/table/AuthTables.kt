@@ -24,14 +24,10 @@ object AuthAccountsTable : Table("auth_accounts") {
 
 object AuthAccountMediaUsersTable : Table("auth_account_media_users") {
     val accountId = text("account_id").references(AuthAccountsTable.id, onDelete = ReferenceOption.CASCADE)
-    val mediaUserId = text("media_user_id").references(UsersTable.id, onDelete = ReferenceOption.CASCADE)
+    val mediaUserId = text("media_user_id").references(UsersTable.id, onDelete = ReferenceOption.CASCADE).uniqueIndex()
     val createdAtMs = long("created_at_ms")
 
     override val primaryKey = PrimaryKey(accountId, mediaUserId)
-
-    init {
-        index(isUnique = false, mediaUserId)
-    }
 }
 
 object AuthSessionsTable : Table("auth_sessions") {

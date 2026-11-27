@@ -60,6 +60,9 @@ internal fun is4kVideoTranscode(session: ActiveSessionRecord): Boolean {
  *
  * A session that Plex did not list in the last poll has most likely ended, so it neither violates a rule nor counts
  * towards a limit. Its pause start and prior triggers are kept in case it reappears.
+ *
+ * `CONCURRENT_STREAMS` evaluates per media server user (`ActiveSessionRecord.userId`) independently on each
+ * server, rather than aggregating simultaneous streams across media users linked to the same Miru account.
  */
 class StreamGuardrailEvaluator(
     private val enforceRetryCooldownMs: Long = DEFAULT_ENFORCE_RETRY_COOLDOWN_MS,

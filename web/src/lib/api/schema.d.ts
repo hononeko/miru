@@ -270,7 +270,7 @@ export interface paths {
         put?: never;
         /**
          * Create a new local account
-         * @description `linkedMediaUserIds` may hold at most one media user on each media server, since an account stands for one person.
+         * @description `linkedMediaUserIds` may hold at most one media user on each media server, since an account stands for one person, and each media user can belong to at most one Miru account.
          */
         post: operations["createAccount"];
         delete?: never;
@@ -310,7 +310,7 @@ export interface paths {
         get?: never;
         /**
          * Replace linked media server user IDs for an account
-         * @description Replaces the account's links and sets its `mediaUserLinkMode` to `MANUAL`, so SSO sign-in no longer relinks it by email. An account is linked to at most one media user on each media server; a request linking two users on one server is refused with 400 and changes nothing.
+         * @description Replaces the account's links and sets its `mediaUserLinkMode` to `MANUAL`, so SSO sign-in no longer relinks it by email. An account is linked to at most one media user on each media server (refused with 400 if two are on one server), and each media user can be owned by at most one Miru account (refused with 409 if already linked to another account).
          */
         put: operations["setLinkedMediaUsers"];
         post?: never;
@@ -852,7 +852,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List all media users with live streaming status and aggregate playback stats (admin only) */
+        /**
+         * List media users with live streaming status and aggregate playback stats (admin only)
+         * @description When `serverId` is omitted and `merged` is `true` (default), media user profiles linked to the same Miru account (`auth_accounts`) are merged into one viewer entry keyed by canonical `accountId`, aggregating counts, watch time, active streams, and surfacing `linkedProfiles`. Unlinked media users remain standalone entries keyed by `users.id`. When `serverId` is provided or `merged=false`, returns per-server rows keyed by `users.id`.
+         */
         get: operations["listUsers"];
         put?: never;
         post?: never;
@@ -869,7 +872,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get detailed playback statistics, active streams, and recent plays for a media user */
+        /**
+         * Get detailed playback statistics, active streams, and recent plays for a user
+         * @description Accepts either a canonical Miru `accountId` or any linked media server `users.id`. Aggregates across all linked media user profiles unless narrowed with `serverId`.
+         */
         get: operations["getUserDetail"];
         put?: never;
         post?: never;
@@ -988,7 +994,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Retrieve playback statistics for a specific media user */
+        /**
+         * Retrieve playback statistics for a user
+         * @description Accepts either a canonical Miru `accountId` or any linked media server `users.id`. Aggregates across all linked media user profiles unless narrowed with `serverId`.
+         */
         get: operations["getUserStats"];
         put?: never;
         post?: never;
@@ -1462,8 +1471,24 @@ export interface components {
         UsersListResponse: {
             users: components["schemas"]["UserSummaryDto"][];
         };
+        LinkedUserProfileDto: {
+            userId: string;
+            serverId: string;
+            serverName?: string | null;
+            serverType?: string | null;
+            externalUserId: string;
+            username: string;
+            displayName?: string | null;
+            isAdmin: boolean;
+            avatarUrl?: string | null;
+            /** Format: int64 */
+            lastSeenAtMs?: number | null;
+        };
         UserSummaryDto: {
+            /** @description Canonical Miru `accountId` when linked and merged across servers, otherwise media server `users.id` */
             id: string;
+            /** @description Linked Miru account ID, when the media user(s) belong to an account */
+            accountId?: string | null;
             serverId: string;
             serverName?: string | null;
             serverType?: string | null;
@@ -1481,6 +1506,8 @@ export interface components {
             totalPlays: number;
             /** Format: int64 */
             totalWatchDurationSec: number;
+            /** @description Per-server media user profiles represented by this summary entry */
+            linkedProfiles?: components["schemas"]["LinkedUserProfileDto"][];
         };
         UserRecentPlayDto: {
             id: string;
@@ -1747,6 +1774,7 @@ export interface components {
             totalPlays: number;
             /** Format: int64 */
             totalWatchDurationSec: number;
+            /** @description Distinct active viewers (linked media user profiles of the same Miru account are counted once when `serverId` is omitted) */
             activeUsers: number;
             playsPerDay: components["schemas"]["DailyPlayStatDto"][];
             topMovies: components["schemas"]["TopMediaStatDto"][];
@@ -1836,6 +1864,7 @@ export interface components {
         WrappedStatsResponse: {
             year: number;
             userId?: string | null;
+            accountId?: string | null;
             username?: string | null;
             displayName?: string | null;
             /** Format: int64 */
@@ -1862,6 +1891,7 @@ export interface components {
         };
         UserStatsResponse: {
             userId: string;
+            accountId?: string | null;
             username: string;
             displayName?: string | null;
             /** @enum {string} */
@@ -2176,6 +2206,7 @@ export interface components {
         MediaPlaySummaryDto: {
             /** Format: int64 */
             totalPlays: number;
+            /** @description Distinct viewers (media user profiles linked to the same Miru account are counted once) */
             uniqueUsers: number;
             /** Format: int64 */
             lastWatchedAtMs?: number | null;
@@ -2302,7 +2333,10 @@ export interface components {
             /** Format: int64 */
             terminatedAtMs: number;
         };
-        /** @enum {string} */
+        /**
+         * @description Guardrail rule type. `CONCURRENT_STREAMS` evaluates simultaneous active streams per media server user (`users.id`) independently on each server, even when multiple profiles are linked to the same Miru account.
+         * @enum {string}
+         */
         GuardrailRuleType: "TRANSCODE_4K" | "PAUSED_TIMEOUT" | "CONCURRENT_STREAMS";
         /** @enum {string} */
         GuardrailMode: "DISABLED" | "WARN" | "ENFORCE";
@@ -3058,7 +3092,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
-            /** @description Username already exists */
+            /** @description Username already exists or one of the media users is already linked to another account */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3249,6 +3283,15 @@ export interface operations {
             };
             /** @description Account or media user not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description One of the requested media users is already linked to another Miru account */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5148,6 +5191,8 @@ export interface operations {
         parameters: {
             query?: {
                 serverId?: string;
+                /** @description Whether to merge media users linked to the same Miru account when `serverId` is omitted */
+                merged?: boolean;
             };
             header?: never;
             path?: never;
@@ -5186,9 +5231,13 @@ export interface operations {
     };
     getUserDetail: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Optional media server ID to narrow profile, active streams, and stats to one server */
+                serverId?: string;
+            };
             header?: never;
             path: {
+                /** @description Canonical Miru `accountId` or media server `users.id` */
                 id: string;
             };
             cookie?: never;
@@ -5237,6 +5286,7 @@ export interface operations {
         parameters: {
             query?: {
                 serverId?: string;
+                /** @description Canonical Miru `accountId` or media server `users.id`; linked accounts match across all linked media user profiles */
                 userId?: string;
                 mediaType?: "movie" | "episode" | "track" | "clip" | "live_tv";
                 libraryId?: string;
@@ -5394,6 +5444,7 @@ export interface operations {
             query?: {
                 serverId?: string;
                 range?: "7d" | "30d";
+                /** @description Canonical Miru `accountId` or media server `users.id`; linked accounts match across all linked media user profiles */
                 userId?: string;
                 /** @description Whether peak activity is ranked by number of plays or playback duration */
                 metric?: "plays" | "duration";
@@ -5447,6 +5498,7 @@ export interface operations {
             query?: {
                 serverId?: string;
                 range?: "7d" | "30d" | "90d" | "365d" | "all";
+                /** @description Canonical Miru `accountId` or media server `users.id`; linked accounts match across all linked media user profiles */
                 userId?: string;
                 /** @description Whether client, codec, and transcode percentages and ordering are calculated by plays or duration */
                 metric?: "plays" | "duration";
@@ -5499,6 +5551,7 @@ export interface operations {
         parameters: {
             query?: {
                 serverId?: string;
+                /** @description Canonical Miru `accountId` or media server `users.id`; linked accounts match across all linked media user profiles */
                 userId?: string;
                 /** @description Whether annual rankings, peak periods, and percentages are calculated by plays or duration */
                 metric?: "plays" | "duration";
@@ -5561,12 +5614,15 @@ export interface operations {
     getUserStats: {
         parameters: {
             query?: {
+                /** @description Optional media server ID to narrow statistics to one server */
+                serverId?: string;
                 range?: "7d" | "30d" | "90d" | "365d" | "all";
                 /** @description Whether user stats rankings and percentages are calculated by plays or duration */
                 metric?: "plays" | "duration";
             };
             header?: never;
             path: {
+                /** @description Canonical Miru `accountId` or media server `users.id` */
                 id: string;
             };
             cookie?: never;

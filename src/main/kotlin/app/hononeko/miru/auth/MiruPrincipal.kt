@@ -22,7 +22,13 @@ data class MiruPrincipal(
     val linkedMediaUserIds: Set<String> = emptySet(),
     val authSource: AuthSource = AuthSource.SESSION_COOKIE,
     val authProvider: String = "LOCAL",
+    val displayName: String? = null,
+    val avatarSourceServerId: String? = null,
+    val avatarUpdatedAtMs: Long? = null,
 ) {
+    val hasCustomAvatar: Boolean
+        get() = avatarUpdatedAtMs != null
+
     fun isAdmin(): Boolean = role == MiruRole.ADMIN
 
     fun scopedMediaUserIds(): Set<String>? = if (isAdmin()) null else linkedMediaUserIds

@@ -6,8 +6,12 @@ import app.hononeko.miru.persistence.exposedQuery
 import app.hononeko.miru.persistence.exposedReadQuery
 import app.hononeko.miru.persistence.model.ApiKeyAuthContext
 import app.hononeko.miru.persistence.model.ApiKeyRecord
+import app.hononeko.miru.persistence.model.AuthAccountAvatarRecord
+import app.hononeko.miru.persistence.model.AuthAccountProfileRecord
 import app.hononeko.miru.persistence.model.AuthAccountRecord
 import app.hononeko.miru.persistence.model.AuthSessionRecord
+import app.hononeko.miru.persistence.model.AvatarMutation
+import app.hononeko.miru.persistence.model.DisplayNameMutation
 import app.hononeko.miru.persistence.model.SessionAuthContext
 import app.hononeko.miru.persistence.model.UserPreferencesRecord
 import app.hononeko.miru.persistence.table.ApiKeysTable
@@ -38,10 +42,19 @@ private const val AUTO_LINK_MODE = "AUTO"
 /** Stored value of `auth_accounts.role_mode` for accounts whose role an SSO sign-in sets from their groups. */
 private const val AUTO_ROLE_MODE = "AUTO"
 
+@Suppress("TooManyFunctions")
 interface AuthAccountRepository {
     suspend fun insert(account: AuthAccountRecord): Either<MiruError.PersistenceError, AuthAccountRecord>
 
     suspend fun findById(id: String): Either<MiruError.PersistenceError, AuthAccountRecord?>
+
+    suspend fun findAvatarById(id: String): Either<MiruError.PersistenceError, AuthAccountAvatarRecord?>
+
+    suspend fun findProfilesByIds(
+        ids: Collection<String>,
+    ): Either<MiruError.PersistenceError, Map<String, AuthAccountProfileRecord>>
+
+    suspend fun findAllAccountProfiles(): Either<MiruError.PersistenceError, Map<String, AuthAccountProfileRecord>>
 
     suspend fun findByNormalizedUsername(usernameNormalized: String): Either<MiruError.PersistenceError, AuthAccountRecord?>
 
@@ -128,6 +141,13 @@ interface AuthAccountRepository {
         linkMode: String,
         updatedAtMs: Long,
     ): Either<MiruError.PersistenceError, AuthAccountRecord?>
+
+    suspend fun updateProfile(
+        id: String,
+        displayName: DisplayNameMutation = DisplayNameMutation.Keep,
+        avatar: AvatarMutation = AvatarMutation.Keep,
+        updatedAtMs: Long,
+    ): Either<MiruError.PersistenceError, AuthAccountRecord?>
 }
 
 interface AuthSessionRepository {
@@ -179,6 +199,7 @@ interface UserPreferencesRepository {
     suspend fun upsert(preferences: UserPreferencesRecord): Either<MiruError.PersistenceError, UserPreferencesRecord>
 }
 
+@Suppress("TooManyFunctions")
 class ExposedAuthAccountRepository(
     private val database: Database,
     private val readDatabase: Database = database,
@@ -203,6 +224,11 @@ class ExposedAuthAccountRepository(
                 it[mediaUserLinkMode] = account.mediaUserLinkMode
                 it[roleMode] = account.roleMode
                 it[emailVerified] = account.emailVerified
+                it[displayName] = account.displayName
+                it[avatarBytes] = account.avatarBytes
+                it[avatarContentType] = account.avatarContentType
+                it[avatarSourceServerId] = account.avatarSourceServerId
+                it[avatarUpdatedAtMs] = account.avatarUpdatedAtMs
                 it[createdAtMs] = account.createdAtMs
                 it[updatedAtMs] = account.updatedAtMs
             }
@@ -212,10 +238,61 @@ class ExposedAuthAccountRepository(
     override suspend fun findById(id: String): Either<MiruError.PersistenceError, AuthAccountRecord?> =
         readDatabase.exposedReadQuery("auth_account_find_by_id") {
             AuthAccountsTable
-                .selectAll()
+                .select(lightweightAccountColumns)
                 .where { AuthAccountsTable.id eq id }
                 .singleOrNull()
                 ?.toAuthAccountRecord()
+        }
+
+    override suspend fun findAvatarById(id: String): Either<MiruError.PersistenceError, AuthAccountAvatarRecord?> =
+        readDatabase.exposedReadQuery("auth_account_find_avatar_by_id") {
+            val row =
+                AuthAccountsTable
+                    .select(
+                        AuthAccountsTable.id,
+                        AuthAccountsTable.avatarBytes,
+                        AuthAccountsTable.avatarContentType,
+                        AuthAccountsTable.avatarSourceServerId,
+                        AuthAccountsTable.avatarUpdatedAtMs,
+                    ).where { AuthAccountsTable.id eq id }
+                    .singleOrNull()
+                    ?: return@exposedReadQuery null
+            val bytes = row[AuthAccountsTable.avatarBytes] ?: return@exposedReadQuery null
+            val contentType = row[AuthAccountsTable.avatarContentType] ?: return@exposedReadQuery null
+            val updatedAtMs = row[AuthAccountsTable.avatarUpdatedAtMs] ?: return@exposedReadQuery null
+            AuthAccountAvatarRecord(
+                accountId = row[AuthAccountsTable.id],
+                bytes = bytes,
+                contentType = contentType,
+                sourceServerId = row[AuthAccountsTable.avatarSourceServerId],
+                updatedAtMs = updatedAtMs,
+            )
+        }
+
+    override suspend fun findProfilesByIds(
+        ids: Collection<String>,
+    ): Either<MiruError.PersistenceError, Map<String, AuthAccountProfileRecord>> {
+        val uniqueIds = ids.distinct()
+        if (uniqueIds.isEmpty()) return Either.Right(emptyMap())
+        return readDatabase.exposedReadQuery("auth_account_find_profiles_by_ids") {
+            AuthAccountsTable
+                .select(accountProfileColumns)
+                .where { AuthAccountsTable.id inList uniqueIds }
+                .associate { row ->
+                    val profile = row.toAuthAccountProfileRecord()
+                    profile.id to profile
+                }
+        }
+    }
+
+    override suspend fun findAllAccountProfiles(): Either<MiruError.PersistenceError, Map<String, AuthAccountProfileRecord>> =
+        readDatabase.exposedReadQuery("auth_account_find_all_profiles") {
+            AuthAccountsTable
+                .select(accountProfileColumns)
+                .associate { row ->
+                    val profile = row.toAuthAccountProfileRecord()
+                    profile.id to profile
+                }
         }
 
     override suspend fun findByNormalizedUsername(
@@ -223,7 +300,7 @@ class ExposedAuthAccountRepository(
     ): Either<MiruError.PersistenceError, AuthAccountRecord?> =
         readDatabase.exposedReadQuery("auth_account_find_by_username") {
             AuthAccountsTable
-                .selectAll()
+                .select(lightweightAccountColumns)
                 .where { AuthAccountsTable.usernameNormalized eq usernameNormalized }
                 .singleOrNull()
                 ?.toAuthAccountRecord()
@@ -235,7 +312,7 @@ class ExposedAuthAccountRepository(
     ): Either<MiruError.PersistenceError, AuthAccountRecord?> =
         readDatabase.exposedReadQuery("auth_account_find_by_provider_subject") {
             AuthAccountsTable
-                .selectAll()
+                .select(lightweightAccountColumns)
                 .where {
                     (AuthAccountsTable.authProvider eq authProvider) and
                         (AuthAccountsTable.externalSubject eq externalSubject)
@@ -277,7 +354,7 @@ class ExposedAuthAccountRepository(
     override suspend fun findAll(): Either<MiruError.PersistenceError, List<AuthAccountRecord>> =
         readDatabase.exposedReadQuery("auth_account_find_all") {
             AuthAccountsTable
-                .selectAll()
+                .select(lightweightAccountColumns)
                 .orderBy(AuthAccountsTable.createdAtMs to SortOrder.ASC, AuthAccountsTable.id to SortOrder.ASC)
                 .map { it.toAuthAccountRecord() }
         }
@@ -461,9 +538,41 @@ class ExposedAuthAccountRepository(
             }
         }
 
+    override suspend fun updateProfile(
+        id: String,
+        displayName: DisplayNameMutation,
+        avatar: AvatarMutation,
+        updatedAtMs: Long,
+    ): Either<MiruError.PersistenceError, AuthAccountRecord?> =
+        database.exposedQuery("auth_account_update_profile") {
+            val updated =
+                AuthAccountsTable.update({ AuthAccountsTable.id eq id }) {
+                    if (displayName is DisplayNameMutation.Set) {
+                        it[AuthAccountsTable.displayName] = displayName.displayName
+                    }
+                    when (avatar) {
+                        AvatarMutation.Keep -> Unit
+                        AvatarMutation.Clear -> {
+                            it[AuthAccountsTable.avatarBytes] = null
+                            it[AuthAccountsTable.avatarContentType] = null
+                            it[AuthAccountsTable.avatarSourceServerId] = null
+                            it[AuthAccountsTable.avatarUpdatedAtMs] = null
+                        }
+                        is AvatarMutation.Set -> {
+                            it[AuthAccountsTable.avatarBytes] = avatar.bytes
+                            it[AuthAccountsTable.avatarContentType] = avatar.contentType
+                            it[AuthAccountsTable.avatarSourceServerId] = avatar.sourceServerId
+                            it[AuthAccountsTable.avatarUpdatedAtMs] = avatar.avatarUpdatedAtMs
+                        }
+                    }
+                    it[AuthAccountsTable.updatedAtMs] = updatedAtMs
+                }
+            if (updated <= 0) null else findAccountByIdInTx(id)
+        }
+
     private fun findAccountByIdInTx(id: String): AuthAccountRecord? =
         AuthAccountsTable
-            .selectAll()
+            .select(lightweightAccountColumns)
             .where { AuthAccountsTable.id eq id }
             .singleOrNull()
             ?.toAuthAccountRecord()
@@ -514,7 +623,7 @@ class ExposedAuthSessionRepository(
                         otherTable = AuthAccountMediaUsersTable,
                         joinType = JoinType.LEFT,
                         additionalConstraint = { AuthAccountMediaUsersTable.accountId eq AuthAccountsTable.id },
-                    ).selectAll()
+                    ).select(AuthSessionsTable.columns + lightweightAccountColumns + AuthAccountMediaUsersTable.mediaUserId)
                     .where { AuthSessionsTable.tokenHash eq tokenHash }
                     .orderBy(AuthAccountMediaUsersTable.mediaUserId to SortOrder.ASC)
                     .toList()
@@ -605,7 +714,7 @@ class ExposedApiKeyRepository(
                         otherTable = AuthAccountMediaUsersTable,
                         joinType = JoinType.LEFT,
                         additionalConstraint = { AuthAccountMediaUsersTable.accountId eq AuthAccountsTable.id },
-                    ).selectAll()
+                    ).select(ApiKeysTable.columns + lightweightAccountColumns + AuthAccountMediaUsersTable.mediaUserId)
                     .where { ApiKeysTable.keyHash eq keyHash }
                     .orderBy(AuthAccountMediaUsersTable.mediaUserId to SortOrder.ASC)
                     .toList()
@@ -707,6 +816,38 @@ class ExposedUserPreferencesRepository(
         }
 }
 
+private val lightweightAccountColumns =
+    listOf(
+        AuthAccountsTable.id,
+        AuthAccountsTable.username,
+        AuthAccountsTable.usernameNormalized,
+        AuthAccountsTable.email,
+        AuthAccountsTable.passwordHash,
+        AuthAccountsTable.role,
+        AuthAccountsTable.disabled,
+        AuthAccountsTable.authProvider,
+        AuthAccountsTable.externalSubject,
+        AuthAccountsTable.mediaUserLinkMode,
+        AuthAccountsTable.roleMode,
+        AuthAccountsTable.emailVerified,
+        AuthAccountsTable.displayName,
+        AuthAccountsTable.avatarContentType,
+        AuthAccountsTable.avatarSourceServerId,
+        AuthAccountsTable.avatarUpdatedAtMs,
+        AuthAccountsTable.createdAtMs,
+        AuthAccountsTable.updatedAtMs,
+    )
+
+private val accountProfileColumns =
+    listOf(
+        AuthAccountsTable.id,
+        AuthAccountsTable.username,
+        AuthAccountsTable.displayName,
+        AuthAccountsTable.avatarContentType,
+        AuthAccountsTable.avatarSourceServerId,
+        AuthAccountsTable.avatarUpdatedAtMs,
+    )
+
 private fun ResultRow.toAuthAccountRecord(): AuthAccountRecord =
     AuthAccountRecord(
         id = this[AuthAccountsTable.id],
@@ -721,8 +862,23 @@ private fun ResultRow.toAuthAccountRecord(): AuthAccountRecord =
         mediaUserLinkMode = this[AuthAccountsTable.mediaUserLinkMode],
         roleMode = this[AuthAccountsTable.roleMode],
         emailVerified = this[AuthAccountsTable.emailVerified],
+        displayName = this[AuthAccountsTable.displayName],
+        avatarBytes = null,
+        avatarContentType = this[AuthAccountsTable.avatarContentType],
+        avatarSourceServerId = this[AuthAccountsTable.avatarSourceServerId],
+        avatarUpdatedAtMs = this[AuthAccountsTable.avatarUpdatedAtMs],
         createdAtMs = this[AuthAccountsTable.createdAtMs],
         updatedAtMs = this[AuthAccountsTable.updatedAtMs],
+    )
+
+private fun ResultRow.toAuthAccountProfileRecord(): AuthAccountProfileRecord =
+    AuthAccountProfileRecord(
+        id = this[AuthAccountsTable.id],
+        username = this[AuthAccountsTable.username],
+        displayName = this[AuthAccountsTable.displayName],
+        avatarContentType = this[AuthAccountsTable.avatarContentType],
+        avatarSourceServerId = this[AuthAccountsTable.avatarSourceServerId],
+        avatarUpdatedAtMs = this[AuthAccountsTable.avatarUpdatedAtMs],
     )
 
 private fun ResultRow.toAuthSessionRecord(): AuthSessionRecord =

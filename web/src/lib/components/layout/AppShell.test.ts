@@ -45,6 +45,30 @@ describe('AppShell user avatars', () => {
 		}
 	});
 
+	it('labels the account with its display name, falling back to the username', () => {
+		authStore.principal = {
+			accountId: 'acc-3',
+			username: 'elena.k',
+			displayName: 'Elena K',
+			email: null,
+			role: 'USER',
+			linkedMediaUserIds: ['u-1'],
+			authSource: 'SESSION_COOKIE',
+			avatarUrl: '/api/v1/users/acc-3/avatar?v=7',
+			hasCustomAvatar: true
+		};
+
+		render(AppShell);
+
+		const imgs = screen.getAllByRole('img', { name: 'Elena K' });
+		expect(imgs).toHaveLength(3);
+		expect(imgs.every((img) => img.getAttribute('src') === '/api/v1/users/acc-3/avatar?v=7')).toBe(true);
+		expect(screen.getAllByText('Elena K').length).toBeGreaterThanOrEqual(2);
+		expect(screen.queryByText('elena.k')).toBeNull();
+		const titles = screen.getAllByRole('button', { name: 'Open user preferences' }).map((b) => b.getAttribute('title'));
+		expect(titles).toContain('Elena K');
+	});
+
 	it('renders initial fallback across desktop sidebar, tablet rail, and mobile header when avatarUrl is null', () => {
 		authStore.principal = {
 			accountId: 'acc-2',

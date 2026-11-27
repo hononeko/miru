@@ -99,6 +99,7 @@
 	);
 
 	const sseStatusLabel = $derived(streamsStore.status === 'connected' ? 'SSE' : streamsStore.status);
+	const principalLabel = $derived(authStore.principal?.displayName || authStore.principal?.username || 'Guest');
 
 	function handleSignOutOpenChange(open: boolean) {
 		if (!authStore.loggingOut) signOutOpen = open;
@@ -204,14 +205,14 @@
 				>
 					<ProxiedImage
 						src={authStore.principal?.avatarUrl}
-						alt={authStore.principal?.username ?? 'Guest'}
-						fallbackLabel={authStore.principal?.username ?? 'Guest'}
+						alt={principalLabel}
+						fallbackLabel={principalLabel}
 						variant="avatar"
 						class="h-7 w-7 text-xs"
 					/>
 					<div class="min-w-0">
 						<p class="truncate font-heading text-xs font-semibold text-fg-primary">
-							{authStore.principal?.username ?? 'Guest'}
+							{principalLabel}
 						</p>
 						<p class="text-[10px] text-fg-muted">
 							{authStore.principal?.role === 'ADMIN' ? 'Admin' : 'User'}
@@ -329,13 +330,13 @@
 				type="button"
 				onclick={() => preferencesStore.openModal()}
 				aria-label="Open user preferences"
-				title={authStore.principal?.username ?? 'User preferences'}
+				title={authStore.principal ? principalLabel : 'User preferences'}
 				class="inline-flex cursor-pointer items-center justify-center rounded-full ring-2 ring-border transition-transform hover:scale-105 hover:ring-border-strong"
 			>
 				<ProxiedImage
 					src={authStore.principal?.avatarUrl}
-					alt={authStore.principal?.username ?? 'Guest'}
-					fallbackLabel={authStore.principal?.username ?? 'Guest'}
+					alt={principalLabel}
+					fallbackLabel={principalLabel}
 					variant="avatar"
 					class="h-9 w-9 text-xs"
 				/>
@@ -368,12 +369,12 @@
 				>
 					<ProxiedImage
 						src={authStore.principal?.avatarUrl}
-						alt={authStore.principal?.username ?? 'Guest'}
-						fallbackLabel={authStore.principal?.username ?? 'Guest'}
+						alt={principalLabel}
+						fallbackLabel={principalLabel}
 						variant="avatar"
 						class="h-6 w-6 text-[11px]"
 					/>
-					<span class="truncate">{authStore.principal?.username ?? 'Guest'}</span>
+					<span class="truncate">{principalLabel}</span>
 				</button>
 			</div>
 		</header>

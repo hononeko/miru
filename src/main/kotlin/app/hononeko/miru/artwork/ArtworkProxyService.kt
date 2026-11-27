@@ -1,8 +1,10 @@
 package app.hononeko.miru.artwork
 
+import app.hononeko.miru.adapter.ArtworkData
 import app.hononeko.miru.adapter.MediaServerAdapter
 import app.hononeko.miru.auth.MiruPrincipal
 import app.hononeko.miru.domain.error.MiruError
+import app.hononeko.miru.persistence.model.UserRecord
 import app.hononeko.miru.persistence.repository.AuthAccountRepository
 import app.hononeko.miru.persistence.repository.LibraryRepository
 import app.hononeko.miru.persistence.repository.UserRepository
@@ -26,6 +28,13 @@ private const val DEFAULT_AVATAR_CONNECT_TIMEOUT_MS = 5_000L
 private const val MAX_ARTWORK_DIMENSION = 2_000
 private const val MAX_ARTWORK_BYTES = 8 * 1024 * 1024
 private const val AVATAR_CACHE_KEY_HASH_LEN = 16
+private const val AVATAR_ETAG_HEX_LEN = 32
+
+/**
+ * Largest width and height requested from a media server when an avatar is too large to import as is.
+ * Even an uncompressed 256x256 RGBA image (256 KiB) fits the stored avatar limit.
+ */
+private const val IMPORTED_AVATAR_MAX_DIMENSION = 256
 private const val HTTP_DEFAULT_PORT = 80
 private const val HTTPS_DEFAULT_PORT = 443
 private const val REDIRECT_STATUS_MIN = 300
@@ -284,73 +293,138 @@ class ArtworkProxyService(
                     fieldErrors = mapOf("id" to "must not be blank"),
                 )
             }
-            ViewerIdentityResolver.requireTargetViewerAccess(principal, trimmedUserId).bind()
+            // An account may always read its own avatar, even before it is linked to a media user.
+            if (trimmedUserId != principal.accountId) {
+                ViewerIdentityResolver.requireTargetViewerAccess(principal, trimmedUserId).bind()
+            }
 
+            // A media user id serves that server's own picture; an account id serves the unified Miru avatar.
             val directUser = userRepository.findById(trimmedUserId).bind()
-            val user =
-                if (directUser != null) {
-                    directUser
-                } else {
-                    val linkedIds =
-                        authAccountRepository
-                            ?.findById(trimmedUserId)
-                            ?.bind()
-                            ?.let { authAccountRepository.findLinkedMediaUserIds(it.id).bind() }
-                            .orEmpty()
-                    val profiles =
-                        if (linkedIds.isEmpty()) {
-                            emptyList()
-                        } else {
-                            userRepository.findByIds(linkedIds).bind().sortedWith(ViewerIdentityResolver.stableProfileComparator)
-                        }
-                    if (profiles.isEmpty()) {
-                        raise(MiruError.NotFound(resource = "User", id = trimmedUserId))
-                    }
-                    profiles.firstOrNull { !it.thumbUrl.isNullOrBlank() } ?: profiles.first()
-                }
+            if (directUser != null) {
+                return@either fetchMediaUserAvatar(user = directUser, requestId = trimmedUserId).bind()
+            }
 
+            val accounts = authAccountRepository ?: raise(MiruError.NotFound(resource = "User", id = trimmedUserId))
+            val account =
+                accounts.findById(trimmedUserId).bind()
+                    ?: raise(MiruError.NotFound(resource = "User", id = trimmedUserId))
+            val storedAvatar = accounts.findAvatarById(account.id).bind()
+            if (storedAvatar != null) {
+                return@either CachedArtwork(
+                    bytes = storedAvatar.bytes,
+                    contentType = storedAvatar.contentType,
+                    etag = "\"${BoundedArtworkCache.sha256Hex(storedAvatar.bytes).take(AVATAR_ETAG_HEX_LEN)}\"",
+                    cachedAtMs = storedAvatar.updatedAtMs,
+                    expiresAtMs = Long.MAX_VALUE,
+                )
+            }
+
+            val linkedIds = accounts.findLinkedMediaUserIds(account.id).bind()
+            val profiles =
+                if (linkedIds.isEmpty()) {
+                    emptyList()
+                } else {
+                    userRepository.findByIds(linkedIds).bind().sortedWith(ViewerIdentityResolver.stableProfileComparator)
+                }
+            val selectedUser =
+                profiles.firstOrNull { !it.thumbUrl.isNullOrBlank() }
+                    ?: raise(MiruError.NotFound(resource = "User avatar", id = trimmedUserId))
+            fetchMediaUserAvatar(user = selectedUser, requestId = trimmedUserId).bind()
+        }
+
+    /**
+     * Fetches the upstream avatar from a media server user's [UserRecord.thumbUrl], for importing it
+     * as an account's own avatar. Applies the same SSRF and DNS-pinning protections as [getUserAvatar].
+     * When the picture is larger than [preferredMaxBytes], prefers a smaller copy scaled by the user's
+     * media server (Plex can, Jellyfin cannot); otherwise returns the original for the caller to judge.
+     */
+    suspend fun fetchMediaUserAvatarFromSource(
+        user: UserRecord,
+        preferredMaxBytes: Int,
+    ): Either<MiruError, CachedArtwork> =
+        either {
+            val original = fetchMediaUserAvatar(user = user, requestId = user.id).bind()
+            if (original.bytes.size <= preferredMaxBytes) return@either original
+            fetchMediaUserAvatar(user = user, requestId = user.id, maxDimension = IMPORTED_AVATAR_MAX_DIMENSION).fold(
+                ifLeft = { original },
+                ifRight = { scaled -> if (scaled.bytes.size < original.bytes.size) scaled else original },
+            )
+        }
+
+    private suspend fun fetchMediaUserAvatar(
+        user: UserRecord,
+        requestId: String,
+        maxDimension: Int? = null,
+    ): Either<MiruError, CachedArtwork> =
+        either {
             val rawThumbUrl =
                 user.thumbUrl?.trim()?.takeIf { it.isNotEmpty() }
-                    ?: raise(MiruError.NotFound(resource = "User avatar", id = trimmedUserId))
+                    ?: raise(MiruError.NotFound(resource = "User avatar", id = requestId))
 
             val target = validateAvatarTarget(rawThumbUrl).bind()
 
-            val cacheKey = "avatar:${user.id}:${BoundedArtworkCache.sha256Hex(rawThumbUrl).take(AVATAR_CACHE_KEY_HASH_LEN)}"
+            val sizeScope = maxDimension?.let { ":max=$it" }.orEmpty()
+            val cacheKey =
+                "avatar:${user.id}$sizeScope:${BoundedArtworkCache.sha256Hex(rawThumbUrl).take(AVATAR_CACHE_KEY_HASH_LEN)}"
             cache.get(cacheKey)?.let { return@either it }
+
+            if (maxDimension != null) {
+                // Only the user's media server can scale its picture, fetching one hosted elsewhere (plex.tv) itself
+                val source =
+                    when (target) {
+                        is AvatarTarget.PlexPath -> target.path
+                        is AvatarTarget.ExternalHttpsUrl -> target.url
+                    }
+                val targetAdapter = adapterForUser(user, requestId).bind()
+                val artwork = targetAdapter.fetchScaledImage(source, maxDimension).bind()
+                return@either cacheUpstreamAvatar(targetAdapter, artwork, cacheKey).bind()
+            }
 
             when (target) {
                 is AvatarTarget.PlexPath -> {
-                    val targetAdapter =
-                        if (adapterForServer != null) {
-                            adapterForServer.invoke(user.serverId)
-                                ?: raise(
-                                    MiruError.UpstreamUnavailable(
-                                        provider = "media_server",
-                                        message = "Media server adapter is not available for user '$trimmedUserId'",
-                                    ),
-                                )
-                        } else {
-                            adapter
-                        }
+                    val targetAdapter = adapterForUser(user, requestId).bind()
                     val artwork = targetAdapter.fetchArtwork(target.path).bind()
-                    ensure(artwork.bytes.isNotEmpty()) {
-                        MiruError.UpstreamUnavailable(
-                            provider = targetAdapter.serverType,
-                            message = "Upstream returned empty avatar payload",
-                        )
-                    }
-                    val contentType = sanitizeImageContentType(artwork.contentType)
-                    cache.put(key = cacheKey, bytes = artwork.bytes, contentType = contentType)
+                    cacheUpstreamAvatar(targetAdapter, artwork, cacheKey).bind()
                 }
 
                 is AvatarTarget.ExternalHttpsUrl -> {
                     fetchExternalAvatar(
                         url = target.url,
-                        userId = trimmedUserId,
+                        userId = requestId,
                         cacheKey = cacheKey,
                     ).bind()
                 }
             }
+        }
+
+    private suspend fun adapterForUser(
+        user: UserRecord,
+        requestId: String,
+    ): Either<MiruError, MediaServerAdapter> =
+        either {
+            if (adapterForServer == null) return@either adapter
+            adapterForServer.invoke(user.serverId)
+                ?: raise(
+                    MiruError.UpstreamUnavailable(
+                        provider = "media_server",
+                        message = "Media server adapter is not available for user '$requestId'",
+                    ),
+                )
+        }
+
+    private fun cacheUpstreamAvatar(
+        sourceAdapter: MediaServerAdapter,
+        artwork: ArtworkData,
+        cacheKey: String,
+    ): Either<MiruError, CachedArtwork> =
+        either {
+            ensure(artwork.bytes.isNotEmpty()) {
+                MiruError.UpstreamUnavailable(
+                    provider = sourceAdapter.serverType,
+                    message = "Upstream returned empty avatar payload",
+                )
+            }
+            cache.put(key = cacheKey, bytes = artwork.bytes, contentType = sanitizeImageContentType(artwork.contentType))
         }
 
     internal fun validateAvatarTarget(rawUrl: String): Either<MiruError.ValidationError, AvatarTarget> =

@@ -464,6 +464,34 @@ class PlexMediaServerAdapterTest :
                 .shouldBeInstanceOf<MiruError.ValidationError>()
         }
 
+        test("fetchScaledImage has Plex's documented photo transcoder fetch and scale a server path or HTTPS image as PNG") {
+            val scaledPng = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D)
+            val avatarUrl = "https://plex.tv/users/abc123/avatar?c=1700000000"
+            val serverPath = "/library/metadata/123/thumb/1700000000"
+            val (adapter, requests) =
+                adapterWithMock { request ->
+                    request.url.encodedPath shouldBe "/photo/:/transcode"
+                    request.url.parameters["width"] shouldBe "256"
+                    request.url.parameters["height"] shouldBe "256"
+                    request.url.parameters["format"] shouldBe "png"
+                    // Fit within the box, never fill or upscale it
+                    request.url.parameters["minSize"] shouldBe null
+                    request.url.parameters["upscale"] shouldBe null
+                    respond(scaledPng, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "image/png"))
+                }
+
+            adapter.fetchScaledImage(avatarUrl, maxDimension = 256).shouldBeRight() shouldBe ArtworkData(scaledPng, "image/png")
+            adapter.fetchScaledImage(serverPath, maxDimension = 256).shouldBeRight() shouldBe ArtworkData(scaledPng, "image/png")
+            requests.map { it.url.parameters["url"] } shouldBe listOf(avatarUrl, serverPath)
+
+            listOf("http://plex.tv/users/abc/avatar", "file:///etc/passwd", "//evil.example/a.png", "/library/../etc/passwd", "")
+                .forEach { badSource ->
+                    adapter.fetchScaledImage(badSource, maxDimension = 256).shouldBeLeft().shouldBeInstanceOf<MiruError.ValidationError>()
+                }
+            adapter.fetchScaledImage(avatarUrl, maxDimension = 0).shouldBeLeft().shouldBeInstanceOf<MiruError.ValidationError>()
+            requests shouldHaveSize 2
+        }
+
         test("fetchArtwork supports direct and transcoded requests and blocks SSRF or path traversal") {
             val directBytes = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte())
             val thumbBytes = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47)

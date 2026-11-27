@@ -10,6 +10,8 @@ import app.hononeko.miru.persistence.model.ActiveSessionRecord
 import app.hononeko.miru.persistence.model.ApiKeyRecord
 import app.hononeko.miru.persistence.model.AuthAccountRecord
 import app.hononeko.miru.persistence.model.AuthSessionRecord
+import app.hononeko.miru.persistence.model.AvatarMutation
+import app.hononeko.miru.persistence.model.DisplayNameMutation
 import app.hononeko.miru.persistence.model.GrandparentItemRecord
 import app.hononeko.miru.persistence.model.GuardrailMode
 import app.hononeko.miru.persistence.model.GuardrailRuleRecord
@@ -75,6 +77,8 @@ import app.hononeko.miru.persistence.repository.WebhookTargetRepository
 import app.hononeko.miru.service.HistoryAndStatsService
 import app.hononeko.miru.service.HistoryQueryParams
 import app.hononeko.miru.service.LibraryQueryService
+import app.hononeko.miru.service.StreamsAndUsersService
+import app.hononeko.miru.service.ViewerIdentityResolver
 import io.kotest.assertions.arrow.core.shouldBeLeft
 import io.kotest.assertions.arrow.core.shouldBeRight
 import io.kotest.core.factory.TestFactory
@@ -152,6 +156,8 @@ fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
         authAccountRoleModeTests { ctx }
         authAccountLifecycleTests { ctx }
         authAccountLinkModeTests { ctx }
+        authAccountProfileTests { ctx }
+        unifiedViewerProfileTests { ctx }
         authSessionTests { ctx }
         authSessionContextTests { ctx }
         apiKeyTests { ctx }
@@ -3736,4 +3742,246 @@ private fun createMinimalContractTautulliDb(path: Path): Path {
         }
     }
     return path
+}
+
+/** Every byte value, so a BLOB or BYTEA column that mangles bytes (sign, encoding, NULs) shows up. */
+private val ALL_BYTE_VALUES = ByteArray(256) { it.toByte() }
+
+private fun profileAccount(
+    id: String,
+    username: String,
+    createdAtMs: Long = 1_000L,
+): AuthAccountRecord =
+    AuthAccountRecord(
+        id = id,
+        username = username,
+        usernameNormalized = username,
+        passwordHash = "hash-$id",
+        role = "USER",
+        disabled = false,
+        createdAtMs = createdAtMs,
+        updatedAtMs = createdAtMs,
+    )
+
+private fun FunSpecRootScope.authAccountProfileTests(ctxProvider: () -> ContractContext) {
+    context("AuthAccountRepository profile") {
+        test("stores, keeps, and clears display names and avatar bytes, and reads them without loading the bytes") {
+            val ctx = ctxProvider()
+            ctx.authAccounts.insert(profileAccount("acc-prof-1", "elena")).shouldBeRight()
+            ctx.authAccounts.insert(profileAccount("acc-prof-2", "omar", createdAtMs = 1_100L)).shouldBeRight()
+
+            val fresh = ctx.authAccounts.findById("acc-prof-1").shouldBeRight().shouldNotBeNull()
+            fresh.displayName.shouldBeNull()
+            fresh.hasCustomAvatar shouldBe false
+            ctx.authAccounts.findAvatarById("acc-prof-1").shouldBeRight().shouldBeNull()
+
+            val avatarBytes = ALL_BYTE_VALUES + ByteArray(512 * 1024 - ALL_BYTE_VALUES.size) { (it % 251).toByte() }
+            val updated =
+                ctx.authAccounts
+                    .updateProfile(
+                        id = "acc-prof-1",
+                        displayName = DisplayNameMutation.Set("Elena Kovač"),
+                        avatar =
+                            AvatarMutation.Set(
+                                bytes = avatarBytes,
+                                contentType = "image/png",
+                                sourceServerId = "srv-prof",
+                                avatarUpdatedAtMs = 5_000L,
+                            ),
+                        updatedAtMs = 5_000L,
+                    ).shouldBeRight()
+                    .shouldNotBeNull()
+            updated.displayName shouldBe "Elena Kovač"
+            updated.avatarBytes.shouldBeNull()
+            updated.avatarContentType shouldBe "image/png"
+            updated.avatarSourceServerId shouldBe "srv-prof"
+            updated.avatarUpdatedAtMs shouldBe 5_000L
+            updated.hasCustomAvatar shouldBe true
+            updated.updatedAtMs shouldBe 5_000L
+
+            val avatar = ctx.authAccounts.findAvatarById("acc-prof-1").shouldBeRight().shouldNotBeNull()
+            avatar.bytes.contentEquals(avatarBytes) shouldBe true
+            avatar.contentType shouldBe "image/png"
+            avatar.sourceServerId shouldBe "srv-prof"
+            avatar.updatedAtMs shouldBe 5_000L
+            avatar.toString().contains("bytes=<${avatarBytes.size} bytes>") shouldBe true
+
+            // Every account lookup carries the profile, never the bytes
+            listOf(
+                ctx.authAccounts.findByNormalizedUsername("elena").shouldBeRight().shouldNotBeNull(),
+                ctx.authAccounts.findAll().shouldBeRight().single { it.id == "acc-prof-1" },
+            ).forEach { record ->
+                record.displayName shouldBe "Elena Kovač"
+                record.avatarBytes.shouldBeNull()
+                record.avatarUpdatedAtMs shouldBe 5_000L
+            }
+
+            ctx.authSessions
+                .insert(
+                    AuthSessionRecord(
+                        id = "sess-prof-1",
+                        accountId = "acc-prof-1",
+                        tokenHash = "tok-prof-1",
+                        createdAtMs = 5_000L,
+                        expiresAtMs = 60_000L,
+                        lastSeenAtMs = 5_000L,
+                    ),
+                ).shouldBeRight()
+            val sessionAccount =
+                ctx.authSessions
+                    .findSessionAuthContextByTokenHash("tok-prof-1")
+                    .shouldBeRight()
+                    .shouldNotBeNull()
+                    .account
+            sessionAccount.displayName shouldBe "Elena Kovač"
+            sessionAccount.avatarUpdatedAtMs shouldBe 5_000L
+            sessionAccount.avatarBytes.shouldBeNull()
+
+            val profiles = ctx.authAccounts.findProfilesByIds(listOf("acc-prof-1", "missing", "acc-prof-1")).shouldBeRight()
+            profiles.keys shouldContainExactly setOf("acc-prof-1")
+            profiles.getValue("acc-prof-1").displayName shouldBe "Elena Kovač"
+            profiles.getValue("acc-prof-1").hasCustomAvatar shouldBe true
+            ctx.authAccounts.findProfilesByIds(emptyList()).shouldBeRight() shouldBe emptyMap()
+            val allProfiles = ctx.authAccounts.findAllAccountProfiles().shouldBeRight()
+            allProfiles.keys shouldContainExactly setOf("acc-prof-1", "acc-prof-2")
+            allProfiles.getValue("acc-prof-2").displayName.shouldBeNull()
+            allProfiles.getValue("acc-prof-2").hasCustomAvatar shouldBe false
+
+            // Keep leaves both alone; only the account's update time moves
+            val kept = ctx.authAccounts.updateProfile(id = "acc-prof-1", updatedAtMs = 6_000L).shouldBeRight().shouldNotBeNull()
+            kept.displayName shouldBe "Elena Kovač"
+            kept.avatarUpdatedAtMs shouldBe 5_000L
+            kept.updatedAtMs shouldBe 6_000L
+            ctx.authAccounts
+                .findAvatarById("acc-prof-1")
+                .shouldBeRight()
+                .shouldNotBeNull()
+                .bytes
+                .contentEquals(avatarBytes) shouldBe true
+
+            // The display name and avatar change independently
+            val renamed =
+                ctx.authAccounts
+                    .updateProfile(id = "acc-prof-1", displayName = DisplayNameMutation.Set(null), updatedAtMs = 7_000L)
+                    .shouldBeRight()
+                    .shouldNotBeNull()
+            renamed.displayName.shouldBeNull()
+            renamed.avatarUpdatedAtMs shouldBe 5_000L
+
+            val cleared =
+                ctx.authAccounts
+                    .updateProfile(id = "acc-prof-1", avatar = AvatarMutation.Clear, updatedAtMs = 8_000L)
+                    .shouldBeRight()
+                    .shouldNotBeNull()
+            cleared.hasCustomAvatar shouldBe false
+            cleared.avatarContentType.shouldBeNull()
+            cleared.avatarSourceServerId.shouldBeNull()
+            ctx.authAccounts.findAvatarById("acc-prof-1").shouldBeRight().shouldBeNull()
+
+            ctx.authAccounts.updateProfile(id = "missing", displayName = DisplayNameMutation.Set("x"), updatedAtMs = 9_000L)
+                .shouldBeRight()
+                .shouldBeNull()
+            ctx.authAccounts.findAvatarById("missing").shouldBeRight().shouldBeNull()
+        }
+    }
+}
+
+private fun FunSpecRootScope.unifiedViewerProfileTests(ctxProvider: () -> ContractContext) {
+    context("Unified viewer profile") {
+        test("history, the users list, and user detail show the account's own display name and avatar across servers") {
+            val ctx = ctxProvider()
+            val nowMs = Instant.parse("2026-04-10T12:00:00Z").toEpochMilli()
+            val admin = MiruPrincipal(accountId = "acc-admin", username = "admin", role = MiruRole.ADMIN)
+            ctx.servers.upsert(sampleServer(id = "srv-plex", name = "Plex")).shouldBeRight()
+            ctx.servers.upsert(sampleServer(id = "srv-jelly", name = "Jellyfin")).shouldBeRight()
+            ctx.users
+                .upsert(
+                    sampleUser(id = "u-elena-plex", serverId = "srv-plex", username = "elena")
+                        .copy(displayName = "Elena P", thumbUrl = "https://plex.tv/users/1/avatar"),
+                ).shouldBeRight()
+            // Jellyfin repeats the username as the display name and has no picture
+            ctx.users
+                .upsert(
+                    sampleUser(id = "u-elena-jelly", serverId = "srv-jelly", username = "elena", externalUserId = "jf-1")
+                        .copy(displayName = "elena", createdAtMs = 500L),
+                ).shouldBeRight()
+            ctx.users.upsert(sampleUser(id = "u-carol", serverId = "srv-plex", username = "carol").copy(displayName = null)).shouldBeRight()
+            ctx.authAccounts.insert(profileAccount("acc-elena", "elena.k")).shouldBeRight()
+            ctx.authAccounts
+                .replaceLinkedMediaUserIds("acc-elena", setOf("u-elena-plex", "u-elena-jelly"), createdAtMs = 1_000L)
+                .shouldBeRight()
+            ctx.history
+                .insert(sampleHistory(id = "h-jelly", serverId = "srv-jelly", userId = "u-elena-jelly", ratingKey = "jf-movie"))
+                .shouldBeRight()
+            ctx.history
+                .insert(sampleHistory(id = "h-carol", serverId = "srv-plex", userId = "u-carol", ratingKey = "plex-movie"))
+                .shouldBeRight()
+
+            val history =
+                HistoryAndStatsService(
+                    playbackHistoryRepository = ctx.history,
+                    userRepository = ctx.users,
+                    clock = { nowMs },
+                    mediaServerRepository = ctx.servers,
+                    authAccountRepository = ctx.authAccounts,
+                )
+            val streamsAndUsers =
+                StreamsAndUsersService(
+                    activeSessionRepository = ctx.sessions,
+                    userRepository = ctx.users,
+                    playbackHistoryRepository = ctx.history,
+                    mediaServerRepository = ctx.servers,
+                    authAccountRepository = ctx.authAccounts,
+                )
+
+            suspend fun historyNames(): Map<String, String?> =
+                history.queryHistory(admin, HistoryQueryParams()).shouldBeRight().items.associate { it.id to it.displayName }
+
+            suspend fun elenaSummary() =
+                streamsAndUsers.listUsers(admin).shouldBeRight().users.single { it.accountId == "acc-elena" }
+
+            // Without an own profile, the linked server's real name wins over one that only repeats the username
+            historyNames() shouldBe mapOf("h-jelly" to "Elena P", "h-carol" to null)
+            elenaSummary().displayName shouldBe "Elena P"
+            elenaSummary().avatarUrl shouldBe "/api/v1/users/u-elena-plex/avatar"
+            val identities =
+                ViewerIdentityResolver
+                    .resolveMediaUserIdentities(ctx.users, ctx.authAccounts, listOf("u-elena-jelly", "u-carol", "u-missing"))
+                    .shouldBeRight()
+            identities.getValue("u-elena-jelly").avatarUrl shouldBe "/api/v1/users/u-elena-plex/avatar"
+            identities.getValue("u-carol").displayName.shouldBeNull()
+            identities.getValue("u-carol").avatarUrl.shouldBeNull()
+            identities.getValue("u-missing").user.shouldBeNull()
+
+            ctx.authAccounts
+                .updateProfile(
+                    id = "acc-elena",
+                    displayName = DisplayNameMutation.Set("Elena K"),
+                    avatar = AvatarMutation.Set(ALL_BYTE_VALUES, "image/png", sourceServerId = null, avatarUpdatedAtMs = 7_000L),
+                    updatedAtMs = 7_000L,
+                ).shouldBeRight()
+
+            // The account's own name and versioned avatar now show on every server's rows
+            historyNames() shouldBe mapOf("h-jelly" to "Elena K", "h-carol" to null)
+            history.getHistoryDetail(admin, "h-jelly").shouldBeRight().displayName shouldBe "Elena K"
+            elenaSummary().displayName shouldBe "Elena K"
+            elenaSummary().avatarUrl shouldBe "/api/v1/users/acc-elena/avatar?v=7000"
+            ViewerIdentityResolver
+                .resolveMediaUserIdentities(ctx.users, ctx.authAccounts, listOf("u-elena-plex", "u-elena-jelly"))
+                .shouldBeRight()
+                .values
+                .map { it.displayName to it.avatarUrl }
+                .toSet() shouldBe setOf("Elena K" to "/api/v1/users/acc-elena/avatar?v=7000")
+
+            val scopedToJellyfin = streamsAndUsers.getUserDetail(admin, "acc-elena", serverId = "srv-jelly").shouldBeRight().user
+            scopedToJellyfin.displayName shouldBe "Elena K"
+            scopedToJellyfin.avatarUrl shouldBe "/api/v1/users/acc-elena/avatar?v=7000"
+
+            // The unmerged list is the raw per-server profiles the admin links accounts from
+            val raw = streamsAndUsers.listUsers(admin, merged = false).shouldBeRight().users.associateBy { it.id }
+            raw.getValue("u-elena-plex").displayName shouldBe "Elena P"
+            raw.getValue("u-elena-plex").avatarUrl shouldBe "/api/v1/users/u-elena-plex/avatar"
+            raw.getValue("u-elena-jelly").avatarUrl.shouldBeNull()
+        }
+    }
 }

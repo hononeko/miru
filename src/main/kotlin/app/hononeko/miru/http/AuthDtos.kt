@@ -45,12 +45,26 @@ data class LoginRequest(
 data class PrincipalResponse(
     val accountId: String,
     val username: String,
+    /** The account's own display name, else the best one of its linked media users. */
+    val displayName: String? = null,
     val email: String? = null,
     val role: MiruRole,
     val linkedMediaUserIds: List<String>,
     val authSource: AuthSource,
     val authProvider: String = "LOCAL",
     val avatarUrl: String? = null,
+    val avatarSourceServerId: String? = null,
+    /** Whether [displayName] is the account's own, rather than one taken from a linked media user. */
+    val hasCustomDisplayName: Boolean = false,
+    val hasCustomAvatar: Boolean = false,
+)
+
+/** A person's own profile change. Importing from a linked server is an admin action (`UpdateAccountRequest`). */
+@Serializable
+data class UpdateProfileRequest(
+    val displayName: String? = null,
+    val clearDisplayName: Boolean = false,
+    val clearAvatar: Boolean = false,
 )
 
 @Serializable
@@ -68,15 +82,25 @@ data class UpdateAccountRequest(
     val roleMode: RoleMode? = null,
     val disabled: Boolean? = null,
     val password: String? = null,
+    val displayName: String? = null,
+    val clearDisplayName: Boolean = false,
+    val clearAvatar: Boolean = false,
+    val importDisplayNameFromServerId: String? = null,
+    val importAvatarFromServerId: String? = null,
 ) {
     override fun toString(): String =
-        "UpdateAccountRequest(role=$role, roleMode=$roleMode, disabled=$disabled, password=${if (password != null) "***" else "null"})"
+        "UpdateAccountRequest(role=$role, roleMode=$roleMode, disabled=$disabled, " +
+            "password=${if (password != null) "***" else "null"}, displayName=$displayName, " +
+            "clearDisplayName=$clearDisplayName, clearAvatar=$clearAvatar, " +
+            "importDisplayNameFromServerId=$importDisplayNameFromServerId, " +
+            "importAvatarFromServerId=$importAvatarFromServerId)"
 }
 
 @Serializable
 data class AccountResponse(
     val id: String,
     val username: String,
+    val displayName: String? = null,
     val email: String? = null,
     val role: MiruRole,
     val roleMode: RoleMode,
@@ -85,6 +109,9 @@ data class AccountResponse(
     val linkedMediaUserIds: List<String>,
     val mediaUserLinkMode: MediaUserLinkMode,
     val emailVerified: Boolean? = null,
+    val avatarUrl: String? = null,
+    val avatarSourceServerId: String? = null,
+    val hasCustomAvatar: Boolean = false,
     val createdAtMs: Long,
     val updatedAtMs: Long,
 )
@@ -100,11 +127,12 @@ data class CreateAccountRequest(
     val username: String,
     val password: String,
     val email: String? = null,
+    val displayName: String? = null,
     val role: MiruRole = MiruRole.USER,
     val linkedMediaUserIds: Set<String> = emptySet(),
 ) {
     override fun toString(): String =
-        "CreateAccountRequest(username=$username, password=***, email=$email, role=$role, linkedMediaUserIds=$linkedMediaUserIds)"
+        "CreateAccountRequest(username=$username, password=***, email=$email, displayName=$displayName, role=$role, linkedMediaUserIds=$linkedMediaUserIds)"
 }
 
 @Serializable
@@ -175,16 +203,23 @@ data class UpdateUserPreferencesRequest(
     val analyticsMetric: String? = null,
 )
 
-internal fun MiruPrincipal.toResponse(avatarUrl: String? = null): PrincipalResponse =
+internal fun MiruPrincipal.toResponse(
+    avatarUrl: String? = null,
+    resolvedDisplayName: String? = displayName.normalizedDisplayName(),
+): PrincipalResponse =
     PrincipalResponse(
         accountId = accountId,
         username = username,
+        displayName = resolvedDisplayName,
         email = email,
         role = role,
         linkedMediaUserIds = linkedMediaUserIds.sorted(),
         authSource = authSource,
         authProvider = authProvider,
         avatarUrl = avatarUrl,
+        avatarSourceServerId = avatarSourceServerId,
+        hasCustomDisplayName = displayName.normalizedDisplayName() != null,
+        hasCustomAvatar = hasCustomAvatar,
     )
 
 internal fun AuthProvidersInfo.toResponse(): AuthProvidersResponse =
@@ -198,10 +233,11 @@ internal fun AuthProvidersInfo.toResponse(): AuthProvidersResponse =
         setupRequired = setupRequired,
     )
 
-internal fun AccountWithLinks.toResponse(): AccountResponse =
+internal fun AccountWithLinks.toResponse(avatarUrl: String?): AccountResponse =
     AccountResponse(
         id = account.id,
         username = account.username,
+        displayName = account.displayName.normalizedDisplayName(),
         email = account.email,
         role = if (account.role.equals("ADMIN", ignoreCase = true)) MiruRole.ADMIN else MiruRole.USER,
         roleMode = RoleMode.fromStored(account.roleMode),
@@ -210,6 +246,9 @@ internal fun AccountWithLinks.toResponse(): AccountResponse =
         linkedMediaUserIds = linkedMediaUserIds.sorted(),
         mediaUserLinkMode = MediaUserLinkMode.fromStored(account.mediaUserLinkMode),
         emailVerified = account.emailVerified,
+        avatarUrl = avatarUrl,
+        avatarSourceServerId = account.avatarSourceServerId,
+        hasCustomAvatar = account.hasCustomAvatar,
         createdAtMs = account.createdAtMs,
         updatedAtMs = account.updatedAtMs,
     )

@@ -1,8 +1,10 @@
 package app.hononeko.miru.http
 
+import app.hononeko.miru.artwork.AvatarImageValidator
 import app.hononeko.miru.auth.AuthRateLimiter
 import app.hononeko.miru.auth.AuthService
 import app.hononeko.miru.auth.MiruRole
+import app.hononeko.miru.auth.ProfileImportSources
 import app.hononeko.miru.auth.SESSION_COOKIE_NAME
 import app.hononeko.miru.auth.authenticated
 import app.hononeko.miru.auth.oidc.OidcAuthService
@@ -12,11 +14,14 @@ import app.hononeko.miru.config.CookieSecureMode
 import app.hononeko.miru.domain.error.MiruError
 import arrow.core.Either
 import arrow.core.raise.either
+import arrow.core.raise.ensure
 import io.ktor.http.Cookie
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
+import io.ktor.server.request.contentLength
 import io.ktor.server.request.receive
+import io.ktor.server.request.receiveChannel
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondRedirect
 import io.ktor.server.routing.Route
@@ -26,6 +31,8 @@ import io.ktor.server.routing.patch
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.route
+import io.ktor.utils.io.readBuffer
+import kotlinx.io.readByteArray
 
 private const val DEFAULT_COOKIE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 private const val OIDC_TX_COOKIE_NAME = "miru_oidc_tx"
@@ -41,6 +48,7 @@ fun Route.authRoutes(
     authRateLimiter: AuthRateLimiter = AuthRateLimiter(),
     trustProxyHeaders: Boolean = false,
     oidcAuthService: OidcAuthService? = null,
+    profileImport: ProfileImportSources? = null,
 ) {
     route("/api/v1/auth") {
         publicAuthRoutes(
@@ -56,8 +64,42 @@ fun Route.authRoutes(
                 val result =
                     either {
                         val principal = call.requireMiruPrincipal().bind()
-                        val avatarUrl = authService.resolveAvatarUrl(principal).bind()
-                        principal.toResponse(avatarUrl = avatarUrl)
+                        authService.resolvePrincipalResponse(principal).bind()
+                    }
+                call.respondEither(result)
+            }
+
+            patch("/me/profile") {
+                val request = call.receive<UpdateProfileRequest>()
+                val result =
+                    either {
+                        val principal = call.requireMiruPrincipal().bind()
+                        authService.updateOwnProfile(principal = principal, request = request).bind()
+                    }
+                call.respondEither(result)
+            }
+
+            put("/me/avatar") {
+                val result =
+                    either {
+                        val principal = call.requireMiruPrincipal().bind()
+                        val bytes = call.receiveBoundedAvatarBytes().bind()
+                        val declaredContentType = call.request.headers[HttpHeaders.ContentType]
+                        authService
+                            .uploadOwnAvatar(
+                                principal = principal,
+                                bytes = bytes,
+                                declaredContentType = declaredContentType,
+                            ).bind()
+                    }
+                call.respondEither(result)
+            }
+
+            delete("/me/avatar") {
+                val result =
+                    either {
+                        val principal = call.requireMiruPrincipal().bind()
+                        authService.deleteOwnAvatar(principal).bind()
                     }
                 call.respondEither(result)
             }
@@ -109,7 +151,7 @@ fun Route.authRoutes(
 
     authenticated(authService = authService, authMode = authMode, requiredRole = MiruRole.ADMIN) {
         route("/api/v1/admin") {
-            adminAccountRoutes(authService = authService)
+            adminAccountRoutes(authService = authService, profileImport = profileImport)
             adminApiKeyRoutes(authService = authService)
         }
     }
@@ -169,8 +211,8 @@ private fun Route.publicAuthRoutes(
         val result =
             either {
                 val loginResult = authService.login(username = request.username, password = request.password).bind()
-                val avatarUrl = authService.resolveAvatarUrl(loginResult.principal).bind()
-                loginResult to loginResult.principal.toResponse(avatarUrl = avatarUrl)
+                val response = authService.resolvePrincipalResponse(loginResult.principal).bind()
+                loginResult to response
             }
         result.fold(
             ifLeft = { err ->
@@ -280,13 +322,16 @@ private fun Route.oidcRoutes(
     }
 }
 
-private fun Route.adminAccountRoutes(authService: AuthService) {
+private fun Route.adminAccountRoutes(
+    authService: AuthService,
+    profileImport: ProfileImportSources? = null,
+) {
     route("/accounts") {
         get {
             val result =
-                authService.listAccounts().map { accounts ->
+                authService.listAccountResponses().map { accounts ->
                     AccountListResponse(
-                        accounts = accounts.map { it.toResponse() },
+                        accounts = accounts,
                         emailLinkingEnabled = authService.emailLinkingEnabled,
                     )
                 }
@@ -296,14 +341,19 @@ private fun Route.adminAccountRoutes(authService: AuthService) {
         post {
             val request = call.receive<CreateAccountRequest>()
             val result =
-                authService
-                    .createAccount(
-                        username = request.username,
-                        password = request.password,
-                        email = request.email,
-                        role = request.role,
-                        linkedMediaUserIds = request.linkedMediaUserIds,
-                    ).map { it.toResponse() }
+                either {
+                    val created =
+                        authService
+                            .createAccount(
+                                username = request.username,
+                                password = request.password,
+                                email = request.email,
+                                role = request.role,
+                                linkedMediaUserIds = request.linkedMediaUserIds,
+                                displayName = request.displayName,
+                            ).bind()
+                    authService.toAccountResponse(created).bind()
+                }
             call.respondEither(result, HttpStatusCode.Created)
         }
 
@@ -313,58 +363,125 @@ private fun Route.adminAccountRoutes(authService: AuthService) {
             val result =
                 either {
                     val acting = call.requireMiruPrincipal().bind()
-                    authService
-                        .updateAccount(
-                            id = targetId,
-                            actingAccountId = acting.accountId,
-                            role = request.role,
-                            roleMode = request.roleMode,
-                            disabled = request.disabled,
-                            password = request.password,
-                        ).bind()
-                        .toResponse()
+                    val updated =
+                        authService
+                            .updateAccount(
+                                id = targetId,
+                                actingAccountId = acting.accountId,
+                                role = request.role,
+                                roleMode = request.roleMode,
+                                disabled = request.disabled,
+                                password = request.password,
+                                displayName = request.displayName,
+                                clearDisplayName = request.clearDisplayName,
+                                clearAvatar = request.clearAvatar,
+                                importDisplayNameFromServerId = request.importDisplayNameFromServerId,
+                                importAvatarFromServerId = request.importAvatarFromServerId,
+                                profileImport = profileImport,
+                            ).bind()
+                    authService.toAccountResponse(updated).bind()
                 }
             call.respondEither(result)
         }
 
-        delete("/{id}") {
+        put("/{id}/avatar") {
             val targetId = call.parameters["id"].orEmpty()
-            val result: Either<MiruError, Unit> =
+            val result =
                 either {
-                    val acting = call.requireMiruPrincipal().bind()
-                    authService.deleteAccount(id = targetId, actingAccountId = acting.accountId).bind()
+                    val bytes = call.receiveBoundedAvatarBytes().bind()
+                    val declaredContentType = call.request.headers[HttpHeaders.ContentType]
+                    val updated =
+                        authService
+                            .uploadAccountAvatar(
+                                id = targetId,
+                                bytes = bytes,
+                                declaredContentType = declaredContentType,
+                            ).bind()
+                    authService.toAccountResponse(updated).bind()
                 }
-            result.fold(
-                ifLeft = { call.respondError(it) },
-                ifRight = { call.respond(HttpStatusCode.NoContent) },
-            )
-        }
-
-        put("/{id}/media-users") {
-            val targetId = call.parameters["id"].orEmpty()
-            val request = call.receive<SetLinkedMediaUsersRequest>()
-            val result =
-                authService
-                    .setLinkedMediaUsers(
-                        accountId = targetId,
-                        mediaUserIds = request.linkedMediaUserIds,
-                    ).map { it.toResponse() }
             call.respondEither(result)
         }
 
-        put("/{id}/media-user-link-mode") {
+        delete("/{id}/avatar") {
             val targetId = call.parameters["id"].orEmpty()
-            val request = call.receive<SetMediaUserLinkModeRequest>()
             val result =
-                authService
-                    .setMediaUserLinkMode(
-                        accountId = targetId,
-                        mode = request.mode,
-                    ).map { it.toResponse() }
+                either {
+                    val updated = authService.deleteAccountAvatar(targetId).bind()
+                    authService.toAccountResponse(updated).bind()
+                }
             call.respondEither(result)
         }
+
+        adminAccountLifecycleAndLinkRoutes(authService)
     }
 }
+
+private fun Route.adminAccountLifecycleAndLinkRoutes(authService: AuthService) {
+    delete("/{id}") {
+        val targetId = call.parameters["id"].orEmpty()
+        val result: Either<MiruError, Unit> =
+            either {
+                val acting = call.requireMiruPrincipal().bind()
+                authService.deleteAccount(id = targetId, actingAccountId = acting.accountId).bind()
+            }
+        result.fold(
+            ifLeft = { call.respondError(it) },
+            ifRight = { call.respond(HttpStatusCode.NoContent) },
+        )
+    }
+
+    put("/{id}/media-users") {
+        val targetId = call.parameters["id"].orEmpty()
+        val request = call.receive<SetLinkedMediaUsersRequest>()
+        val result =
+            either {
+                val updated =
+                    authService
+                        .setLinkedMediaUsers(
+                            accountId = targetId,
+                            mediaUserIds = request.linkedMediaUserIds,
+                        ).bind()
+                authService.toAccountResponse(updated).bind()
+            }
+        call.respondEither(result)
+    }
+
+    put("/{id}/media-user-link-mode") {
+        val targetId = call.parameters["id"].orEmpty()
+        val request = call.receive<SetMediaUserLinkModeRequest>()
+        val result =
+            either {
+                val updated =
+                    authService
+                        .setMediaUserLinkMode(
+                            accountId = targetId,
+                            mode = request.mode,
+                        ).bind()
+                authService.toAccountResponse(updated).bind()
+            }
+        call.respondEither(result)
+    }
+}
+
+private suspend fun ApplicationCall.receiveBoundedAvatarBytes(): Either<MiruError.ValidationError, ByteArray> =
+    either {
+        val declaredLength = request.contentLength()
+        ensure(declaredLength == null || declaredLength <= AvatarImageValidator.MAX_AVATAR_BYTES) {
+            MiruError.ValidationError(
+                message = "Avatar image exceeds maximum allowed size of 512 KiB",
+                fieldErrors = mapOf("avatar" to "must be at most ${AvatarImageValidator.MAX_AVATAR_BYTES} bytes"),
+            )
+        }
+        val packet = receiveChannel().readBuffer((AvatarImageValidator.MAX_AVATAR_BYTES + 1).toLong())
+        val bytes = packet.readByteArray()
+        ensure(bytes.size <= AvatarImageValidator.MAX_AVATAR_BYTES) {
+            MiruError.ValidationError(
+                message = "Avatar image exceeds maximum allowed size of 512 KiB",
+                fieldErrors = mapOf("avatar" to "must be at most ${AvatarImageValidator.MAX_AVATAR_BYTES} bytes"),
+            )
+        }
+        bytes
+    }
 
 private fun Route.adminApiKeyRoutes(authService: AuthService) {
     route("/api-keys") {

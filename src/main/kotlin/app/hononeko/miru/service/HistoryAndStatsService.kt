@@ -173,7 +173,7 @@ class HistoryAndStatsService(
                     ?: raise(MiruError.NotFound(resource = "Playback history", id = trimmedId))
 
             principal.requireMediaUserAccess(record.userId).bind()
-            val user = userRepository.findById(record.userId).bind()
+            val user = resolveUsers(listOf(record.userId)).bind()[record.userId]
             val server = mediaServerRepository?.findById(record.serverId)?.getOrNull()
             record.toHistoryDetailResponse(user = user, server = server)
         }
@@ -533,7 +533,16 @@ class HistoryAndStatsService(
     private suspend fun resolveUsers(userIds: List<String>): Either<MiruError, Map<String, UserRecord>> =
         either {
             if (userIds.isEmpty()) return@either emptyMap()
-            userRepository.findByIds(userIds).bind().associateBy { it.id }
+            val identities =
+                ViewerIdentityResolver
+                    .resolveMediaUserIdentities(
+                        userRepository = userRepository,
+                        authAccountRepository = authAccountRepository,
+                        mediaUserIds = userIds,
+                    ).bind()
+            identities.mapNotNull { (uid, identity) ->
+                identity.user?.let { uid to it.copy(displayName = identity.displayName) }
+            }.toMap()
         }
 
     private fun validateHistoryQuery(params: HistoryQueryParams): Either<MiruError.ValidationError, ValidatedHistoryQuery> =

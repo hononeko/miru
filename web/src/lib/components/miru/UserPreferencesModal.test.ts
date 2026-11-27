@@ -1,7 +1,8 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { goto } from '$app/navigation';
 import { api } from '$api/client';
+import type { PrincipalResponse } from '$api/types';
 import { authStore } from '$stores/auth.svelte';
 import { preferencesStore } from '$stores/preferences.svelte';
 import { themeStore } from '$stores/theme.svelte';
@@ -280,5 +281,138 @@ describe('UserPreferencesModal sign out', () => {
 		await waitFor(() => expect(preferencesStore.modalOpen).toBe(false));
 		expect(assign).toHaveBeenCalledTimes(1);
 		expect(goto).not.toHaveBeenCalled();
+	});
+});
+
+describe('UserPreferencesModal profile', () => {
+	const linkedPrincipal: PrincipalResponse = {
+		accountId: 'acc-elena',
+		username: 'elena',
+		email: null,
+		role: 'USER',
+		linkedMediaUserIds: ['u-plex', 'u-jelly'],
+		authSource: 'SESSION_COOKIE',
+		authProvider: 'LOCAL',
+		displayName: 'Elena P',
+		hasCustomDisplayName: false,
+		avatarUrl: '/api/v1/users/u-plex/avatar',
+		hasCustomAvatar: false
+	};
+
+	const ok = <T>(data: T) => ({ data, response: new Response(null, { status: 200 }) }) as never;
+
+	beforeEach(() => {
+		HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) {
+			this.setAttribute('open', '');
+		});
+		HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) {
+			this.removeAttribute('open');
+		});
+		authStore.authMode = 'local';
+		authStore.principal = { ...linkedPrincipal };
+		vi.spyOn(api, 'GET').mockResolvedValue(ok({}));
+		preferencesStore.openModal();
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+		cleanup();
+		preferencesStore.closeModal();
+		authStore.principal = null;
+		authStore.authMode = 'local';
+	});
+
+	const profile = () => screen.getByRole('region', { name: 'Profile' });
+
+	it('edits only the account’s own display name and shows a linked server’s name as the placeholder', async () => {
+		const patchSpy = vi.spyOn(api, 'PATCH').mockResolvedValueOnce(
+			ok({ ...linkedPrincipal, displayName: 'Elena K', hasCustomDisplayName: true })
+		);
+		render(UserPreferencesModal);
+
+		const input = within(profile()).getByLabelText('Display Name') as HTMLInputElement;
+		expect(input.value).toBe('');
+		expect(input.placeholder).toBe('Elena P');
+		// Nothing of the account's own to clear yet
+		expect(within(profile()).queryByRole('button', { name: 'Clear' })).toBeNull();
+
+		await fireEvent.input(input, { target: { value: '   ' } });
+		await fireEvent.click(within(profile()).getByRole('button', { name: 'Save Name' }));
+		expect(within(profile()).getByRole('alert').textContent).toContain('must not be blank');
+		expect(patchSpy).not.toHaveBeenCalled();
+
+		await fireEvent.input(input, { target: { value: '  Elena K  ' } });
+		await fireEvent.click(within(profile()).getByRole('button', { name: 'Save Name' }));
+
+		await waitFor(() => {
+			expect(patchSpy).toHaveBeenCalledWith('/api/v1/auth/me/profile', { body: { displayName: 'Elena K' } });
+			expect(within(profile()).getByRole('status').textContent).toContain('Display name updated');
+		});
+		expect(authStore.principal?.displayName).toBe('Elena K');
+		expect(input.value).toBe('Elena K');
+
+		patchSpy.mockResolvedValueOnce(ok({ ...linkedPrincipal }));
+		await fireEvent.click(within(profile()).getByRole('button', { name: 'Clear' }));
+		await waitFor(() => {
+			expect(patchSpy).toHaveBeenLastCalledWith('/api/v1/auth/me/profile', { body: { clearDisplayName: true } });
+			expect(input.value).toBe('');
+		});
+		expect(authStore.principal?.hasCustomDisplayName).toBe(false);
+	});
+
+	it('leaves importing from a linked server to admins', () => {
+		render(UserPreferencesModal);
+		expect(within(profile()).getByLabelText('Display Name')).toBeTruthy();
+		expect(within(profile()).getByRole('button', { name: 'Upload Avatar' })).toBeTruthy();
+		expect(within(profile()).queryByLabelText('Import from server')).toBeNull();
+		expect(within(profile()).queryByRole('button', { name: /^Import/ })).toBeNull();
+		expect(vi.mocked(api.GET)).not.toHaveBeenCalledWith('/api/v1/users/{id}', expect.anything());
+	});
+
+	it('uploads a PNG avatar as raw bytes, refuses other files before sending, and removes a custom avatar', async () => {
+		const fetchMock = vi.fn(async () =>
+			new Response(
+				JSON.stringify({
+					...linkedPrincipal,
+					hasCustomAvatar: true,
+					avatarUrl: '/api/v1/users/acc-elena/avatar?v=7'
+				}),
+				{ status: 200, headers: { 'Content-Type': 'application/json' } }
+			)
+		);
+		vi.stubGlobal('fetch', fetchMock);
+		render(UserPreferencesModal);
+
+		const fileInput = within(profile()).getByLabelText('Upload Avatar') as HTMLInputElement;
+		const gif = new File([new Uint8Array([0x47, 0x49, 0x46])], 'me.gif', { type: 'image/gif' });
+		await fireEvent.change(fileInput, { target: { files: [gif] } });
+		expect(within(profile()).getByRole('alert').textContent).toContain('PNG, JPEG, or WebP');
+		expect(fetchMock).not.toHaveBeenCalled();
+
+		const png = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'me.png', { type: 'image/png' });
+		await fireEvent.change(fileInput, { target: { files: [png] } });
+		await waitFor(() => expect(within(profile()).getByRole('status').textContent).toContain('Avatar uploaded'));
+		expect(fetchMock).toHaveBeenCalledWith('/api/v1/auth/me/avatar', {
+			method: 'PUT',
+			credentials: 'include',
+			headers: { 'Content-Type': 'image/png' },
+			body: png
+		});
+		expect(authStore.principal?.hasCustomAvatar).toBe(true);
+
+		const deleteSpy = vi.spyOn(api, 'DELETE').mockResolvedValueOnce(ok({ ...linkedPrincipal }));
+		await fireEvent.click(within(profile()).getByRole('button', { name: 'Remove Avatar' }));
+		await waitFor(() => {
+			expect(deleteSpy).toHaveBeenCalledWith('/api/v1/auth/me/avatar');
+			expect(within(profile()).getByRole('status').textContent).toContain('Custom avatar removed');
+		});
+		expect(within(profile()).queryByRole('button', { name: 'Remove Avatar' })).toBeNull();
+	});
+
+	it('hides the profile editor when authentication is disabled', () => {
+		authStore.authMode = 'none';
+		render(UserPreferencesModal);
+		expect(screen.queryByRole('region', { name: 'Profile' })).toBeNull();
 	});
 });

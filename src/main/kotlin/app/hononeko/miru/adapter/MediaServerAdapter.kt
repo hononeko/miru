@@ -47,6 +47,23 @@ interface MediaServerAdapter {
         height: Int? = null,
     ): Either<MiruError, ArtworkData>
 
+    /**
+     * Has the media server scale the image at [source] (a path on the server, or an absolute HTTPS URL
+     * the caller has already allowlisted, which the server fetches itself) to fit within [maxDimension]
+     * pixels, as a PNG. Servers that cannot scale such images on request refuse with
+     * [MiruError.UpstreamUnavailable]: Jellyfin's user image API (`GET /UserImage`) has no size parameters.
+     */
+    suspend fun fetchScaledImage(
+        source: String,
+        maxDimension: Int,
+    ): Either<MiruError, ArtworkData> =
+        Either.Left(
+            MiruError.UpstreamUnavailable(
+                provider = serverType,
+                message = "This media server cannot scale images on request",
+            ),
+        )
+
     fun mediaArtworkPath(
         ratingKey: String,
         isBackdrop: Boolean,

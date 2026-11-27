@@ -5,6 +5,8 @@ import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.http.LinkedUserProfileDto
 import app.hononeko.miru.http.UserSummaryDto
 import app.hononeko.miru.http.normalizedDisplayName
+import app.hononeko.miru.persistence.model.AuthAccountProfileRecord
+import app.hononeko.miru.persistence.model.AuthAccountRecord
 import app.hononeko.miru.persistence.model.MediaServerRecord
 import app.hononeko.miru.persistence.model.UserRecord
 import app.hononeko.miru.persistence.repository.AuthAccountRepository
@@ -15,11 +17,19 @@ import arrow.core.raise.either
 internal data class ResolvedViewer(
     val canonicalId: String,
     val accountId: String?,
+    val accountProfile: AuthAccountProfileRecord? = null,
     val allProfiles: List<UserRecord>,
     val scopedProfiles: List<UserRecord>,
     val targetMediaUserIds: Set<String>,
     val primaryProfile: UserRecord,
     val primaryDisplayName: String?,
+    val avatarUrl: String? = null,
+)
+
+internal data class ResolvedMediaUserIdentity(
+    val user: UserRecord?,
+    val displayName: String?,
+    val avatarUrl: String?,
 )
 
 internal object ViewerIdentityResolver {
@@ -55,6 +65,7 @@ internal object ViewerIdentityResolver {
         either {
             val directUser = userRepository.findById(targetId).bind()
             val accountId: String?
+            var loadedAccount: AuthAccountRecord? = null
             val rawProfiles: List<UserRecord>
             if (directUser != null) {
                 accountId = authAccountRepository?.findAccountIdByMediaUserId(directUser.id)?.bind()
@@ -70,6 +81,7 @@ internal object ViewerIdentityResolver {
                 val account =
                     authAccountRepository?.findById(targetId)?.bind()
                         ?: raise(MiruError.NotFound(resource = "User", id = targetId))
+                loadedAccount = account
                 accountId = account.id
                 val linkedIds = authAccountRepository.findLinkedMediaUserIds(account.id).bind()
                 if (linkedIds.isEmpty()) {
@@ -81,6 +93,13 @@ internal object ViewerIdentityResolver {
                 }
             }
 
+            val accountProfile =
+                when {
+                    loadedAccount != null -> loadedAccount.toProfileRecord()
+                    accountId != null -> authAccountRepository?.findProfilesByIds(listOf(accountId))?.bind()?.get(accountId)
+                    else -> null
+                }
+
             val orderedAll = rawProfiles.sortedWith(stableProfileComparator)
             val scopedProfiles =
                 if (serverId != null) {
@@ -90,22 +109,25 @@ internal object ViewerIdentityResolver {
                 }
             val effectiveProfiles = scopedProfiles.ifEmpty { orderedAll }
             val primaryProfile = effectiveProfiles.first()
-            val primaryDisplayName = effectiveProfiles.firstNotNullOfOrNull { it.displayName.normalizedDisplayName() }
             val canonicalId =
                 if (serverId != null) {
                     scopedProfiles.firstOrNull()?.id ?: accountId ?: targetId
                 } else {
                     accountId ?: orderedAll.first().id
                 }
+            val primaryDisplayName = resolveDisplayName(accountProfile?.displayName, effectiveProfiles)
+            val avatarUrl = resolveAvatarUrl(accountProfile, effectiveProfiles)
 
             ResolvedViewer(
                 canonicalId = canonicalId,
                 accountId = accountId,
+                accountProfile = accountProfile,
                 allProfiles = orderedAll,
                 scopedProfiles = scopedProfiles,
                 targetMediaUserIds = scopedProfiles.mapTo(LinkedHashSet(scopedProfiles.size)) { it.id },
                 primaryProfile = primaryProfile,
                 primaryDisplayName = primaryDisplayName,
+                avatarUrl = avatarUrl,
             )
         }
 
@@ -142,8 +164,20 @@ internal object ViewerIdentityResolver {
                 return@either emptyMap()
             }
             val directUsers = userRepository.findByIds(rawUserIds).bind().associateBy { it.id }
-            if (serverId != null || authAccountRepository == null) {
+            if (authAccountRepository == null) {
                 return@either directUsers
+            }
+
+            if (serverId != null) {
+                val links = authAccountRepository.findAccountIdsByMediaUserIds(directUsers.keys).bind()
+                if (links.isEmpty()) {
+                    return@either directUsers
+                }
+                val accountProfiles = authAccountRepository.findProfilesByIds(links.values).bind()
+                return@either directUsers.mapValues { (uid, user) ->
+                    val accountDisplay = links[uid]?.let { accountProfiles[it]?.displayName.normalizedDisplayName() }
+                    if (accountDisplay != null) user.copy(displayName = accountDisplay) else user
+                }
             }
 
             val allLinks = preloadedLinks ?: authAccountRepository.findAllMediaUserLinks().bind()
@@ -152,6 +186,7 @@ internal object ViewerIdentityResolver {
                 return@either directUsers
             }
 
+            val accountProfilesById = authAccountRepository.findProfilesByIds(activeAccountIds).bind()
             val siblingMediaIds =
                 allLinks.entries
                     .filter { (_, accId) -> accId in activeAccountIds }
@@ -182,7 +217,7 @@ internal object ViewerIdentityResolver {
                         .mapNotNull { allUsersById[it] }
                         .sortedWith(stableProfileComparator)
                 val primary = profiles.firstOrNull() ?: continue
-                val bestDisplayName = profiles.firstNotNullOfOrNull { it.displayName.normalizedDisplayName() }
+                val bestDisplayName = resolveDisplayName(accountProfilesById[accountId]?.displayName, profiles)
                 result[accountId] =
                     primary.copy(
                         id = accountId,
@@ -191,6 +226,93 @@ internal object ViewerIdentityResolver {
             }
 
             result
+        }
+
+    suspend fun resolveMediaUserIdentities(
+        userRepository: UserRepository,
+        authAccountRepository: AuthAccountRepository?,
+        mediaUserIds: Collection<String>,
+        preloadedUsersById: Map<String, UserRecord>? = null,
+    ): Either<MiruError, Map<String, ResolvedMediaUserIdentity>> =
+        either {
+            val uniqueIds = mediaUserIds.distinct()
+            if (uniqueIds.isEmpty()) return@either emptyMap()
+
+            val directUsers =
+                preloadedUsersById
+                    ?: userRepository.findByIds(uniqueIds).bind().associateBy { it.id }
+
+            if (authAccountRepository == null) {
+                return@either uniqueIds.associateWith { uid ->
+                    val user = directUsers[uid]
+                    ResolvedMediaUserIdentity(
+                        user = user,
+                        displayName = user?.displayName.normalizedDisplayName(),
+                        avatarUrl = user?.avatarProxyUrl(),
+                    )
+                }
+            }
+
+            val linksByTarget = authAccountRepository.findAccountIdsByMediaUserIds(uniqueIds).bind()
+            val accountIds = linksByTarget.values.toSet()
+            if (accountIds.isEmpty()) {
+                return@either uniqueIds.associateWith { uid ->
+                    val user = directUsers[uid]
+                    ResolvedMediaUserIdentity(
+                        user = user,
+                        displayName = user?.displayName.normalizedDisplayName(),
+                        avatarUrl = user?.avatarProxyUrl(),
+                    )
+                }
+            }
+
+            val accountProfilesById = authAccountRepository.findProfilesByIds(accountIds).bind()
+            val linkedIdsByAccount: Map<String, Set<String>> =
+                if (accountIds.size == 1) {
+                    val singleAccountId = accountIds.single()
+                    mapOf(singleAccountId to authAccountRepository.findLinkedMediaUserIds(singleAccountId).bind())
+                } else {
+                    val allLinks = authAccountRepository.findAllMediaUserLinks().bind()
+                    allLinks.entries
+                        .filter { (_, accId) -> accId in accountIds }
+                        .groupBy(keySelector = { it.value }, valueTransform = { it.key })
+                        .mapValues { it.value.toSet() }
+                }
+
+            val allNeededMediaIds = linkedIdsByAccount.values.flatten().distinct()
+            val missingIds = allNeededMediaIds.filter { it !in directUsers }
+            val allUsersById =
+                if (missingIds.isEmpty()) {
+                    directUsers
+                } else {
+                    directUsers + userRepository.findByIds(missingIds).bind().associateBy { it.id }
+                }
+
+            uniqueIds.associateWith { uid ->
+                val direct = directUsers[uid]
+                val accountId = linksByTarget[uid]
+                val accountProfile = accountId?.let { accountProfilesById[it] }
+                val orderedSiblings =
+                    if (accountId != null) {
+                        linkedIdsByAccount[accountId]
+                            .orEmpty()
+                            .mapNotNull { allUsersById[it] }
+                            .ifEmpty { listOfNotNull(direct) }
+                            .sortedWith(stableProfileComparator)
+                    } else {
+                        listOfNotNull(direct)
+                    }
+                ResolvedMediaUserIdentity(
+                    user = direct,
+                    displayName = resolveDisplayName(accountProfile?.displayName, orderedSiblings),
+                    avatarUrl =
+                        resolveAvatarUrl(
+                            accountProfile = accountProfile,
+                            profiles = orderedSiblings,
+                            preferredUser = direct,
+                        ),
+                )
+            }
         }
 
     fun buildUserSummaryDto(
@@ -202,11 +324,12 @@ internal object ViewerIdentityResolver {
         totalPlays: Long,
         totalWatchDurationSec: Long,
         linkedProfileRecords: List<UserRecord> = orderedProfiles,
+        accountProfile: AuthAccountProfileRecord? = null,
     ): UserSummaryDto {
         val primary = orderedProfiles.first()
-        val primaryDisplayName = orderedProfiles.firstNotNullOfOrNull { it.displayName.normalizedDisplayName() }
+        val primaryDisplayName = resolveDisplayName(accountProfile?.displayName, orderedProfiles)
         val primaryServer = serversById[primary.serverId]
-        val avatarUrl = orderedProfiles.firstNotNullOfOrNull { it.avatarProxyUrl() }
+        val avatarUrl = resolveAvatarUrl(accountProfile, orderedProfiles)
         val lastSeenAtMs = orderedProfiles.mapNotNull { it.lastSeenAtMs }.maxOrNull()
         val profileDtos =
             linkedProfileRecords
@@ -233,6 +356,54 @@ internal object ViewerIdentityResolver {
         )
     }
 
+    fun bestMediaProfileDisplayName(profiles: Collection<UserRecord>): String? {
+        var fallback: String? = null
+        for (profile in profiles) {
+            val candidate = profile.displayName.normalizedDisplayName() ?: continue
+            if (candidate != profile.username.trim()) {
+                return candidate
+            }
+            if (fallback == null) {
+                fallback = candidate
+            }
+        }
+        return fallback
+    }
+
+    fun resolveDisplayName(
+        accountDisplayName: String?,
+        profiles: Collection<UserRecord>,
+    ): String? = accountDisplayName.normalizedDisplayName() ?: bestMediaProfileDisplayName(profiles)
+
+    /**
+     * The URL of an account's own (uploaded or imported) avatar, versioned by its update time so
+     * browsers drop a cached copy as soon as it changes; null when the account has none.
+     */
+    fun accountAvatarUrl(
+        accountId: String,
+        avatarUpdatedAtMs: Long?,
+    ): String? = avatarUpdatedAtMs?.let { "/api/v1/users/$accountId/avatar?v=$it" }
+
+    /** The account's own avatar when it has one, else the preferred or first linked media profile's picture. */
+    fun resolveAvatarUrl(
+        accountProfile: AuthAccountProfileRecord?,
+        profiles: Collection<UserRecord>,
+        preferredUser: UserRecord? = null,
+    ): String? =
+        accountProfile?.let { accountAvatarUrl(it.id, it.avatarUpdatedAtMs) }
+            ?: preferredUser?.avatarProxyUrl()
+            ?: profiles.firstNotNullOfOrNull { it.avatarProxyUrl() }
+
+    fun AuthAccountRecord.toProfileRecord(): AuthAccountProfileRecord =
+        AuthAccountProfileRecord(
+            id = id,
+            username = username,
+            displayName = displayName,
+            avatarContentType = avatarContentType,
+            avatarSourceServerId = avatarSourceServerId,
+            avatarUpdatedAtMs = avatarUpdatedAtMs,
+        )
+
     fun UserRecord.toLinkedProfileDto(server: MediaServerRecord?): LinkedUserProfileDto =
         LinkedUserProfileDto(
             userId = id,
@@ -248,5 +419,5 @@ internal object ViewerIdentityResolver {
         )
 
     fun UserRecord.avatarProxyUrl(): String? =
-        thumbUrl?.let { "/api/v1/users/$id/avatar" }
+        thumbUrl?.trim()?.takeIf { it.isNotEmpty() }?.let { "/api/v1/users/$id/avatar" }
 }

@@ -16,6 +16,11 @@ object AuthAccountsTable : Table("auth_accounts") {
     val externalSubject = text("external_subject").nullable()
     val mediaUserLinkMode = text("media_user_link_mode").default("MANUAL")
     val emailVerified = bool("email_verified").nullable()
+    val displayName = text("display_name").nullable()
+    val avatarBytes = binary("avatar_bytes").nullable()
+    val avatarContentType = text("avatar_content_type").nullable()
+    val avatarSourceServerId = text("avatar_source_server_id").nullable()
+    val avatarUpdatedAtMs = long("avatar_updated_at_ms").nullable()
     val createdAtMs = long("created_at_ms")
     val updatedAtMs = long("updated_at_ms")
 

@@ -43,9 +43,12 @@ strategy:
 image:
   repository: ghcr.io/hononeko/miru
   pullPolicy: IfNotPresent
-  # -- Overrides the image tag whose default is the chart appVersion.
-  tag: ""
-  # -- Optional SHA-256 digest to pin the image (e.g. "sha256:..."). When set without tag, pulls by digest only.
+  # -- Miru version to run. Each release publishes the chart with this set to its own version, and `edge` (the
+  # latest build of main) is the value in a checkout. Set it to run another version; "" falls back to the chart
+  # appVersion.
+  tag: "edge"
+  # -- Optional SHA-256 digest to pin the image (e.g. "sha256:..."). The image is then pulled by digest, and the tag
+  # only labels it; set tag to "" to pull by digest alone.
   digest: ""
 
 imagePullSecrets: []

@@ -1,0 +1,55 @@
+suite: Container image reference
+templates:
+  - templates/deployment.yaml
+  - templates/configmap.yaml
+  - templates/secret.yaml
+set:
+  auth.sessionSecret: unittest-session-secret-0123456789abcdef
+tests:
+  - it: runs the image.tag from values by default
+    chart:
+      appVersion: 9.9.9
+    asserts:
+      - template: templates/deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/hononeko/miru:edge
+
+  - it: runs an overridden image.tag
+    set:
+      image.tag: 1.0.0
+    asserts:
+      - template: templates/deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/hononeko/miru:1.0.0
+
+  - it: falls back to the chart appVersion when image.tag is empty
+    chart:
+      appVersion: 9.9.9
+    set:
+      image.tag: ""
+    asserts:
+      - template: templates/deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/hononeko/miru:9.9.9
+
+  - it: keeps the tag next to a pinned digest
+    set:
+      image.digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    asserts:
+      - template: templates/deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/hononeko/miru:edge@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+
+  - it: pulls by digest alone when image.tag is empty
+    set:
+      image.tag: ""
+      image.digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    asserts:
+      - template: templates/deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/hononeko/miru@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef

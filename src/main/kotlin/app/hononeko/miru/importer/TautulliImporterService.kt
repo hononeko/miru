@@ -385,6 +385,9 @@ class TautulliImporterService(
                 val existing = userRepository.findByExternalId(serverId, user.externalUserId).bind()
                 val effectiveLastSeen =
                     listOfNotNull(existing?.lastSeenAtMs, user.lastSeenAtMs).maxOrNull()
+                // A user the media server already synced keeps its data; Tautulli only fills what is missing.
+                // Its friendly_name defaults to the username, so it replaces a name only if that is all there is.
+                val existingDisplayName = existing?.displayName?.trim()?.takeIf { it.isNotEmpty() && it != existing.username }
                 val saved =
                     userRepository
                         .upsert(
@@ -392,11 +395,11 @@ class TautulliImporterService(
                                 id = existing?.id ?: idGenerator(),
                                 serverId = serverId,
                                 externalUserId = user.externalUserId,
-                                username = user.username,
-                                displayName = user.displayName,
-                                email = user.email,
-                                thumbUrl = user.thumbUrl,
-                                isAdmin = user.isAdmin,
+                                username = existing?.username ?: user.username,
+                                displayName = existingDisplayName ?: user.displayName ?: existing?.displayName,
+                                email = existing?.email ?: user.email,
+                                thumbUrl = existing?.thumbUrl ?: user.thumbUrl,
+                                isAdmin = existing?.isAdmin ?: user.isAdmin,
                                 lastSeenAtMs = effectiveLastSeen,
                                 createdAtMs = existing?.createdAtMs ?: nowMs,
                                 updatedAtMs = nowMs,

@@ -355,6 +355,43 @@ class TautulliImporterTest :
             }
         }
 
+        test("keeps what the media server synced for existing users and only fills in what is missing") {
+            createImporterHarness().use { harness ->
+                val fixture = createRichTautulliFixture(harness.tempDir.resolve("tautulli.db"))
+                harness.service.import(fixture, TautulliImportOptions(dryRun = false)).shouldBeRight()
+
+                suspend fun user(externalId: String) =
+                    harness.userRepo.findAll().shouldBeRight().first { it.externalUserId == externalId }
+
+                // The media server's sync has since given Alice her real profile and Bob a picture
+                harness.userRepo
+                    .upsert(
+                        user("101").copy(
+                            displayName = "Alice Kowalski",
+                            email = "alice@plex.example",
+                            thumbUrl = "https://plex.tv/users/101/avatar",
+                            isAdmin = false,
+                        ),
+                    ).shouldBeRight()
+                harness.userRepo.upsert(user("102").copy(thumbUrl = "https://plex.tv/users/102/avatar")).shouldBeRight()
+
+                harness.service.import(fixture, TautulliImportOptions(dryRun = false)).shouldBeRight()
+                val alice = user("101")
+                alice.displayName shouldBe "Alice Kowalski"
+                alice.email shouldBe "alice@plex.example"
+                alice.thumbUrl shouldBe "https://plex.tv/users/101/avatar"
+                alice.isAdmin shouldBe false
+                val bob = user("102")
+                bob.thumbUrl shouldBe "https://plex.tv/users/102/avatar"
+                bob.email shouldBe null
+
+                // A server name that only repeats the username gives way to Tautulli's friendly name
+                harness.userRepo.upsert(alice.copy(displayName = "alice")).shouldBeRight()
+                harness.service.import(fixture, TautulliImportOptions(dryRun = false)).shouldBeRight()
+                user("101").displayName shouldBe "Alice K"
+            }
+        }
+
         test("handles minimal PlexPy schema without optional columns") {
             createImporterHarness().use { harness ->
                 val legacyDb = createPlexPyMinimalDb(harness.tempDir.resolve("plexpy.db"))

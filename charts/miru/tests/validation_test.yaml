@@ -1,0 +1,84 @@
+suite: Chart validation rules
+templates:
+  - templates/deployment.yaml
+  - templates/statefulset.yaml
+set:
+  auth.sessionSecret: unittest-session-secret-0123456789abcdef
+tests:
+  - it: rejects invalid workload.kind
+    set:
+      workload:
+        kind: DaemonSet
+    asserts:
+      - template: templates/deployment.yaml
+        failedTemplate: {}
+
+  - it: rejects simultaneous persistence.dataSource and persistence.dataSourceRef (Deployment)
+    set:
+      persistence:
+        dataSource:
+          kind: VolumeSnapshot
+          name: miru-snap
+        dataSourceRef:
+          kind: ReplicationDestination
+          name: miru-data
+    asserts:
+      - template: templates/deployment.yaml
+        failedTemplate:
+          errorMessage: persistence.dataSource and persistence.dataSourceRef cannot both be set.
+
+  - it: rejects simultaneous persistence.dataSource and persistence.dataSourceRef (StatefulSet)
+    set:
+      workload:
+        kind: StatefulSet
+      persistence:
+        dataSource:
+          kind: VolumeSnapshot
+          name: miru-snap
+        dataSourceRef:
+          kind: ReplicationDestination
+          name: miru-data
+    asserts:
+      - template: templates/statefulset.yaml
+        failedTemplate:
+          errorMessage: persistence.dataSource and persistence.dataSourceRef cannot both be set.
+
+  - it: rejects persistence.dataSourceRef alongside persistence.existingClaim
+    set:
+      persistence:
+        existingClaim: existing-miru-pvc
+        dataSourceRef:
+          kind: ReplicationDestination
+          name: miru-data
+    asserts:
+      - template: templates/deployment.yaml
+        failedTemplate:
+          errorMessage: persistence.dataSource and persistence.dataSourceRef cannot be set when persistence.existingClaim is set.
+
+  - it: rejects persistence.dataSource alongside persistence.existingClaim
+    set:
+      persistence:
+        existingClaim: existing-miru-pvc
+        dataSource:
+          kind: VolumeSnapshot
+          name: miru-snap
+    asserts:
+      - template: templates/deployment.yaml
+        failedTemplate:
+          errorMessage: persistence.dataSource and persistence.dataSourceRef cannot be set when persistence.existingClaim is set.
+
+  - it: rejects Deployment with SQLite persistence and strategy.type=RollingUpdate
+    set:
+      strategy:
+        type: RollingUpdate
+    asserts:
+      - template: templates/deployment.yaml
+        failedTemplate:
+          errorMessage: "strategy.type=RollingUpdate cannot be used with SQLite persistence: the new pod would wait for the volume the old pod holds, or both would write the same database file. Use strategy.type=Recreate."
+
+  - it: rejects replicaCount above 1
+    set:
+      replicaCount: 2
+    asserts:
+      - template: templates/deployment.yaml
+        failedTemplate: {}

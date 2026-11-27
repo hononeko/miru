@@ -5,17 +5,24 @@
 # with no leader election, so a second pod would record every stream twice. The schema rejects values above 1.
 replicaCount: 1
 
+# -- Workload controller configuration. Supports Deployment (default) or StatefulSet.
 workload:
-  # -- Deployment (default) or StatefulSet.
+  # -- Workload controller kind: Deployment (default) or StatefulSet.
   kind: Deployment
-  # -- Optional annotations on the Deployment / StatefulSet metadata (e.g. reloader.stakater.com/auto).
+  # -- Optional annotations applied to the Deployment or StatefulSet metadata (e.g. reloader.stakater.com/auto: "true").
   annotations: {}
+  # -- Settings applied only when workload.kind is StatefulSet.
   statefulSet:
-    podManagementPolicy: OrderedReady # or Parallel
+    # -- Pod management policy for the StatefulSet: OrderedReady (default) or Parallel.
+    podManagementPolicy: OrderedReady
     updateStrategy:
-      type: RollingUpdate # or OnDelete
+      # -- StatefulSet update strategy: RollingUpdate (default; terminates pod-0 before recreating it) or OnDelete.
+      type: RollingUpdate
+    # -- Controls Kubernetes retention of PVCs created from StatefulSet volumeClaimTemplates.
     persistentVolumeClaimRetentionPolicy:
-      whenDeleted: Retain # or Delete (matches persistence.keep intent)
+      # -- Action when the StatefulSet is deleted: Retain (default, matches persistence.keep intent) or Delete.
+      whenDeleted: Retain
+      # -- Action when the StatefulSet is scaled down: Retain (default) or Delete.
       whenScaled: Retain
 
 # -- Number of old ReplicaSets or ControllerRevisions to retain for rollback.
@@ -198,23 +205,29 @@ tmpVolume:
 
 # -- Persistent storage for SQLite. Disabled automatically when database.engine is postgres/postgresql.
 persistence:
+  # -- Create/mount persistent storage for SQLite (/data). When false, mounts an emptyDir volume instead.
   enabled: true
+  # -- Name of an existing PVC to mount instead of creating a new PVC or StatefulSet volumeClaimTemplate.
+  # Mutually exclusive with dataSource and dataSourceRef.
   existingClaim: ""
   # -- StorageClass name. Leave empty for the cluster default, or set to "-" to disable dynamic provisioning (storageClassName: "").
   storageClassName: ""
+  # -- Access modes for the standalone PVC (Deployment) or volumeClaimTemplates (StatefulSet).
   accessModes:
     - ReadWriteOnce
+  # -- Requested storage size for the standalone PVC (Deployment) or volumeClaimTemplates (StatefulSet).
   size: 1Gi
-  # -- Adds `helm.sh/resource-policy: keep`, so `helm uninstall` leaves the claim (and the playback history) in place.
-  # Reinstalling with the same release name and namespace picks it up again.
-  # (For StatefulSet volumeClaimTemplates, use workload.statefulSet.persistentVolumeClaimRetentionPolicy.whenDeleted.)
+  # -- Adds `helm.sh/resource-policy: keep` to the standalone PVC in Deployment mode, so `helm uninstall` leaves the claim
+  # (and playback history) in place. Reinstalling with the same release name and namespace picks it up again.
+  # Ignored for StatefulSet volumeClaimTemplates (use workload.statefulSet.persistentVolumeClaimRetentionPolicy.whenDeleted).
   keep: true
+  # -- Optional annotations added to the standalone PVC or StatefulSet volumeClaimTemplates[].metadata.annotations.
   annotations: {}
-  # -- Optional TypedObjectReference to populate the PVC (e.g. VolSync ReplicationDestination).
-  # Mutually exclusive with dataSource and existingClaim.
+  # -- Optional TypedObjectReference (apiGroup, kind, name, optional namespace) to populate the PVC or volumeClaimTemplate
+  # (e.g. VolSync ReplicationDestination). Mutually exclusive with dataSource and existingClaim.
   dataSourceRef: {}
-  # -- Optional TypedLocalObjectReference to populate the PVC (e.g. VolumeSnapshot).
-  # Mutually exclusive with dataSourceRef and existingClaim.
+  # -- Optional TypedLocalObjectReference (apiGroup, kind, name) to populate the PVC or volumeClaimTemplate
+  # (e.g. VolumeSnapshot). Mutually exclusive with dataSourceRef and existingClaim.
   dataSource: {}
 
 # -- Name of a pre-existing Secret (External Secrets, Sealed Secrets, SOPS, etc.) containing Miru secret env vars:

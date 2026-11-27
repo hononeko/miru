@@ -1,0 +1,245 @@
+suite: StatefulSet workload, headless Service, and volumeClaimTemplates rendering
+templates:
+  - templates/statefulset.yaml
+  - templates/service-headless.yaml
+  - templates/deployment.yaml
+  - templates/pvc.yaml
+  - templates/configmap.yaml
+  - templates/secret.yaml
+set:
+  auth.sessionSecret: unittest-session-secret-0123456789abcdef
+  workload:
+    kind: StatefulSet
+tests:
+  - it: renders StatefulSet and headless Service without Deployment or standalone PVC
+    asserts:
+      - template: templates/statefulset.yaml
+        hasDocuments:
+          count: 1
+      - template: templates/statefulset.yaml
+        isKind:
+          of: StatefulSet
+      - template: templates/statefulset.yaml
+        equal:
+          path: spec.serviceName
+          value: RELEASE-NAME-miru-headless
+      - template: templates/service-headless.yaml
+        hasDocuments:
+          count: 1
+      - template: templates/service-headless.yaml
+        equal:
+          path: metadata.name
+          value: RELEASE-NAME-miru-headless
+      - template: templates/service-headless.yaml
+        equal:
+          path: spec.clusterIP
+          value: None
+      - template: templates/deployment.yaml
+        hasDocuments:
+          count: 0
+      - template: templates/pvc.yaml
+        hasDocuments:
+          count: 0
+
+  - it: applies StatefulSet metadata annotations, podManagementPolicy, updateStrategy, retention policy, and VCT fields with dataSourceRef
+    set:
+      workload:
+        kind: StatefulSet
+        annotations:
+          reloader.stakater.com/auto: "true"
+        statefulSet:
+          podManagementPolicy: Parallel
+          updateStrategy:
+            type: OnDelete
+          persistentVolumeClaimRetentionPolicy:
+            whenDeleted: Delete
+            whenScaled: Delete
+      persistence:
+        storageClassName: longhorn
+        accessModes:
+          - ReadWriteOnce
+        size: 5Gi
+        annotations:
+          backup.velero.io/backup-volumes: data
+        dataSourceRef:
+          apiGroup: volsync.backube
+          kind: ReplicationDestination
+          name: miru-data
+    asserts:
+      - template: templates/statefulset.yaml
+        equal:
+          path: metadata.annotations["reloader.stakater.com/auto"]
+          value: "true"
+      - template: templates/statefulset.yaml
+        equal:
+          path: spec.podManagementPolicy
+          value: Parallel
+      - template: templates/statefulset.yaml
+        equal:
+          path: spec.updateStrategy.type
+          value: OnDelete
+      - template: templates/statefulset.yaml
+        equal:
+          path: spec.persistentVolumeClaimRetentionPolicy
+          value:
+            whenDeleted: Delete
+            whenScaled: Delete
+      - template: templates/statefulset.yaml
+        lengthEqual:
+          path: spec.volumeClaimTemplates
+          count: 1
+      - template: templates/statefulset.yaml
+        equal:
+          path: spec.volumeClaimTemplates[0].metadata.name
+          value: data
+      - template: templates/statefulset.yaml
+        equal:
+          path: spec.volumeClaimTemplates[0].metadata.labels
+          value:
+            app.kubernetes.io/name: miru
+            app.kubernetes.io/instance: RELEASE-NAME
+      - template: templates/statefulset.yaml
+        isNull:
+          path: spec.volumeClaimTemplates[0].metadata.labels["helm.sh/chart"]
+      - template: templates/statefulset.yaml
+        isNull:
+          path: spec.volumeClaimTemplates[0].metadata.labels["app.kubernetes.io/version"]
+      - template: templates/statefulset.yaml
+        equal:
+          path: spec.volumeClaimTemplates[0].metadata.annotations["backup.velero.io/backup-volumes"]
+          value: data
+      - template: templates/statefulset.yaml
+        equal:
+          path: spec.volumeClaimTemplates[0].spec.storageClassName
+          value: longhorn
+      - template: templates/statefulset.yaml
+        equal:
+          path: spec.volumeClaimTemplates[0].spec.accessModes
+          value:
+            - ReadWriteOnce
+      - template: templates/statefulset.yaml
+        equal:
+          path: spec.volumeClaimTemplates[0].spec.resources.requests.storage
+          value: 5Gi
+      - template: templates/statefulset.yaml
+        equal:
+          path: spec.volumeClaimTemplates[0].spec.dataSourceRef
+          value:
+            apiGroup: volsync.backube
+            kind: ReplicationDestination
+            name: miru-data
+      - template: templates/statefulset.yaml
+        isNull:
+          path: spec.volumeClaimTemplates[0].spec.dataSource
+      - template: templates/statefulset.yaml
+        lengthEqual:
+          path: spec.template.spec.volumes
+          count: 1
+      - template: templates/statefulset.yaml
+        equal:
+          path: spec.template.spec.volumes[0].name
+          value: tmp
+
+  - it: renders empty storageClassName when "-" and dataSource on VCT
+    set:
+      persistence:
+        storageClassName: "-"
+        dataSource:
+          apiGroup: snapshot.storage.k8s.io
+          kind: VolumeSnapshot
+          name: miru-snap
+    asserts:
+      - template: templates/statefulset.yaml
+        equal:
+          path: spec.volumeClaimTemplates[0].spec.storageClassName
+          value: ""
+      - template: templates/statefulset.yaml
+        equal:
+          path: spec.volumeClaimTemplates[0].spec.dataSource
+          value:
+            apiGroup: snapshot.storage.k8s.io
+            kind: VolumeSnapshot
+            name: miru-snap
+
+  - it: omits VCT and mounts existingClaim under volumes when persistence.existingClaim is set
+    set:
+      persistence:
+        existingClaim: existing-miru-pvc
+    asserts:
+      - template: templates/statefulset.yaml
+        isNull:
+          path: spec.volumeClaimTemplates
+      - template: templates/statefulset.yaml
+        contains:
+          path: spec.template.spec.volumes
+          content:
+            name: data
+            persistentVolumeClaim:
+              claimName: existing-miru-pvc
+
+  - it: omits VCT and mounts emptyDir under volumes when database.engine is postgres
+    set:
+      database:
+        engine: postgres
+        postgres:
+          url: jdbc:postgresql://postgres:5432/miru
+          user: miru
+          password: pg-password
+    asserts:
+      - template: templates/statefulset.yaml
+        isNull:
+          path: spec.volumeClaimTemplates
+      - template: templates/statefulset.yaml
+        contains:
+          path: spec.template.spec.volumes
+          content:
+            name: data
+            emptyDir: {}
+
+  - it: omits VCT and mounts emptyDir under volumes when persistence.enabled is false
+    set:
+      persistence:
+        enabled: false
+    asserts:
+      - template: templates/statefulset.yaml
+        isNull:
+          path: spec.volumeClaimTemplates
+      - template: templates/statefulset.yaml
+        contains:
+          path: spec.template.spec.volumes
+          content:
+            name: data
+            emptyDir: {}
+
+  - it: truncates headless Service name to <= 63 chars when fullnameOverride is 63 chars
+    set:
+      fullnameOverride: miru-release-with-a-very-long-name-that-reaches-63-characters01
+    asserts:
+      - template: templates/statefulset.yaml
+        equal:
+          path: metadata.name
+          value: miru-release-with-a-very-long-name-that-reaches-63-characters01
+      - template: templates/statefulset.yaml
+        equal:
+          path: spec.serviceName
+          value: miru-release-with-a-very-long-name-that-reaches-63-cha-headless
+      - template: templates/service-headless.yaml
+        equal:
+          path: metadata.name
+          value: miru-release-with-a-very-long-name-that-reaches-63-cha-headless
+      - template: templates/service-headless.yaml
+        matchRegex:
+          path: metadata.name
+          pattern: ^.{1,63}$
+
+  - it: ignores Deployment strategy.type=RollingUpdate when workload.kind is StatefulSet
+    set:
+      strategy:
+        type: RollingUpdate
+    asserts:
+      - template: templates/statefulset.yaml
+        hasDocuments:
+          count: 1
+      - template: templates/statefulset.yaml
+        isNull:
+          path: spec.strategy

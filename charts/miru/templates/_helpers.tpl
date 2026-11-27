@@ -91,6 +91,13 @@ Name of the PersistentVolumeClaim created for SQLite data (truncated before suff
 {{- end }}
 
 {{/*
+Name of the headless Service used by StatefulSet pods (truncated before suffix to stay <= 63 chars).
+*/}}
+{{- define "miru.headlessServiceName" -}}
+{{- printf "%s-headless" (include "miru.fullname" . | trunc 54 | trimSuffix "-") }}
+{{- end }}
+
+{{/*
 Name of the Grafana dashboard ConfigMap (truncated before suffix to stay <= 63 chars).
 */}}
 {{- define "miru.grafanaDashboardConfigMapName" -}}
@@ -166,12 +173,26 @@ Refuse to render settings that would deploy a pod that cannot start or that woul
 {{- if and (eq (lower .Values.auth.mode) "local") (not .Values.auth.allowLocalLogin) (not .Values.auth.oidc.enabled) -}}
 {{- fail "auth.allowLocalLogin=false with auth.mode=local requires auth.oidc.enabled=true (or set auth.mode=none to disable built-in authentication)." -}}
 {{- end -}}
+{{- $workloadKind := (.Values.workload).kind | default "Deployment" -}}
+{{- if and (ne $workloadKind "Deployment") (ne $workloadKind "StatefulSet") -}}
+{{- fail (printf "workload.kind must be Deployment or StatefulSet, got %q." $workloadKind) -}}
+{{- end -}}
+{{- $dataSource := .Values.persistence.dataSource | default dict -}}
+{{- $dataSourceRef := .Values.persistence.dataSourceRef | default dict -}}
+{{- if and (not (empty $dataSource)) (not (empty $dataSourceRef)) -}}
+{{- fail "persistence.dataSource and persistence.dataSourceRef cannot both be set." -}}
+{{- end -}}
+{{- if and .Values.persistence.existingClaim (or (not (empty $dataSource)) (not (empty $dataSourceRef))) -}}
+{{- fail "persistence.dataSource and persistence.dataSourceRef cannot be set when persistence.existingClaim is set." -}}
+{{- end -}}
+{{- if eq $workloadKind "Deployment" -}}
 {{- $strategy := .Values.strategy | default dict -}}
 {{- if and (include "miru.persistenceEnabled" .) (eq (get $strategy "type") "RollingUpdate") -}}
 {{- fail "strategy.type=RollingUpdate cannot be used with SQLite persistence: the new pod would wait for the volume the old pod holds, or both would write the same database file. Use strategy.type=Recreate." -}}
 {{- end -}}
 {{- if and (eq (get $strategy "type") "Recreate") (get $strategy "rollingUpdate") -}}
 {{- fail "strategy.rollingUpdate cannot be set when strategy.type is Recreate." -}}
+{{- end -}}
 {{- end -}}
 {{- end }}
 
@@ -227,4 +248,173 @@ metrics
 {{- else -}}
 http
 {{- end -}}
+{{- end }}
+
+{{/*
+Whether the workload controller is a StatefulSet
+*/}}
+{{- define "miru.isStatefulSet" -}}
+{{- if eq (((.Values.workload).kind) | default "Deployment") "StatefulSet" -}}
+true
+{{- end -}}
+{{- end }}
+
+{{/*
+Whether SQLite persistence is managed via StatefulSet volumeClaimTemplates
+*/}}
+{{- define "miru.useVolumeClaimTemplate" -}}
+{{- if and (include "miru.isStatefulSet" .) (include "miru.persistenceEnabled" .) (not .Values.persistence.existingClaim) -}}
+true
+{{- end -}}
+{{- end }}
+
+{{/*
+Shared PersistentVolumeClaim spec used by both standalone PVC and StatefulSet volumeClaimTemplates
+*/}}
+{{- define "miru.pvcSpec" -}}
+accessModes:
+  {{- range .Values.persistence.accessModes }}
+  - {{ . | quote }}
+  {{- end }}
+resources:
+  requests:
+    storage: {{ .Values.persistence.size | quote }}
+{{- if .Values.persistence.storageClassName }}
+{{- if eq "-" .Values.persistence.storageClassName }}
+storageClassName: ""
+{{- else }}
+storageClassName: {{ .Values.persistence.storageClassName | quote }}
+{{- end }}
+{{- end }}
+{{- with .Values.persistence.dataSourceRef }}
+dataSourceRef:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- with .Values.persistence.dataSource }}
+dataSource:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{/*
+Shared PodTemplateSpec rendered inside Deployment and StatefulSet
+*/}}
+{{- define "miru.podTemplate" -}}
+metadata:
+  annotations:
+    checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    {{- if not .Values.existingSecret }}
+    checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    {{- end }}
+    {{- with .Values.podAnnotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  labels:
+    {{- include "miru.labels" . | nindent 4 }}
+    {{- with .Values.podLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- with .Values.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  serviceAccountName: {{ include "miru.serviceAccountName" . }}
+  automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
+  enableServiceLinks: {{ .Values.enableServiceLinks }}
+  {{- if not (kindIs "invalid" .Values.terminationGracePeriodSeconds) }}
+  terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+  {{- end }}
+  {{- with .Values.priorityClassName }}
+  priorityClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.podSecurityContext }}
+  securityContext:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  containers:
+    - name: {{ .Chart.Name }}
+      {{- with .Values.securityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      image: {{ include "miru.image" . | quote }}
+      imagePullPolicy: {{ .Values.image.pullPolicy }}
+      envFrom:
+        - configMapRef:
+            name: {{ include "miru.configMapName" . }}
+        - secretRef:
+            name: {{ include "miru.secretName" . }}
+        {{- with .Values.extraEnvFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.extraEnv }}
+      env:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      ports:
+        - name: http
+          containerPort: {{ .Values.server.port }}
+          protocol: TCP
+        {{- if include "miru.dedicatedMetricsPort" . }}
+        - name: metrics
+          containerPort: {{ .Values.metrics.port }}
+          protocol: TCP
+        {{- end }}
+      {{- if .Values.startupProbe.enabled }}
+      startupProbe:
+        {{- toYaml (omit .Values.startupProbe "enabled") | nindent 8 }}
+      {{- end }}
+      {{- if .Values.livenessProbe.enabled }}
+      livenessProbe:
+        {{- toYaml (omit .Values.livenessProbe "enabled") | nindent 8 }}
+      {{- end }}
+      {{- if .Values.readinessProbe.enabled }}
+      readinessProbe:
+        {{- toYaml (omit .Values.readinessProbe "enabled") | nindent 8 }}
+      {{- end }}
+      {{- with .Values.resources }}
+      resources:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumeMounts:
+        - name: data
+          mountPath: /data
+        - name: tmp
+          mountPath: /tmp
+        {{- with .Values.extraVolumeMounts }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+  volumes:
+    {{- if not (include "miru.useVolumeClaimTemplate" .) }}
+    - name: data
+      {{- if include "miru.persistenceEnabled" . }}
+      persistentVolumeClaim:
+        claimName: {{ .Values.persistence.existingClaim | default (include "miru.pvcName" .) }}
+      {{- else }}
+      emptyDir: {}
+      {{- end }}
+    {{- end }}
+    - name: tmp
+      {{- if .Values.tmpVolume.sizeLimit }}
+      emptyDir:
+        sizeLimit: {{ .Values.tmpVolume.sizeLimit }}
+      {{- else }}
+      emptyDir: {}
+      {{- end }}
+    {{- with .Values.extraVolumes }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.nodeSelector }}
+  nodeSelector:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.affinity }}
+  affinity:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.tolerations }}
+  tolerations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 {{- end }}

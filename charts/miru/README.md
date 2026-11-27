@@ -214,11 +214,42 @@ networkPolicy:
 
 ## Storage
 
-With SQLite, the playback history lives on the `<release>-data` `PersistentVolumeClaim`. It has `helm.sh/resource-policy: keep` (`persistence.keep: true`), so `helm uninstall` leaves it in place, and reinstalling with the same release name and namespace picks it up again. Delete it yourself to drop the data:
+### `Deployment` (Default)
+
+With `workload.kind: Deployment` and SQLite, the playback history lives on the standalone `<fullname>-data` `PersistentVolumeClaim`. It has `helm.sh/resource-policy: keep` (`persistence.keep: true`), so `helm uninstall` leaves it in place, and reinstalling with the same release name and namespace picks it up again. Delete it yourself to drop the data:
 
 ```sh
 kubectl -n miru delete pvc miru-data
 ```
+
+### `StatefulSet` with `volumeClaimTemplates` and `dataSourceRef` (VolSync / Kopiur)
+
+Set `workload.kind: StatefulSet` to manage Miru as a `StatefulSet` backed by a headless Service (`<fullname>-headless`) and a `volumeClaimTemplates` claim named `data` (mounted at `/data`). This enables populating the PVC from a backup or snapshot via `persistence.dataSourceRef` or `persistence.dataSource` (for example, VolSync `ReplicationDestination` with Kopiur):
+
+```yaml
+workload:
+  kind: StatefulSet
+  statefulSet:
+    persistentVolumeClaimRetentionPolicy:
+      whenDeleted: Retain
+      whenScaled: Retain
+
+persistence:
+  size: 1Gi
+  storageClassName: longhorn
+  dataSourceRef:
+    apiGroup: volsync.backube
+    kind: ReplicationDestination
+    name: miru-data
+```
+
+`persistence.dataSourceRef` and `persistence.dataSource` are also rendered on the standalone `PersistentVolumeClaim` in `Deployment` mode, and cannot be combined with each other or with `persistence.existingClaim`.
+
+> [!WARNING]
+> **`StatefulSet.spec.volumeClaimTemplates` immutability:** Kubernetes forbids modifying `spec.volumeClaimTemplates` (including `size`, `storageClassName`, `accessModes`, `annotations`, `dataSourceRef`, or `dataSource`) on an existing `StatefulSet` in place. To change any of those fields after initial creation, delete the `StatefulSet` without deleting its pod or PVC (`kubectl -n miru delete sts miru --cascade=orphan`) before running `helm upgrade` (and resize the underlying `data-<fullname>-0` PVC separately if supported by your `StorageClass`).
+
+> [!IMPORTANT]
+> **`Deployment` → `StatefulSet` PVC migration caveat:** A `Deployment` mounts `<fullname>-data` (e.g. `miru-data`), whereas a `StatefulSet` with `volumeClaimTemplates` creates and mounts `data-<fullname>-0` (e.g. `data-miru-0`). Switching an existing `Deployment` release to `workload.kind: StatefulSet` will provision a new empty `data-miru-0` claim unless you either keep the existing PVC with `persistence.existingClaim: miru-data` (which omits `volumeClaimTemplates`) or copy/restore your SQLite database into `data-miru-0` (for example via `persistence.dataSourceRef` or `persistence.dataSource`).
 
 ## Pod Security Standard
 

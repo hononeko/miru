@@ -1,0 +1,49 @@
+{{- if include "miru.isStatefulSet" . -}}
+{{- include "miru.validate" . -}}
+{{- $ss := (.Values.workload).statefulSet | default dict -}}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "miru.fullname" . }}
+  labels:
+    {{- include "miru.labels" . | nindent 4 }}
+  {{- with (.Values.workload).annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  serviceName: {{ include "miru.headlessServiceName" . }}
+  replicas: {{ .Values.replicaCount }}
+  {{- if not (kindIs "invalid" .Values.revisionHistoryLimit) }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
+  {{- end }}
+  {{- with $ss.podManagementPolicy }}
+  podManagementPolicy: {{ . }}
+  {{- end }}
+  {{- with $ss.updateStrategy }}
+  updateStrategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with $ss.persistentVolumeClaimRetentionPolicy }}
+  persistentVolumeClaimRetentionPolicy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "miru.selectorLabels" . | nindent 6 }}
+  template:
+    {{- include "miru.podTemplate" . | nindent 4 }}
+  {{- if include "miru.useVolumeClaimTemplate" . }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "miru.selectorLabels" . | nindent 10 }}
+        {{- with .Values.persistence.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      spec:
+        {{- include "miru.pvcSpec" . | nindent 8 }}
+  {{- end }}
+{{- end }}

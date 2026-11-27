@@ -5,7 +5,20 @@
 # with no leader election, so a second pod would record every stream twice. The schema rejects values above 1.
 replicaCount: 1
 
-# -- Number of old ReplicaSets to retain for rollback.
+workload:
+  # -- Deployment (default) or StatefulSet.
+  kind: Deployment
+  # -- Optional annotations on the Deployment / StatefulSet metadata (e.g. reloader.stakater.com/auto).
+  annotations: {}
+  statefulSet:
+    podManagementPolicy: OrderedReady # or Parallel
+    updateStrategy:
+      type: RollingUpdate # or OnDelete
+    persistentVolumeClaimRetentionPolicy:
+      whenDeleted: Retain # or Delete (matches persistence.keep intent)
+      whenScaled: Retain
+
+# -- Number of old ReplicaSets or ControllerRevisions to retain for rollback.
 revisionHistoryLimit: 3
 
 # -- Seconds Kubernetes waits for Miru to drain sessions, stop background tasks, and close the database before SIGKILL.
@@ -14,10 +27,10 @@ terminationGracePeriodSeconds: 30
 # -- Disable Kubernetes service-link env var injection (<SERVICE>_PORT, etc.), which otherwise collides with MIRU_PORT when the Service is named miru.
 enableServiceLinks: false
 
-# -- Recreate lets the new pod attach the ReadWriteOnce SQLite volume after the old pod stops; the chart
-# refuses RollingUpdate with SQLite persistence. With PostgreSQL (database.engine=postgres), RollingUpdate keeps
-# the UI up during upgrades, but the old and new pod both track sessions for a few seconds, so a stream that
-# ends in that window can be recorded twice.
+# -- Deployment strategy. Recreate lets the new pod attach the ReadWriteOnce SQLite volume after the old pod stops;
+# the chart refuses RollingUpdate with SQLite persistence when workload.kind is Deployment. With PostgreSQL
+# (database.engine=postgres), RollingUpdate keeps the UI up during upgrades, but the old and new pod both track
+# sessions for a few seconds, so a stream that ends in that window can be recorded twice.
 strategy:
   type: Recreate
 
@@ -194,8 +207,15 @@ persistence:
   size: 1Gi
   # -- Adds `helm.sh/resource-policy: keep`, so `helm uninstall` leaves the claim (and the playback history) in place.
   # Reinstalling with the same release name and namespace picks it up again.
+  # (For StatefulSet volumeClaimTemplates, use workload.statefulSet.persistentVolumeClaimRetentionPolicy.whenDeleted.)
   keep: true
   annotations: {}
+  # -- Optional TypedObjectReference to populate the PVC (e.g. VolSync ReplicationDestination).
+  # Mutually exclusive with dataSource and existingClaim.
+  dataSourceRef: {}
+  # -- Optional TypedLocalObjectReference to populate the PVC (e.g. VolumeSnapshot).
+  # Mutually exclusive with dataSourceRef and existingClaim.
+  dataSource: {}
 
 # -- Name of a pre-existing Secret (External Secrets, Sealed Secrets, SOPS, etc.) containing Miru secret env vars:
 # AUTH_SESSION_SECRET, MIRU_ENCRYPTION_KEY, PLEX_TOKEN, JELLYFIN_API_KEY, DATABASE_PASSWORD, OIDC_CLIENT_SECRET and

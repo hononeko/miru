@@ -1,5 +1,9 @@
 1. Check that Miru is running:
+{{- if include "miru.isStatefulSet" . }}
+   kubectl -n {{ .Release.Namespace }} rollout status statefulset/{{ include "miru.fullname" . }}
+{{- else }}
    kubectl -n {{ .Release.Namespace }} rollout status deployment/{{ include "miru.fullname" . }}
+{{- end }}
 
 2. Get the application URL:
 {{- if .Values.httpRoute.enabled }}
@@ -33,7 +37,14 @@
    http://{{ include "miru.metricsServiceName" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.metricsPort }}/metrics
 {{- end }}
 
-{{- if and (include "miru.persistenceEnabled" .) .Values.persistence.keep (not .Values.persistence.existingClaim) }}
+{{- if include "miru.useVolumeClaimTemplate" . }}
+
+NOTE: StatefulSet persistence uses the data-{{ include "miru.fullname" . }}-0 PersistentVolumeClaim (created via volumeClaimTemplates).
+{{- if eq ((((.Values.workload).statefulSet).persistentVolumeClaimRetentionPolicy).whenDeleted | default "Retain") "Retain" }}
+`helm uninstall` keeps it (`whenDeleted: Retain`). Delete it with:
+  kubectl -n {{ .Release.Namespace }} delete pvc data-{{ include "miru.fullname" . }}-0
+{{- end }}
+{{- else if and (include "miru.persistenceEnabled" .) .Values.persistence.keep (not .Values.persistence.existingClaim) }}
 
 NOTE: `helm uninstall` keeps the {{ include "miru.pvcName" . }} PersistentVolumeClaim and the playback history on it.
 Delete it with: kubectl -n {{ .Release.Namespace }} delete pvc {{ include "miru.pvcName" . }}

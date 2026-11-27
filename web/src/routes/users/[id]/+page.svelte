@@ -5,6 +5,7 @@
 	import { api, MiruApiError, unwrap } from '$api/client';
 	import type {
 		AnalyticsMetricPreference,
+		LinkedUserProfileDto,
 		StatsRange,
 		UserDetailResponse,
 		UserStatsResponse,
@@ -18,6 +19,7 @@
 	import BarChart, { type BarPoint } from '$components/miru/BarChart.svelte';
 	import ProxiedImage from '$components/miru/ProxiedImage.svelte';
 	import ServerBadge from '$components/miru/ServerBadge.svelte';
+	import ServerFilterBar from '$components/miru/ServerFilterBar.svelte';
 	import { authStore } from '$stores/auth.svelte';
 	import { preferencesStore } from '$stores/preferences.svelte';
 	import { mediaDetailsModal } from '$stores/mediaDetails.svelte';
@@ -37,6 +39,7 @@
 
 	let lastDefaultRange = preferencesStore.prefs.defaultStatsRange;
 	let range = $state<StatsRange>(lastDefaultRange);
+	let selectedServerId = $state<string | null>(null);
 	let detail = $state<UserDetailResponse | null>(null);
 	let stats = $state<UserStatsResponse | null>(null);
 	let loading = $state(true);
@@ -57,7 +60,34 @@
 	});
 
 	const userId = $derived(page.params.id ?? '');
-	const userServerId = $derived(detail?.user.serverId?.trim() || null);
+	const linkedProfiles = $derived.by<LinkedUserProfileDto[]>(() => {
+		if (!detail) return [];
+		if (detail.user.linkedProfiles && detail.user.linkedProfiles.length > 0) {
+			return detail.user.linkedProfiles;
+		}
+		return [
+			{
+				userId: detail.user.id,
+				serverId: detail.user.serverId,
+				serverName: detail.user.serverName,
+				serverType: detail.user.serverType,
+				externalUserId: detail.user.externalUserId,
+				username: detail.user.username,
+				displayName: detail.user.displayName,
+				isAdmin: detail.user.isAdmin,
+				avatarUrl: detail.user.avatarUrl,
+				lastSeenAtMs: detail.user.lastSeenAtMs
+			}
+		];
+	});
+	const showServerBadges = $derived(
+		serversStore.hasMultipleServers ||
+			linkedProfiles.length > 1 ||
+			linkedProfiles.some((p) => serversStore.isDisconnected(p.serverId))
+	);
+	const userServerId = $derived(
+		selectedServerId ?? (linkedProfiles.length <= 1 ? detail?.user.serverId?.trim() || null : null)
+	);
 	const analyticsMetric = $derived<AnalyticsMetricPreference>(
 		preferencesStore.prefs.analyticsMetric
 	);
@@ -74,7 +104,8 @@
 	async function loadProfile(
 		id: string,
 		selectedRange: StatsRange,
-		selectedMetric: AnalyticsMetricPreference
+		selectedMetric: AnalyticsMetricPreference,
+		serverId: string | null
 	) {
 		if (!id) return;
 		if (!authStore.isAdmin) {
@@ -85,9 +116,21 @@
 		error = null;
 		try {
 			const [dRes, sRes] = await Promise.all([
-				api.GET('/api/v1/users/{id}', { params: { path: { id } } }),
+				api.GET('/api/v1/users/{id}', {
+					params: {
+						path: { id },
+						...(serverId ? { query: { serverId } } : {})
+					}
+				}),
 				api.GET('/api/v1/users/{id}/stats', {
-					params: { path: { id }, query: { range: selectedRange, metric: selectedMetric } }
+					params: {
+						path: { id },
+						query: {
+							range: selectedRange,
+							metric: selectedMetric,
+							...(serverId ? { serverId } : {})
+						}
+					}
 				})
 			]);
 			detail = unwrap(dRes);
@@ -102,7 +145,8 @@
 	async function loadWrapped(
 		id: string,
 		year: number,
-		selectedMetric: AnalyticsMetricPreference
+		selectedMetric: AnalyticsMetricPreference,
+		serverId: string | null
 	) {
 		if (!id || !authStore.isAdmin) return;
 		loadingWrapped = true;
@@ -111,7 +155,11 @@
 				await api.GET('/api/v1/stats/wrapped/{year}', {
 					params: {
 						path: { year },
-						query: { userId: id, metric: selectedMetric }
+						query: {
+							userId: id,
+							metric: selectedMetric,
+							...(serverId ? { serverId } : {})
+						}
 					}
 				})
 			);
@@ -123,16 +171,22 @@
 	}
 
 	$effect(() => {
+		if (selectedServerId && serversStore.loaded && !serversStore.byId(selectedServerId)) {
+			selectedServerId = null;
+		}
+	});
+
+	$effect(() => {
 		if (!authStore.loading && !authStore.isAdmin) {
 			void goto('/');
 			return;
 		}
-		void loadProfile(userId, range, analyticsMetric);
+		void loadProfile(userId, range, analyticsMetric, selectedServerId);
 	});
 
 	$effect(() => {
 		if (!authStore.loading && authStore.isAdmin && userId) {
-			void loadWrapped(userId, wrappedYear, analyticsMetric);
+			void loadWrapped(userId, wrappedYear, analyticsMetric, selectedServerId);
 		}
 	});
 
@@ -222,12 +276,14 @@
 						{#if detail.user.isAdmin}
 							<Badge tone="primary">ADMIN</Badge>
 						{/if}
-						{#if serversStore.hasMultipleServers || serversStore.isDisconnected(detail.user.serverId)}
-							<ServerBadge
-								serverId={detail.user.serverId}
-								serverType={detail.user.serverType}
-								serverName={detail.user.serverName}
-							/>
+						{#if showServerBadges}
+							{#each linkedProfiles as profile (profile.userId)}
+								<ServerBadge
+									serverId={profile.serverId}
+									serverType={profile.serverType}
+									serverName={profile.serverName}
+								/>
+							{/each}
 						{/if}
 						{#if detail.activeStreams.length > 0}
 							<Badge tone="direct-play" dot pulse>
@@ -236,13 +292,24 @@
 						{/if}
 					</div>
 					<p class="text-xs text-fg-secondary">
-						External ID #{detail.user.externalUserId} · Last seen {detail.user.isStreaming ? 'Active now' : formatRelativeTime(detail.user.lastSeenAtMs, Date.now(), preferencesStore.prefs)}
+						{#if linkedProfiles.length > 1}
+							Linked across {linkedProfiles.length} servers · Last seen {detail.user.isStreaming ? 'Active now' : formatRelativeTime(detail.user.lastSeenAtMs, Date.now(), preferencesStore.prefs)}
+						{:else}
+							External ID #{detail.user.externalUserId} · Last seen {detail.user.isStreaming ? 'Active now' : formatRelativeTime(detail.user.lastSeenAtMs, Date.now(), preferencesStore.prefs)}
+						{/if}
 					</p>
 				</div>
 			</div>
 
 			<RangeTabs value={range} onchange={(r) => (range = r)} />
 		</div>
+
+		<ServerFilterBar
+			{selectedServerId}
+			onchange={(serverId) => {
+				selectedServerId = serverId;
+			}}
+		/>
 
 		<!-- KPIs (Plays, Watch Time, Avg Completion, Longest Binge Streak, Direct Play, HW Transcode) -->
 		<section class="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6 lg:gap-4">
@@ -361,8 +428,7 @@
 								<button
 									type="button"
 									onclick={() => {
-										const sid = detail?.user.serverId?.trim();
-										void mediaDetailsModal.open(item.ratingKey, sid ? { serverId: sid } : undefined);
+										void mediaDetailsModal.open(item.ratingKey, userServerId ? { serverId: userServerId } : undefined);
 									}}
 									class="group flex w-full cursor-pointer items-center justify-between gap-2.5 rounded-lg bg-elevated px-3 py-2 text-left transition-colors hover:bg-subtle/60"
 								>
@@ -565,9 +631,18 @@
 										{/if}
 									</p>
 								</button>
-								<p class="text-[10px] text-fg-muted">
-									{play.playerName || play.playerProduct || 'Unknown client'} · {formatShortDateTime(play.stoppedAtMs, preferencesStore.prefs)}
-								</p>
+								<div class="flex flex-wrap items-center gap-1.5 text-[10px] text-fg-muted">
+									<span>
+										{play.playerName || play.playerProduct || 'Unknown client'} · {formatShortDateTime(play.stoppedAtMs, preferencesStore.prefs)}
+									</span>
+									{#if serversStore.hasMultipleServers || linkedProfiles.length > 1 || serversStore.isDisconnected(play.serverId)}
+										<ServerBadge
+											serverId={play.serverId}
+											serverType={play.serverType}
+											serverName={play.serverName}
+										/>
+									{/if}
+								</div>
 							</div>
 							<div class="flex items-center gap-2.5">
 								<Badge tone={dec.tone} dot>{dec.shortLabel}</Badge>

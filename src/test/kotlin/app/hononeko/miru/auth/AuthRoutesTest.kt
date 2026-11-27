@@ -44,6 +44,7 @@ import io.kotest.assertions.arrow.core.shouldBeLeft
 import io.kotest.matchers.types.shouldBeInstanceOf
 import io.kotest.assertions.arrow.core.shouldBeRight
 import io.kotest.core.spec.style.FunSpec
+import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.nulls.shouldBeNull
@@ -1041,6 +1042,18 @@ class AuthRoutesTest :
                             updatedAtMs = 1_000L,
                         ),
                     ).shouldBeRight()
+                harness.userRepo
+                    .upsert(
+                        UserRecord(
+                            id = "media-no-thumb-bob",
+                            serverId = "srv-1",
+                            externalUserId = "plex-12",
+                            username = "nothumb-bob",
+                            thumbUrl = null,
+                            createdAtMs = 1_000L,
+                            updatedAtMs = 1_000L,
+                        ),
+                    ).shouldBeRight()
                 // On a second server: an account has one media user per server
                 harness.serverRepo
                     .upsert(
@@ -1079,7 +1092,7 @@ class AuthRoutesTest :
                         username = "bob",
                         password = "Bob-strong-password-123",
                         role = MiruRole.USER,
-                        linkedMediaUserIds = setOf("media-no-thumb"),
+                        linkedMediaUserIds = setOf("media-no-thumb-bob"),
                     ).shouldBeRight()
 
                 testApplication {
@@ -2010,6 +2023,102 @@ class AuthRoutesTest :
                         .delete("/api/v1/admin/accounts/${disabledAdmin.id}") {
                             cookie(SESSION_COOKIE_NAME, bobAdminCookie)
                         }.status shouldBe HttpStatusCode.NoContent
+                }
+            }
+        }
+
+        test("enforces single-account ownership per media_user_id with 409 Conflict and allows relinking after unlink") {
+            createHarness().use { harness ->
+                val adminLogin = harness.authService.setupInitialAdmin("admin", "Admin-password-123").shouldBeRight()
+                harness.serverRepo
+                    .upsert(
+                        MediaServerRecord(
+                            id = "srv-plex",
+                            name = "Plex",
+                            serverType = "PLEX",
+                            machineId = "m-plex",
+                            baseUrl = "http://plex.local:32400",
+                            createdAtMs = 1_000L,
+                            updatedAtMs = 1_000L,
+                        ),
+                    ).shouldBeRight()
+                harness.userRepo
+                    .upsert(
+                        UserRecord(
+                            id = "mu-elena",
+                            serverId = "srv-plex",
+                            externalUserId = "10",
+                            username = "elena",
+                            createdAtMs = 1_000L,
+                            updatedAtMs = 1_000L,
+                        ),
+                    ).shouldBeRight()
+
+                val accA =
+                    harness.authService
+                        .createAccount(
+                            username = "elena-a",
+                            password = "ElenaA-password-123",
+                            role = MiruRole.USER,
+                            linkedMediaUserIds = setOf("mu-elena"),
+                        ).shouldBeRight()
+                val accB =
+                    harness.authService
+                        .createAccount(
+                            username = "elena-b",
+                            password = "ElenaB-password-123",
+                            role = MiruRole.USER,
+                            linkedMediaUserIds = emptySet(),
+                        ).shouldBeRight()
+
+                testApplication {
+                    setupAuthApp(harness)
+
+                    // Creating another account claiming mu-elena -> 409 Conflict
+                    val conflictCreate =
+                        client.post("/api/v1/admin/accounts") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                            contentType(ContentType.Application.Json)
+                            setBody(
+                                MiruJson.encodeToString(
+                                    CreateAccountRequest(
+                                        username = "elena-c",
+                                        password = "ElenaC-password-123",
+                                        role = MiruRole.USER,
+                                        linkedMediaUserIds = setOf("mu-elena"),
+                                    ),
+                                ),
+                            )
+                        }
+                    conflictCreate.status shouldBe HttpStatusCode.Conflict
+                    harness.accountRepo.findByNormalizedUsername("elena-c").shouldBeRight().shouldBeNull()
+
+                    // Linking accB to mu-elena while accA owns it -> 409 Conflict
+                    val conflictPut =
+                        client.put("/api/v1/admin/accounts/${accB.account.id}/media-users") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(SetLinkedMediaUsersRequest(setOf("mu-elena"))))
+                        }
+                    conflictPut.status shouldBe HttpStatusCode.Conflict
+                    harness.accountRepo.findLinkedMediaUserIds(accB.account.id).shouldBeRight().shouldBeEmpty()
+
+                    // Unlink from accA -> accB can now claim mu-elena
+                    client
+                        .put("/api/v1/admin/accounts/${accA.account.id}/media-users") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(SetLinkedMediaUsersRequest(emptySet())))
+                        }.status shouldBe HttpStatusCode.OK
+
+                    val successPut =
+                        client.put("/api/v1/admin/accounts/${accB.account.id}/media-users") {
+                            cookie(SESSION_COOKIE_NAME, adminLogin.signedToken)
+                            contentType(ContentType.Application.Json)
+                            setBody(MiruJson.encodeToString(SetLinkedMediaUsersRequest(setOf("mu-elena"))))
+                        }
+                    successPut.status shouldBe HttpStatusCode.OK
+                    harness.accountRepo.findLinkedMediaUserIds(accB.account.id).shouldBeRight() shouldBe setOf("mu-elena")
                 }
             }
         }

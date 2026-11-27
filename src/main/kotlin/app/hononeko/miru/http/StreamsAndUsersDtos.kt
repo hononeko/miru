@@ -109,6 +109,20 @@ data class SessionStoppedEventDto(
 )
 
 @Serializable
+data class LinkedUserProfileDto(
+    val userId: String,
+    val serverId: String,
+    val serverName: String? = null,
+    val serverType: String? = null,
+    val externalUserId: String,
+    val username: String,
+    val displayName: String? = null,
+    val isAdmin: Boolean,
+    val avatarUrl: String? = null,
+    val lastSeenAtMs: Long? = null,
+)
+
+@Serializable
 data class UsersListResponse(
     val users: List<UserSummaryDto>,
 )
@@ -116,6 +130,7 @@ data class UsersListResponse(
 @Serializable
 data class UserSummaryDto(
     val id: String,
+    val accountId: String? = null,
     val serverId: String,
     val serverName: String? = null,
     val serverType: String? = null,
@@ -129,6 +144,7 @@ data class UserSummaryDto(
     val lastSeenAtMs: Long? = null,
     val totalPlays: Long,
     val totalWatchDurationSec: Long,
+    val linkedProfiles: List<LinkedUserProfileDto> = emptyList(),
 )
 
 @Serializable

@@ -24,9 +24,11 @@ import app.hononeko.miru.persistence.model.MediaServerRecord
 import app.hononeko.miru.persistence.model.PlaybackHistoryRecord
 import app.hononeko.miru.persistence.model.UserRecord
 import app.hononeko.miru.persistence.repository.ActiveSessionRepository
+import app.hononeko.miru.persistence.repository.AuthAccountRepository
 import app.hononeko.miru.persistence.repository.MediaServerRepository
 import app.hononeko.miru.persistence.repository.PlaybackHistoryRepository
 import app.hononeko.miru.persistence.repository.UserRepository
+import app.hononeko.miru.service.ViewerIdentityResolver.avatarProxyUrl
 import arrow.core.Either
 import arrow.core.raise.either
 import arrow.core.raise.ensure
@@ -39,6 +41,7 @@ private const val UNKNOWN_LABEL = "Unknown"
 /**
  * Application service backing the live streams and media users REST + SSE endpoints.
  */
+@Suppress("LongParameterList")
 class StreamsAndUsersService(
     private val activeSessionRepository: ActiveSessionRepository,
     private val userRepository: UserRepository,
@@ -46,6 +49,7 @@ class StreamsAndUsersService(
     private val liveTechnicalProvider: suspend () -> Map<ActiveSessionKey, StreamTechnicalInfo> = { emptyMap() },
     private val serverNameProvider: suspend () -> String? = { null },
     private val mediaServerRepository: MediaServerRepository? = null,
+    private val authAccountRepository: AuthAccountRepository? = null,
 ) {
     suspend fun listActiveStreams(
         principal: MiruPrincipal,
@@ -176,6 +180,7 @@ class StreamsAndUsersService(
     suspend fun listUsers(
         principal: MiruPrincipal,
         serverId: String? = null,
+        merged: Boolean = true,
     ): Either<MiruError, UsersListResponse> =
         either {
             principal.requireAdmin().bind()
@@ -193,6 +198,7 @@ class StreamsAndUsersService(
             }
 
             val serversById = loadServersById()
+            val linksByMediaUser = authAccountRepository?.findAllMediaUserLinks()?.bind().orEmpty()
             val activeCountByUser =
                 activeSessionRepository
                     .findAll()
@@ -205,14 +211,39 @@ class StreamsAndUsersService(
             val summariesByUser = playbackHistoryRepository.summarizeByUser(userIds).bind()
 
             val items =
-                users.map { user ->
-                    val summary = summariesByUser[user.id]
-                    user.toSummaryDto(
-                        activeStreamCount = activeCountByUser[user.id] ?: 0,
-                        totalPlays = summary?.totalPlays ?: 0L,
-                        totalWatchDurationSec = summary?.totalWatchDurationSec ?: 0L,
-                        server = serversById[user.serverId],
-                    )
+                if (normalizedServerId == null && merged) {
+                    users
+                        .groupBy { user -> linksByMediaUser[user.id] ?: "unlinked:${user.id}" }
+                        .values
+                        .map { group ->
+                            val ordered = group.sortedWith(ViewerIdentityResolver.stableProfileComparator)
+                            val accountId = linksByMediaUser[ordered.first().id]
+                            ViewerIdentityResolver.buildUserSummaryDto(
+                                id = accountId ?: ordered.first().id,
+                                accountId = accountId,
+                                orderedProfiles = ordered,
+                                serversById = serversById,
+                                activeStreamCount = ordered.sumOf { activeCountByUser[it.id] ?: 0 },
+                                totalPlays = ordered.sumOf { summariesByUser[it.id]?.totalPlays ?: 0L },
+                                totalWatchDurationSec = ordered.sumOf { summariesByUser[it.id]?.totalWatchDurationSec ?: 0L },
+                            )
+                        }.sortedWith(
+                            compareBy<UserSummaryDto> { (it.displayName ?: it.username).lowercase() }
+                                .thenBy { it.id },
+                        )
+                } else {
+                    users.map { user ->
+                        val summary = summariesByUser[user.id]
+                        ViewerIdentityResolver.buildUserSummaryDto(
+                            id = user.id,
+                            accountId = linksByMediaUser[user.id],
+                            orderedProfiles = listOf(user),
+                            serversById = serversById,
+                            activeStreamCount = activeCountByUser[user.id] ?: 0,
+                            totalPlays = summary?.totalPlays ?: 0L,
+                            totalWatchDurationSec = summary?.totalWatchDurationSec ?: 0L,
+                        )
+                    }
                 }
             UsersListResponse(users = items)
         }
@@ -220,6 +251,7 @@ class StreamsAndUsersService(
     suspend fun getUserDetail(
         principal: MiruPrincipal,
         userId: String,
+        serverId: String? = null,
     ): Either<MiruError, UserDetailResponse> =
         either {
             val trimmedUserId = userId.trim()
@@ -229,42 +261,57 @@ class StreamsAndUsersService(
                     fieldErrors = mapOf("id" to "must not be blank"),
                 )
             }
-            principal.requireMediaUserAccess(trimmedUserId).bind()
+            ViewerIdentityResolver.requireTargetViewerAccess(principal, trimmedUserId).bind()
 
-            val user = userRepository.findById(trimmedUserId).bind()
-            ensure(user != null) {
-                MiruError.NotFound(resource = "User", id = trimmedUserId)
-            }
+            val normalizedServerId = serverId?.trim()?.takeIf { it.isNotEmpty() }
+            val resolved =
+                ViewerIdentityResolver
+                    .resolveViewer(
+                        userRepository = userRepository,
+                        authAccountRepository = authAccountRepository,
+                        targetId = trimmedUserId,
+                        serverId = normalizedServerId,
+                    ).bind()
 
             val serversById = loadServersById()
-            val userServer = serversById[user.serverId]
+            val profilesById = resolved.allProfiles.associateBy { it.id }
             val userSessions =
                 activeSessionRepository
                     .findAll()
                     .bind()
-                    .filter { it.userId == trimmedUserId }
+                    .filter { session ->
+                        session.userId in resolved.targetMediaUserIds &&
+                            (normalizedServerId == null || session.serverId == normalizedServerId)
+                    }
             val liveTechByKey = if (userSessions.isEmpty()) emptyMap() else liveTechnicalProvider()
             val activeStreams =
                 userSessions.map { session ->
                     toActiveStreamDto(
                         session = session,
-                        user = user,
+                        user = profilesById[session.userId] ?: resolved.primaryProfile,
                         liveTech = liveTechByKey[session.key],
-                        server = serversById[session.serverId] ?: userServer,
+                        server = serversById[session.serverId],
                     )
                 }
 
-            val history = playbackHistoryRepository.listByUser(trimmedUserId).bind()
+            val history =
+                playbackHistoryRepository
+                    .listByUsers(resolved.targetMediaUserIds, serverId = normalizedServerId)
+                    .bind()
             val totalPlays = history.size.toLong()
             val totalWatchDurationSec = history.sumOf { it.watchedDurationSec.toLong() }
 
             UserDetailResponse(
                 user =
-                    user.toSummaryDto(
+                    ViewerIdentityResolver.buildUserSummaryDto(
+                        id = resolved.canonicalId,
+                        accountId = resolved.accountId,
+                        orderedProfiles = resolved.scopedProfiles.ifEmpty { resolved.allProfiles },
+                        serversById = serversById,
                         activeStreamCount = activeStreams.size,
                         totalPlays = totalPlays,
                         totalWatchDurationSec = totalWatchDurationSec,
-                        server = userServer,
+                        linkedProfileRecords = resolved.scopedProfiles,
                     ),
                 activeStreams = activeStreams,
                 totalPlays = totalPlays,
@@ -283,29 +330,6 @@ class StreamsAndUsersService(
             ?.getOrNull()
             .orEmpty()
             .associateBy { it.id }
-
-    private fun UserRecord.toSummaryDto(
-        activeStreamCount: Int,
-        totalPlays: Long,
-        totalWatchDurationSec: Long,
-        server: MediaServerRecord? = null,
-    ): UserSummaryDto =
-        UserSummaryDto(
-            id = id,
-            serverId = serverId,
-            serverName = server?.name?.normalizedDisplayName(),
-            serverType = server?.serverType?.lowercase(),
-            externalUserId = externalUserId,
-            username = username,
-            displayName = displayName.normalizedDisplayName(),
-            isAdmin = isAdmin,
-            avatarUrl = avatarProxyUrl(),
-            isStreaming = activeStreamCount > 0,
-            activeStreamCount = activeStreamCount,
-            lastSeenAtMs = lastSeenAtMs,
-            totalPlays = totalPlays,
-            totalWatchDurationSec = totalWatchDurationSec,
-        )
 
     private fun PlaybackHistoryRecord.toRecentPlayDto(server: MediaServerRecord? = null): UserRecentPlayDto =
         UserRecentPlayDto(
@@ -400,7 +424,4 @@ class StreamsAndUsersService(
                     .thenByDescending { it.watchDurationSec }
                     .thenBy { it.librarySectionKey.orEmpty() },
             )
-
-    private fun UserRecord.avatarProxyUrl(): String? =
-        thumbUrl?.let { "/api/v1/users/$id/avatar" }
 }

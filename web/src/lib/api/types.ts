@@ -50,6 +50,7 @@ export type WebhookDeliveryDto = Schemas['WebhookDeliveryDto'];
 export type WebhookDeliveriesResponse = Schemas['WebhookDeliveriesResponse'];
 
 export type UsersListResponse = Schemas['UsersListResponse'];
+export type LinkedUserProfileDto = Schemas['LinkedUserProfileDto'];
 export type UserSummaryDto = Schemas['UserSummaryDto'];
 export type UserDetailResponse = Schemas['UserDetailResponse'];
 export type UserRecentPlayDto = Schemas['UserRecentPlayDto'];

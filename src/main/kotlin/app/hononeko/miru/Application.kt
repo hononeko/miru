@@ -193,6 +193,7 @@ private fun runServer() {
             playbackHistoryRepository = playbackHistoryRepository,
             userRepository = userRepository,
             mediaServerRepository = mediaServerRepository,
+            authAccountRepository = accountRepository,
         )
     val tautulliImporterService =
         createTautulliImporterService(mediaServerRepository, userRepository, playbackHistoryRepository, appConfig)
@@ -206,6 +207,7 @@ private fun runServer() {
             playbackHistoryRepository = playbackHistoryRepository,
             sessionRepository = sessionRepository,
             emailLinker = emailLinker,
+            accountRepository = accountRepository,
         )
     val readinessChecks = listOf(NamedReadinessCheck("database", DatabaseReadinessCheck(databaseHandle)))
     val mergedLibrarySyncEvents =
@@ -303,6 +305,7 @@ internal fun createCoreServiceWiring(
     playbackHistoryRepository: ExposedPlaybackHistoryRepository,
     sessionRepository: ExposedAuthSessionRepository,
     emailLinker: EmailMediaUserLinker,
+    accountRepository: ExposedAuthAccountRepository? = null,
 ): CoreServiceWiring {
     val (plexRuntimeManager, jellyfinRuntimeManager, mediaServerRegistry) =
         createMediaServerRuntimes(appConfig, databaseHandle, mediaServerRepository)
@@ -333,6 +336,7 @@ internal fun createCoreServiceWiring(
             libraryRepository = libraryRepository,
             sectionAccessChecker = sectionAccessChecker,
             mediaServerRegistry = mediaServerRegistry,
+            authAccountRepository = accountRepository,
         )
     val activeSessionRepository = ExposedActiveSessionRepository(databaseHandle)
     val streamsAndUsersService =
@@ -342,6 +346,7 @@ internal fun createCoreServiceWiring(
             playbackHistoryRepository,
             mediaServerRepository,
             mediaServerRegistry,
+            accountRepository,
         )
     val streamControlService =
         createStreamControlService(
@@ -537,12 +542,14 @@ private fun createWebhookServices(
     )
 }
 
+@Suppress("LongParameterList")
 internal fun createArtworkProxyService(
     plexRuntimeManager: PlexRuntimeManager,
     userRepository: ExposedUserRepository,
     libraryRepository: ExposedLibraryRepository,
     sectionAccessChecker: MediaSectionAccessChecker,
     mediaServerRegistry: MediaServerRegistry? = null,
+    authAccountRepository: ExposedAuthAccountRepository? = null,
 ): ArtworkProxyService =
     ArtworkProxyService(
         adapter = plexRuntimeManager.adapter,
@@ -553,6 +560,7 @@ internal fun createArtworkProxyService(
         adapterForServer = mediaServerRegistry?.let { reg -> { sid -> reg.adapterForServer(sid) } },
         allServerAdaptersProvider = mediaServerRegistry?.let { reg -> { reg.activeServerAdapters() } },
         serverBaseUrlsProvider = mediaServerRegistry?.let { reg -> { reg.configuredBaseUrls() } },
+        authAccountRepository = authAccountRepository,
     )
 
 private fun createTautulliImporterService(
@@ -569,12 +577,14 @@ private fun createTautulliImporterService(
         defaultWatchedThresholdPercent = appConfig.session.watchedThresholdPercent,
     )
 
+@Suppress("LongParameterList")
 private fun createStreamsAndUsersService(
     activeSessionRepository: ExposedActiveSessionRepository,
     userRepository: ExposedUserRepository,
     playbackHistoryRepository: ExposedPlaybackHistoryRepository,
     mediaServerRepository: ExposedMediaServerRepository,
     mediaServerRegistry: MediaServerRegistry,
+    authAccountRepository: ExposedAuthAccountRepository? = null,
 ): StreamsAndUsersService =
     StreamsAndUsersService(
         activeSessionRepository = activeSessionRepository,
@@ -583,6 +593,7 @@ private fun createStreamsAndUsersService(
         liveTechnicalProvider = { mediaServerRegistry.currentLiveTechnical() },
         serverNameProvider = { mediaServerRegistry.currentDefaultServerName() },
         mediaServerRepository = mediaServerRepository,
+        authAccountRepository = authAccountRepository,
     )
 
 private fun createStreamControlService(

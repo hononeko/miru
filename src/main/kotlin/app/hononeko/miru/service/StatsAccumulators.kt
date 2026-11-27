@@ -87,6 +87,7 @@ internal data class CommonStatsResult(
 
 internal class CommonStatsAccumulator(
     includeDailyBreakdowns: Boolean = true,
+    private val canonicalUserIdFor: (String) -> String = { it },
 ) {
     var totalPlays: Long = 0L
         private set
@@ -94,6 +95,7 @@ internal class CommonStatsAccumulator(
         private set
 
     val activeUserIds: HashSet<String> = HashSet()
+    val rawActiveUserIds: HashSet<String> = HashSet()
     val daily: DailyStatsAccumulator = DailyStatsAccumulator(includeBreakdowns = includeDailyBreakdowns)
 
     private var directPlay = 0L
@@ -155,9 +157,11 @@ internal class CommonStatsAccumulator(
         hwTranscode: Boolean,
         stoppedAtMs: Long,
     ): Long {
+        val viewerId = canonicalUserIdFor(userId)
         totalPlays++
         totalWatchDurationSec += watchedDurationSec
-        activeUserIds += userId
+        rawActiveUserIds += userId
+        activeUserIds += viewerId
 
         when (streamDecision.lowercase()) {
             "direct_play" -> {
@@ -181,7 +185,7 @@ internal class CommonStatsAccumulator(
         val epochDay = utcEpochDay(stoppedAtMs)
         daily.record(
             epochDay = epochDay,
-            userId = userId,
+            userId = viewerId,
             mediaType = mediaType,
             ratingKey = ratingKey,
             title = title,

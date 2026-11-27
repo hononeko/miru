@@ -1504,4 +1504,67 @@ class OidcAuthRoutesTest :
             }
             serviceLogger.detachAppender(appender)
         }
+
+        test("email auto-linker does not steal a media user already linked to another account") {
+            val scenario =
+                MockIdpScenario(
+                    subject = "sub-elena-sso",
+                    preferredUsername = "elena-sso",
+                    email = "elena@miru.local",
+                    emailVerifiedInIdToken = true,
+                )
+            val expectedChallengeHolder = mutableMapOf<String, String>()
+            createOidcHarness(
+                autoLinkByEmail = true,
+                scenarioProvider = { scenario },
+                expectedChallengeHolder = expectedChallengeHolder,
+            ).use { harness ->
+                harness.serverRepo
+                    .upsert(
+                        MediaServerRecord(
+                            id = "srv-plex",
+                            name = "Plex",
+                            serverType = "PLEX",
+                            machineId = "mach-plex",
+                            baseUrl = "http://plex.local:32400",
+                            createdAtMs = 1_000L,
+                            updatedAtMs = 1_000L,
+                        ),
+                    ).shouldBeRight()
+                harness.userRepo
+                    .upsert(
+                        UserRecord(
+                            id = "mu-elena-plex",
+                            serverId = "srv-plex",
+                            externalUserId = "10",
+                            username = "elena",
+                            email = "elena@miru.local",
+                            createdAtMs = 1_000L,
+                            updatedAtMs = 1_000L,
+                        ),
+                    ).shouldBeRight()
+
+                // Local account manually owns mu-elena-plex
+                val manualOwner =
+                    harness.authService
+                        .createAccount(
+                            username = "elena-local",
+                            password = "ElenaLocal-password-123",
+                            role = MiruRole.USER,
+                            linkedMediaUserIds = setOf("mu-elena-plex"),
+                        ).shouldBeRight()
+
+                testApplication {
+                    setupApp(harness)
+                    val client = createClient { followRedirects = false }
+                    val ssoMe = client.me(client.signInWithOidc("code-1", expectedChallengeHolder))
+                    ssoMe.linkedMediaUserIds.shouldBeEmpty()
+                    harness.accountRepo.findLinkedMediaUserIds(manualOwner.account.id).shouldBeRight() shouldBe
+                        setOf("mu-elena-plex")
+
+                    harness.emailLinker.relinkAll().shouldBeRight() shouldBe 0
+                    harness.accountRepo.findLinkedMediaUserIds(ssoMe.accountId).shouldBeRight().shouldBeEmpty()
+                }
+            }
+        }
     })

@@ -1,8 +1,9 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$api/client';
 import type { UserDetailResponse, UserStatsResponse, WrappedStatsResponse } from '$api/types';
 import { authStore } from '$stores/auth.svelte';
+import { serversStore } from '$stores/servers.svelte';
 import UserProfilePage from './+page.svelte';
 
 vi.mock('$app/state', () => ({
@@ -132,6 +133,7 @@ describe('User profile Most Rewatched card', () => {
 	afterEach(() => {
 		vi.restoreAllMocks();
 		cleanup();
+		serversStore.reset();
 		authStore.principal = null;
 	});
 
@@ -143,5 +145,114 @@ describe('User profile Most Rewatched card', () => {
 			expect(heading).toBeTruthy();
 		});
 		expect(heading.parentElement?.querySelector('svg')).toBeNull();
+	});
+
+	it('renders linked ServerBadges, recent play server badges, and narrows endpoints via ServerFilterBar', async () => {
+		serversStore.servers = [
+			{
+				id: 'srv-1',
+				name: 'Home Plex',
+				serverType: 'plex',
+				configured: true,
+				reachable: true,
+				websocketEnabled: true,
+				websocketState: 'CONNECTED'
+			},
+			{
+				id: 'srv-jf',
+				name: 'Studio Jellyfin',
+				serverType: 'jellyfin',
+				configured: false,
+				reachable: false,
+				websocketEnabled: false,
+				websocketState: 'DISABLED'
+			}
+		];
+		serversStore.loaded = true;
+
+		const multiDetail: UserDetailResponse = {
+			...sampleDetail,
+			user: {
+				...sampleDetail.user,
+				id: 'acc-vehkiya',
+				accountId: 'acc-vehkiya',
+				linkedProfiles: [
+					{
+						userId: 'u-1',
+						serverId: 'srv-1',
+						serverName: 'Home Plex',
+						serverType: 'plex',
+						externalUserId: '101',
+						username: 'vehkiya',
+						displayName: 'Vehkiya',
+						isAdmin: true
+					},
+					{
+						userId: 'u-jf',
+						serverId: 'srv-jf',
+						serverName: 'Studio Jellyfin',
+						serverType: 'jellyfin',
+						externalUserId: 'jf-101',
+						username: 'vehkiya_jf',
+						displayName: 'Vehkiya',
+						isAdmin: false
+					}
+				]
+			},
+			recentPlays: [
+				{
+					id: 'play-jf-1',
+					serverId: 'srv-jf',
+					serverName: 'Studio Jellyfin',
+					serverType: 'jellyfin',
+					ratingKey: 'jf-m1',
+					mediaType: 'movie',
+					title: 'Arrival',
+					durationMs: 6_000_000,
+					viewOffsetMs: 6_000_000,
+					watchedDurationSec: 6_000,
+					pausedDurationSec: 0,
+					completionPercent: 100,
+					isWatched: true,
+					streamDecision: 'direct_play',
+					hwTranscode: false,
+					startedAtMs: 1_700_000_000_000,
+					stoppedAtMs: 1_700_000_006_000
+				}
+			]
+		};
+
+		const getSpy = vi.spyOn(api, 'GET').mockImplementation((async (url: string) => {
+			if (url === '/api/v1/users/{id}') {
+				return { data: multiDetail, response: new Response(null, { status: 200 }) };
+			}
+			if (url === '/api/v1/users/{id}/stats') {
+				return { data: sampleStats, response: new Response(null, { status: 200 }) };
+			}
+			return { data: sampleWrapped, response: new Response(null, { status: 200 }) };
+		}) as never);
+
+		render(UserProfilePage);
+		await waitFor(() => {
+			expect(screen.getByText(/Linked across 2 servers/)).toBeTruthy();
+			expect(screen.getByText('PLEX · Home Plex')).toBeTruthy();
+			expect(screen.getAllByText('JELLYFIN · Studio Jellyfin · Disconnected').length).toBeGreaterThanOrEqual(2);
+		});
+
+		await fireEvent.click(screen.getByRole('button', { name: /Studio Jellyfin/ }));
+		await waitFor(() => {
+			expect(getSpy).toHaveBeenCalledWith('/api/v1/users/{id}', {
+				params: { path: { id: 'u-1' }, query: { serverId: 'srv-jf' } }
+			});
+			expect(getSpy).toHaveBeenCalledWith('/api/v1/users/{id}/stats', {
+				params: { path: { id: 'u-1' }, query: { range: '30d', metric: 'plays', serverId: 'srv-jf' } }
+			});
+			expect(getSpy).toHaveBeenCalledWith('/api/v1/stats/wrapped/{year}', {
+				params: {
+					path: { year: new Date().getUTCFullYear() },
+					query: { userId: 'u-1', metric: 'plays', serverId: 'srv-jf' }
+				}
+			});
+		});
 	});
 });

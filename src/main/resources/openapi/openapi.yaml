@@ -456,7 +456,7 @@ paths:
       summary: Create a new local account
       description: >-
         `linkedMediaUserIds` may hold at most one media user on each media server, since an account
-        stands for one person.
+        stands for one person, and each media user can belong to at most one Miru account.
       security:
         - CookieAuth: []
         - ApiKeyAuth: []
@@ -499,7 +499,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
         '409':
-          description: Username already exists
+          description: Username already exists or one of the media users is already linked to another account
           content:
             application/problem+json:
               schema:
@@ -621,7 +621,8 @@ paths:
       description: >-
         Replaces the account's links and sets its `mediaUserLinkMode` to `MANUAL`, so SSO sign-in
         no longer relinks it by email. An account is linked to at most one media user on each media
-        server; a request linking two users on one server is refused with 400 and changes nothing.
+        server (refused with 400 if two are on one server), and each media user can be owned by at
+        most one Miru account (refused with 409 if already linked to another account).
       security:
         - CookieAuth: []
         - ApiKeyAuth: []
@@ -665,6 +666,12 @@ paths:
                 $ref: '#/components/schemas/ProblemDetails'
         '404':
           description: Account or media user not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: One of the requested media users is already linked to another Miru account
           content:
             application/problem+json:
               schema:
@@ -2339,7 +2346,13 @@ paths:
     get:
       tags: [Users]
       operationId: listUsers
-      summary: List all media users with live streaming status and aggregate playback stats (admin only)
+      summary: List media users with live streaming status and aggregate playback stats (admin only)
+      description: >-
+        When `serverId` is omitted and `merged` is `true` (default), media user profiles linked to
+        the same Miru account (`auth_accounts`) are merged into one viewer entry keyed by canonical
+        `accountId`, aggregating counts, watch time, active streams, and surfacing `linkedProfiles`.
+        Unlinked media users remain standalone entries keyed by `users.id`. When `serverId` is
+        provided or `merged=false`, returns per-server rows keyed by `users.id`.
       security:
         - CookieAuth: []
         - ApiKeyAuth: []
@@ -2350,6 +2363,13 @@ paths:
           required: false
           schema:
             type: string
+        - name: merged
+          in: query
+          required: false
+          description: Whether to merge media users linked to the same Miru account when `serverId` is omitted
+          schema:
+            type: boolean
+            default: true
       responses:
         '200':
           description: List of media users
@@ -2374,7 +2394,10 @@ paths:
     get:
       tags: [Users]
       operationId: getUserDetail
-      summary: Get detailed playback statistics, active streams, and recent plays for a media user
+      summary: Get detailed playback statistics, active streams, and recent plays for a user
+      description: >-
+        Accepts either a canonical Miru `accountId` or any linked media server `users.id`.
+        Aggregates across all linked media user profiles unless narrowed with `serverId`.
       security:
         - CookieAuth: []
         - ApiKeyAuth: []
@@ -2383,6 +2406,13 @@ paths:
         - name: id
           in: path
           required: true
+          description: Canonical Miru `accountId` or media server `users.id`
+          schema:
+            type: string
+        - name: serverId
+          in: query
+          required: false
+          description: Optional media server ID to narrow profile, active streams, and stats to one server
           schema:
             type: string
       responses:
@@ -2429,6 +2459,7 @@ paths:
         - name: userId
           in: query
           required: false
+          description: Canonical Miru `accountId` or media server `users.id`; linked accounts match across all linked media user profiles
           schema:
             type: string
         - name: mediaType
@@ -2640,6 +2671,7 @@ paths:
         - name: userId
           in: query
           required: false
+          description: Canonical Miru `accountId` or media server `users.id`; linked accounts match across all linked media user profiles
           schema:
             type: string
         - name: metric
@@ -2701,6 +2733,7 @@ paths:
         - name: userId
           in: query
           required: false
+          description: Canonical Miru `accountId` or media server `users.id`; linked accounts match across all linked media user profiles
           schema:
             type: string
         - name: metric
@@ -2762,6 +2795,7 @@ paths:
         - name: userId
           in: query
           required: false
+          description: Canonical Miru `accountId` or media server `users.id`; linked accounts match across all linked media user profiles
           schema:
             type: string
         - name: metric
@@ -2808,7 +2842,10 @@ paths:
     get:
       tags: [Stats]
       operationId: getUserStats
-      summary: Retrieve playback statistics for a specific media user
+      summary: Retrieve playback statistics for a user
+      description: >-
+        Accepts either a canonical Miru `accountId` or any linked media server `users.id`.
+        Aggregates across all linked media user profiles unless narrowed with `serverId`.
       security:
         - CookieAuth: []
         - ApiKeyAuth: []
@@ -2817,6 +2854,13 @@ paths:
         - name: id
           in: path
           required: true
+          description: Canonical Miru `accountId` or media server `users.id`
+          schema:
+            type: string
+        - name: serverId
+          in: query
+          required: false
+          description: Optional media server ID to narrow statistics to one server
           schema:
             type: string
         - name: range
@@ -4118,6 +4162,42 @@ components:
           items:
             $ref: '#/components/schemas/UserSummaryDto'
 
+    LinkedUserProfileDto:
+      type: object
+      required:
+        - userId
+        - serverId
+        - externalUserId
+        - username
+        - isAdmin
+      properties:
+        userId:
+          type: string
+        serverId:
+          type: string
+        serverName:
+          type: string
+          nullable: true
+        serverType:
+          type: string
+          nullable: true
+        externalUserId:
+          type: string
+        username:
+          type: string
+        displayName:
+          type: string
+          nullable: true
+        isAdmin:
+          type: boolean
+        avatarUrl:
+          type: string
+          nullable: true
+        lastSeenAtMs:
+          type: integer
+          format: int64
+          nullable: true
+
     UserSummaryDto:
       type: object
       required:
@@ -4133,6 +4213,11 @@ components:
       properties:
         id:
           type: string
+          description: Canonical Miru `accountId` when linked and merged across servers, otherwise media server `users.id`
+        accountId:
+          type: string
+          nullable: true
+          description: Linked Miru account ID, when the media user(s) belong to an account
         serverId:
           type: string
         serverName:
@@ -4168,6 +4253,11 @@ components:
         totalWatchDurationSec:
           type: integer
           format: int64
+        linkedProfiles:
+          type: array
+          items:
+            $ref: '#/components/schemas/LinkedUserProfileDto'
+          description: Per-server media user profiles represented by this summary entry
 
     UserRecentPlayDto:
       type: object
@@ -4797,6 +4887,7 @@ components:
           format: int64
         activeUsers:
           type: integer
+          description: Distinct active viewers (linked media user profiles of the same Miru account are counted once when `serverId` is omitted)
         playsPerDay:
           type: array
           items:
@@ -5019,6 +5110,9 @@ components:
         userId:
           type: string
           nullable: true
+        accountId:
+          type: string
+          nullable: true
         username:
           type: string
           nullable: true
@@ -5100,6 +5194,9 @@ components:
       properties:
         userId:
           type: string
+        accountId:
+          type: string
+          nullable: true
         username:
           type: string
         displayName:
@@ -5833,6 +5930,7 @@ components:
           format: int64
         uniqueUsers:
           type: integer
+          description: Distinct viewers (media user profiles linked to the same Miru account are counted once)
         lastWatchedAtMs:
           type: integer
           format: int64
@@ -6129,6 +6227,10 @@ components:
     GuardrailRuleType:
       type: string
       enum: [TRANSCODE_4K, PAUSED_TIMEOUT, CONCURRENT_STREAMS]
+      description: >-
+        Guardrail rule type. `CONCURRENT_STREAMS` evaluates simultaneous active streams per media
+        server user (`users.id`) independently on each server, even when multiple profiles are
+        linked to the same Miru account.
 
     GuardrailMode:
       type: string

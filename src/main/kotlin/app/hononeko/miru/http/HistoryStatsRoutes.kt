@@ -145,6 +145,7 @@ private fun Route.registerStatsRoutes(historyAndStatsService: HistoryAndStatsSer
                         userId = userId,
                         rangeRaw = qp["range"],
                         metricRaw = qp["metric"],
+                        serverId = qp["serverId"],
                     ).bind()
             }
         call.respondEither(result)

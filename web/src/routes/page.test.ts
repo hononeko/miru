@@ -348,4 +348,79 @@ describe('Live Activity page fixes', () => {
 		expect(screen.getByRole('heading', { name: 'Archer (2009)' })).toBeTruthy();
 		expect(screen.queryByRole('button', { name: 'Terminate' })).toBeNull();
 	});
+
+	it('renders unified linked viewer in Plays Per Day legend and bar popover across servers', async () => {
+		const unifiedOverview: OverviewStatsResponse = {
+			range: '30d',
+			fromMs: 1_700_000_000_000,
+			totalPlays: 5,
+			totalWatchDurationSec: 5_400,
+			activeUsers: 2,
+			playsPerDay: [
+				{
+					date: '2026-11-18',
+					playCount: 5,
+					watchDurationSec: 5_400,
+					media: [
+						{
+							ratingKey: 'rk-dune',
+							mediaType: 'movie',
+							title: 'Dune',
+							playCount: 5,
+							watchDurationSec: 5_400,
+							users: ['Elena']
+						}
+					],
+					users: [
+						{ userId: 'acc-elena', username: 'elena', displayName: 'Elena', playCount: 4, watchDurationSec: 4_200 },
+						{ userId: 'u-bob', username: 'bob', displayName: 'Bob', playCount: 1, watchDurationSec: 1_200 }
+					]
+				}
+			],
+			topMovies: [],
+			topShows: [],
+			decisionBreakdown: {
+				directPlay: 5,
+				directStream: 0,
+				transcode: 0,
+				hwTranscode: 0,
+				total: 5,
+				directPlayPercent: 100,
+				directStreamPercent: 0,
+				transcodePercent: 0,
+				hwTranscodePercent: 0
+			}
+		};
+		vi.spyOn(api, 'GET').mockImplementation((async (url: string) => {
+			if (url === '/api/v1/stats/overview') {
+				return { data: unifiedOverview, response: new Response(null, { status: 200 }) };
+			}
+			if (url === '/api/v1/stats/clients') {
+				return { data: emptyClients, response: new Response(null, { status: 200 }) };
+			}
+			if (url === '/api/v1/stats/heatmap') {
+				return { data: emptyHeatmap, response: new Response(null, { status: 200 }) };
+			}
+			return { data: { configured: true, connected: true, credentialSource: 'OAUTH' }, response: new Response(null, { status: 200 }) };
+		}) as never);
+
+		render(LiveActivityPage);
+
+		await waitFor(() => {
+			expect(screen.getByText('5 plays · 2 active users')).toBeTruthy();
+			expect(screen.getAllByText('Elena').length).toBeGreaterThanOrEqual(1);
+			expect(screen.getAllByText('Bob').length).toBeGreaterThanOrEqual(1);
+		});
+
+		const bar = screen.getByRole('button', { name: /2026-11-18: 5 plays/ });
+		await fireEvent.click(bar);
+
+		await waitFor(() => {
+			expect(screen.getByText('Viewers')).toBeTruthy();
+			expect(screen.getByText('Played Media')).toBeTruthy();
+			expect(screen.getAllByText('5 plays · 1h 30m').length).toBeGreaterThanOrEqual(1);
+			expect(screen.getAllByText('Elena').length).toBeGreaterThanOrEqual(2);
+			expect(screen.getAllByText('4').length).toBeGreaterThanOrEqual(1);
+		});
+	});
 });

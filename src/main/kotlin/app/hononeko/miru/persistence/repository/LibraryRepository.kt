@@ -469,55 +469,10 @@ class ExposedLibraryRepository(
         readDatabase.exposedReadQuery("library_find_stale_media") {
             val safeLimit = limit.coerceAtLeast(0)
             val (stalePredicate, filterArgs) = buildStalePredicate(serverId, sectionKey, unwatchedCutoffMs, neverPlayedOnly)
-            val fromAndWhere =
-                """
-                FROM media_items_cache m
-                LEFT JOIN (
-                    SELECT rating_key, COUNT(id) AS play_count, MAX(stopped_at_ms) AS last_played_at_ms
-                    FROM playback_history
-                    WHERE server_id = ?
-                    GROUP BY rating_key
-                ) p ON p.rating_key = m.rating_key
-                WHERE m.server_id = ? AND m.section_key = ? AND $stalePredicate
-                """.trimIndent()
-
-            val summarySql =
-                """
-                SELECT
-                    COUNT(*) AS total_stale_count,
-                    COALESCE(SUM(CASE WHEN m.file_size_bytes > 0 THEN m.file_size_bytes ELSE 0 END), 0) AS total_reclaimable_bytes,
-                    COALESCE(
-                        SUM(CASE WHEN p.play_count IS NULL OR p.play_count = 0 OR p.last_played_at_ms IS NULL THEN 1 ELSE 0 END),
-                        0
-                    ) AS never_played_count
-                $fromAndWhere
-                """.trimIndent()
-
-            val summary =
-                exec(summarySql, args = filterArgs, explicitStatementType = StatementType.SELECT) { rs ->
-                    if (rs.next()) {
-                        Triple(
-                            rs.getInt("total_stale_count"),
-                            rs.getLong("total_reclaimable_bytes"),
-                            rs.getInt("never_played_count"),
-                        )
-                    } else {
-                        Triple(0, 0L, 0)
-                    }
-                } ?: Triple(0, 0L, 0)
-
-            val (totalStaleCount, totalReclaimableBytes, neverPlayedCount) = summary
-            if (totalStaleCount == 0 || safeLimit == 0) {
-                return@exposedReadQuery StaleMediaReportRecord(
-                    items = emptyList(),
-                    totalStaleCount = totalStaleCount,
-                    totalReclaimableBytes = totalReclaimableBytes,
-                    neverPlayedCount = neverPlayedCount,
-                )
-            }
-
             val orderByClause = staleSortOrderByClause(sort)
-            val pageSql =
+            // The totals are window functions over every stale item, so the plays of the server are aggregated once for
+            // both the totals and the page. COUNT(*) rather than COUNT(id) keeps that aggregation within its index.
+            val sql =
                 """
                 SELECT
                     m.server_id,
@@ -537,28 +492,44 @@ class ExposedLibraryRepository(
                     m.added_at_ms,
                     m.updated_at_ms,
                     COALESCE(p.play_count, 0) AS play_count,
-                    p.last_played_at_ms
-                $fromAndWhere
+                    p.last_played_at_ms,
+                    COUNT(*) OVER () AS total_stale_count,
+                    SUM(CASE WHEN m.file_size_bytes > 0 THEN m.file_size_bytes ELSE 0 END) OVER () AS total_reclaimable_bytes,
+                    SUM(
+                        CASE WHEN p.play_count IS NULL OR p.play_count = 0 OR p.last_played_at_ms IS NULL THEN 1 ELSE 0 END
+                    ) OVER () AS never_played_count
+                FROM media_items_cache m
+                LEFT JOIN (
+                    SELECT rating_key, COUNT(*) AS play_count, MAX(stopped_at_ms) AS last_played_at_ms
+                    FROM playback_history
+                    WHERE server_id = ?
+                    GROUP BY rating_key
+                ) p ON p.rating_key = m.rating_key
+                WHERE m.server_id = ? AND m.section_key = ? AND $stalePredicate
                 $orderByClause
                 LIMIT ?
                 """.trimIndent()
 
-            val pageArgs = filterArgs + (IntegerColumnType() to safeLimit)
-            val items =
-                exec(pageSql, args = pageArgs, explicitStatementType = StatementType.SELECT) { rs ->
-                    val list = ArrayList<StaleMediaItemRecord>(minOf(safeLimit, totalStaleCount))
-                    while (rs.next()) {
-                        list += rs.toStaleMediaItemRecord()
+            // Every row carries the totals, so a summary without items still reads one row
+            val args = filterArgs + (IntegerColumnType() to maxOf(safeLimit, 1))
+            val emptyReport =
+                StaleMediaReportRecord(items = emptyList(), totalStaleCount = 0, totalReclaimableBytes = 0L, neverPlayedCount = 0)
+            exec(sql, args = args, explicitStatementType = StatementType.SELECT) { rs ->
+                var report = emptyReport
+                val items = ArrayList<StaleMediaItemRecord>()
+                while (rs.next()) {
+                    if (items.isEmpty()) {
+                        report =
+                            report.copy(
+                                totalStaleCount = rs.getInt("total_stale_count"),
+                                totalReclaimableBytes = rs.getLong("total_reclaimable_bytes"),
+                                neverPlayedCount = rs.getInt("never_played_count"),
+                            )
                     }
-                    list
-                }.orEmpty()
-
-            StaleMediaReportRecord(
-                items = items,
-                totalStaleCount = totalStaleCount,
-                totalReclaimableBytes = totalReclaimableBytes,
-                neverPlayedCount = neverPlayedCount,
-            )
+                    items += rs.toStaleMediaItemRecord()
+                }
+                report.copy(items = if (safeLimit == 0) emptyList() else items)
+            } ?: emptyReport
         }
 
     private fun buildStalePredicate(

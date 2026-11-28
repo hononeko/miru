@@ -11,6 +11,7 @@ import app.hononeko.miru.service.StreamsAndUsersService
 import app.hononeko.miru.session.SessionEvent
 import arrow.core.raise.either
 import io.ktor.server.routing.Route
+import io.ktor.server.routing.application
 import io.ktor.server.routing.get
 import io.ktor.server.routing.route
 import io.ktor.server.sse.ServerSSESession
@@ -40,6 +41,7 @@ fun Route.streamsAndUsersRoutes(
     sessionEvents: SharedFlow<SessionEvent>? = null,
     keepaliveInterval: Duration = DEFAULT_SSE_KEEPALIVE_INTERVAL,
 ) {
+    val sessionEventFrames = sessionEvents?.let { SessionEventFrames(it, streamsAndUsersService, application) }
     authenticated(authService = authService, authMode = authMode) {
         route("/api/v1/streams") {
             get {
@@ -65,7 +67,7 @@ fun Route.streamsAndUsersRoutes(
                 streamEventsSse(
                     principal = principal,
                     streamsAndUsersService = streamsAndUsersService,
-                    sessionEvents = sessionEvents,
+                    sessionEventFrames = sessionEventFrames,
                     keepaliveInterval = keepaliveInterval,
                     serverId = serverId,
                 )
@@ -105,7 +107,7 @@ fun Route.streamsAndUsersRoutes(
 private suspend fun ServerSSESession.streamEventsSse(
     principal: MiruPrincipal,
     streamsAndUsersService: StreamsAndUsersService,
-    sessionEvents: SharedFlow<SessionEvent>?,
+    sessionEventFrames: SessionEventFrames?,
     keepaliveInterval: Duration,
     serverId: String? = null,
 ) {
@@ -128,18 +130,14 @@ private suspend fun ServerSSESession.streamEventsSse(
 
         eventsJob =
             launch {
-                if (sessionEvents == null) {
+                if (sessionEventFrames == null) {
                     awaitCancellation()
                 } else {
-                    sessionEvents.collect { event ->
-                        if (principal.canAccessMediaUser(event.sessionUserId()) &&
-                            (serverId == null || event.serverId == serverId)
-                        ) {
-                            val sseEvent = buildSseEvent(event, streamsAndUsersService)
-                            if (sseEvent != null && !trySendEvent(sseEvent)) {
-                                pingJob.cancel()
-                                eventsJob.cancel()
-                            }
+                    sessionEventFrames.frames.collect { frame ->
+                        // Frames are shared by every client, so this check is what keeps each one to its own streams.
+                        if (frame.isVisibleTo(principal, serverId) && !trySendEvent(frame.event)) {
+                            pingJob.cancel()
+                            eventsJob.cancel()
                         }
                     }
                 }
@@ -164,80 +162,6 @@ private suspend fun ServerSSESession.streamEventsSse(
         }
     }
 }
-
-private suspend fun buildSseEvent(
-    event: SessionEvent,
-    streamsAndUsersService: StreamsAndUsersService,
-): ServerSentEvent? {
-    val session =
-        when (event) {
-            is SessionEvent.SessionStarted -> event.session
-            is SessionEvent.SessionUpdated -> event.session
-            is SessionEvent.SessionStopped -> event.session
-        }
-    val streamDto =
-        streamsAndUsersService.toActiveStreamDto(session).fold(
-            ifLeft = { error ->
-                logger.warn("Failed to map SSE session event '{}': {}", event.key, error.message)
-                return null
-            },
-            ifRight = { it },
-        )
-    return when (event) {
-        is SessionEvent.SessionStarted ->
-            ServerSentEvent(
-                event = "session_started",
-                data =
-                    MiruJson.encodeToString(
-                        SessionStartedEventDto(
-                            timestampMs = event.timestampMs,
-                            stream = streamDto,
-                        ),
-                    ),
-            )
-
-        is SessionEvent.SessionUpdated ->
-            ServerSentEvent(
-                event = "session_updated",
-                data =
-                    MiruJson.encodeToString(
-                        SessionUpdatedEventDto(
-                            timestampMs = event.timestampMs,
-                            stream = streamDto,
-                            previousState = event.previousState,
-                            previousStreamDecision = event.previousStreamDecision,
-                            streamDecisionChanged = event.streamDecisionChanged,
-                        ),
-                    ),
-            )
-
-        is SessionEvent.SessionStopped ->
-            ServerSentEvent(
-                event = "session_stopped",
-                data =
-                    MiruJson.encodeToString(
-                        SessionStoppedEventDto(
-                            timestampMs = event.timestampMs,
-                            serverId = event.serverId,
-                            sessionKey = event.key.sessionKey,
-                            ratingKey = event.key.ratingKey,
-                            userId = event.session.userId,
-                            reason = event.reason.name.lowercase(),
-                            mergedIntoHistory = event.mergedIntoHistory,
-                            historyId = event.historyRecord?.id,
-                            stream = streamDto,
-                        ),
-                    ),
-            )
-    }
-}
-
-private fun SessionEvent.sessionUserId(): String =
-    when (this) {
-        is SessionEvent.SessionStarted -> session.userId
-        is SessionEvent.SessionUpdated -> session.userId
-        is SessionEvent.SessionStopped -> session.userId
-    }
 
 private suspend fun ServerSSESession.trySendEvent(event: ServerSentEvent): Boolean =
     try {

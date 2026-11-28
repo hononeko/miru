@@ -30,6 +30,7 @@ import kotlinx.coroutines.sync.withLock
 import app.hononeko.miru.logging.kv
 import org.slf4j.LoggerFactory
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
 
 private const val MILLIS_PER_SECOND = 1_000L
 private const val PERCENT_SCALE = 100.0
@@ -82,6 +83,10 @@ class SessionStateEngine(
     private val liveTechByKey = linkedMapOf<ActiveSessionKey, StreamTechnicalInfo>()
     private var recovered = false
 
+    // Bumped under the mutex after every change to which sessions exist, so a reader can tell whether the sessions
+    // it read here and the rows it read from `active_sessions` describe the same moment.
+    private val sessionSetVersion = AtomicLong()
+
     private val _sessionEvents =
         MutableSharedFlow<SessionEvent>(
             extraBufferCapacity = SESSION_EVENT_BUFFER_CAPACITY,
@@ -93,6 +98,9 @@ class SessionStateEngine(
         mutex.withLock {
             tracked.values.map { it.record }
         }
+
+    /** Changes whenever a session starts, ends, or is restored from `active_sessions`; never on a plain update. */
+    fun sessionSetVersion(): Long = sessionSetVersion.get()
 
     suspend fun currentLiveTechnical(): Map<ActiveSessionKey, StreamTechnicalInfo> =
         mutex.withLock {
@@ -254,6 +262,7 @@ class SessionStateEngine(
                     )
             }
             recovered = true
+            sessionSetVersion.incrementAndGet()
         }
         return serverId
     }
@@ -283,6 +292,7 @@ class SessionStateEngine(
         activeSessionRepository.upsert(record).bind()
         tracked[key] = TrackedSession(record = record, pausedDurationMs = 0L, fromCrashRecovery = false)
         liveTechByKey[key] = snapshot.technical
+        sessionSetVersion.incrementAndGet()
 
         return SessionEvent.SessionStarted(
             serverId = serverId,
@@ -423,6 +433,7 @@ class SessionStateEngine(
         activeSessionRepository.deleteByKey(record.key).bind()
         tracked.remove(record.key)
         liveTechByKey.remove(record.key)
+        sessionSetVersion.incrementAndGet()
 
         val wallSec = ((stoppedAtMs - record.startedAtMs).coerceAtLeast(0L) / MILLIS_PER_SECOND).toInt()
         val pausedSec = (pausedDurationMs / MILLIS_PER_SECOND).toInt().coerceAtMost(wallSec)

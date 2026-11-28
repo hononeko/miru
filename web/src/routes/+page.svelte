@@ -786,6 +786,7 @@
 				range={heatmapRange}
 				metric={analyticsMetric}
 				loading={loadingHeatmap}
+				serverId={selectedServerId}
 				onchangeRange={(next) => (heatmapRange = next)}
 			/>
 		</section>

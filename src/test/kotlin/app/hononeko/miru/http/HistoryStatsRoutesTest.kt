@@ -18,6 +18,7 @@ import app.hononeko.miru.domain.error.MiruError
 import app.hononeko.miru.miruModule
 import app.hononeko.miru.persistence.DatabaseFactory
 import app.hononeko.miru.persistence.DatabaseHandle
+import app.hononeko.miru.persistence.model.HourlyPlayBucket
 import app.hononeko.miru.persistence.model.MediaMetadataRecord
 import app.hononeko.miru.persistence.model.MediaServerRecord
 import app.hononeko.miru.persistence.model.PlaybackHistoryRecord
@@ -896,19 +897,23 @@ class HistoryStatsRoutesTest :
                 val endMs = firstDayMs + 7 * dayMs
                 val unfiltered =
                     object : PlaybackHistoryRepository by harness.historyRepo {
-                        override suspend fun forEachHeatmapSample(
+                        override suspend fun aggregatePlaysByUtcHour(
                             serverId: String?,
                             userIds: Set<String>?,
                             fromMs: Long?,
                             toMs: Long?,
-                            onRow: (stoppedAtMs: Long, watchedDurationSec: Int) -> Unit,
-                        ): Either<MiruError.PersistenceError, Unit> {
+                        ): Either<MiruError.PersistenceError, List<HourlyPlayBucket>> {
+                            val hourMs = 3_600_000L
                             // 2^32 days away is day 0 again when truncated to an Int
-                            listOf(Long.MIN_VALUE, firstDayMs - 1, endMs, firstDayMs + (1L shl 32) * dayMs, Long.MAX_VALUE)
-                                .forEach { onRow(it, 999) }
-                            onRow(firstDayMs, 60)
-                            onRow(endMs - 1, 30)
-                            return Unit.right()
+                            val outside =
+                                listOf(Long.MIN_VALUE, firstDayMs - 1, endMs, firstDayMs + (1L shl 32) * dayMs, Long.MAX_VALUE)
+                                    .map { HourlyPlayBucket(Math.floorDiv(it, hourMs), playCount = 1L, watchDurationSec = 999L) }
+                            val inside =
+                                listOf(
+                                    HourlyPlayBucket(firstDayMs / hourMs, playCount = 1L, watchDurationSec = 60L),
+                                    HourlyPlayBucket((endMs - 1) / hourMs, playCount = 1L, watchDurationSec = 30L),
+                                )
+                            return (outside + inside).right()
                         }
                     }
                 val service = HistoryAndStatsService(unfiltered, harness.userRepo, clock = { FIXED_NOW_MS })

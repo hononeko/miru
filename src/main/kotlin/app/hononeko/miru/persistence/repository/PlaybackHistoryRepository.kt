@@ -5,11 +5,13 @@ import app.hononeko.miru.persistence.DatabaseHandle
 import app.hononeko.miru.persistence.escapeLikePattern
 import app.hononeko.miru.persistence.exposedQuery
 import app.hononeko.miru.persistence.exposedReadQuery
+import app.hononeko.miru.persistence.model.ClientStatsGroup
 import app.hononeko.miru.persistence.model.ClientStatsRow
 import app.hononeko.miru.persistence.model.HistoryFilter
 import app.hononeko.miru.persistence.model.HistoryPage
 import app.hononeko.miru.persistence.model.HistorySortDirection
 import app.hononeko.miru.persistence.model.HistorySortField
+import app.hononeko.miru.persistence.model.HourlyPlayBucket
 import app.hononeko.miru.persistence.model.MediaPlayRow
 import app.hononeko.miru.persistence.model.MediaPlaySummary
 import app.hononeko.miru.persistence.model.OverviewStatsRow
@@ -24,10 +26,14 @@ import arrow.core.Either
 import org.jetbrains.exposed.v1.core.Case
 import org.jetbrains.exposed.v1.core.Coalesce
 import org.jetbrains.exposed.v1.core.Expression
+import org.jetbrains.exposed.v1.core.ExpressionWithColumnType
+import org.jetbrains.exposed.v1.core.IColumnType
 import org.jetbrains.exposed.v1.core.JoinType
 import org.jetbrains.exposed.v1.core.LikePattern
 import org.jetbrains.exposed.v1.core.LongColumnType
 import org.jetbrains.exposed.v1.core.Op
+import org.jetbrains.exposed.v1.core.QueryBuilder
+import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.castTo
@@ -55,7 +61,9 @@ import kotlin.math.roundToLong
 private const val IMPORT_KEY_QUERY_CHUNK_SIZE = 500
 private const val STATS_STREAM_FETCH_SIZE = 500
 private const val COMPLETION_ROUNDING_SCALE = 100.0
+private const val MILLIS_PER_UTC_HOUR = 3_600_000L
 
+@Suppress("TooManyFunctions")
 interface PlaybackHistoryRepository {
     suspend fun insert(record: PlaybackHistoryRecord): Either<MiruError.PersistenceError, PlaybackHistoryRecord>
 
@@ -214,6 +222,35 @@ interface PlaybackHistoryRepository {
             for (row in rows) {
                 onRow(row.stoppedAtMs, row.watchedDurationSec)
             }
+        }
+
+    /** Plays and watch time per UTC hour, for plays that stopped within the range, in no particular order. */
+    suspend fun aggregatePlaysByUtcHour(
+        serverId: String? = null,
+        userIds: Set<String>? = null,
+        fromMs: Long? = null,
+        toMs: Long? = null,
+    ): Either<MiruError.PersistenceError, List<HourlyPlayBucket>> {
+        val totalsByHour = LinkedHashMap<Long, LongArray>()
+        return forEachHeatmapSample(serverId = serverId, userIds = userIds, fromMs = fromMs, toMs = toMs) { stoppedAtMs, watchedSec ->
+            val totals = totalsByHour.getOrPut(Math.floorDiv(stoppedAtMs, MILLIS_PER_UTC_HOUR)) { LongArray(2) }
+            totals[0] += 1L
+            totals[1] += watchedSec.toLong()
+        }.map {
+            totalsByHour.map { (utcHour, totals) -> HourlyPlayBucket(utcHour, playCount = totals[0], watchDurationSec = totals[1]) }
+        }
+    }
+
+    /** The plays [forEachClientStatsRow] streams, grouped where every column except the watch time is the same. */
+    suspend fun forEachClientStatsGroup(
+        serverId: String? = null,
+        userIds: Set<String>? = null,
+        fromMs: Long? = null,
+        toMs: Long? = null,
+        onGroup: (ClientStatsGroup) -> Unit,
+    ): Either<MiruError.PersistenceError, Unit> =
+        forEachClientStatsRow(serverId = serverId, userIds = userIds, fromMs = fromMs, toMs = toMs) { row ->
+            onGroup(ClientStatsGroup(client = row, playCount = 1L, watchDurationSec = row.watchedDurationSec.toLong()))
         }
 }
 
@@ -602,6 +639,76 @@ class ExposedPlaybackHistoryRepository(
         }
     }
 
+    override suspend fun aggregatePlaysByUtcHour(
+        serverId: String?,
+        userIds: Set<String>?,
+        fromMs: Long?,
+        toMs: Long?,
+    ): Either<MiruError.PersistenceError, List<HourlyPlayBucket>> {
+        if (userIds != null && userIds.isEmpty()) {
+            return Either.Right(emptyList())
+        }
+
+        return readDatabase.exposedReadQuery("playback_history_aggregate_by_utc_hour") {
+            val utcHour = UtcBucketIndex(PlaybackHistoryTable.stoppedAtMs, MILLIS_PER_UTC_HOUR)
+            val plays = PlaybackHistoryTable.id.count()
+            val watchedSec = PlaybackHistoryTable.watchedDurationSec.castTo(LongColumnType()).sum()
+            PlaybackHistoryTable
+                .select(utcHour, plays, watchedSec)
+                .where { buildStatsCondition(serverId, userIds, fromMs, toMs) }
+                .groupBy(utcHour)
+                .map { row -> HourlyPlayBucket(row[utcHour], playCount = row[plays], watchDurationSec = row[watchedSec] ?: 0L) }
+        }
+    }
+
+    override suspend fun forEachClientStatsGroup(
+        serverId: String?,
+        userIds: Set<String>?,
+        fromMs: Long?,
+        toMs: Long?,
+        onGroup: (ClientStatsGroup) -> Unit,
+    ): Either<MiruError.PersistenceError, Unit> {
+        if (userIds != null && userIds.isEmpty()) {
+            return Either.Right(Unit)
+        }
+
+        return readDatabase.exposedReadQuery("playback_history_group_client_stats") {
+            // Exactly the columns the client breakdowns read, so plays in one group are counted alike
+            val groupedBy =
+                listOf(
+                    PlaybackHistoryTable.streamDecision,
+                    PlaybackHistoryTable.videoDecision,
+                    PlaybackHistoryTable.audioDecision,
+                    PlaybackHistoryTable.subtitleDecision,
+                    PlaybackHistoryTable.videoCodec,
+                    PlaybackHistoryTable.audioCodec,
+                    PlaybackHistoryTable.transcodeVideoCodec,
+                    PlaybackHistoryTable.transcodeAudioCodec,
+                    PlaybackHistoryTable.container,
+                    PlaybackHistoryTable.transcodeContainer,
+                    PlaybackHistoryTable.playerProduct,
+                    PlaybackHistoryTable.playerName,
+                    PlaybackHistoryTable.playerPlatform,
+                )
+            val plays = PlaybackHistoryTable.id.count()
+            val watchedSec = PlaybackHistoryTable.watchedDurationSec.castTo(LongColumnType()).sum()
+            PlaybackHistoryTable
+                .select(groupedBy + plays + watchedSec)
+                .where { buildStatsCondition(serverId, userIds, fromMs, toMs) }
+                .let { query -> groupedBy.fold(query) { grouped, column -> grouped.groupBy(column) } }
+                .fetchSize(STATS_STREAM_FETCH_SIZE)
+                .forEach { row ->
+                    onGroup(
+                        ClientStatsGroup(
+                            client = row.toGroupedClientStatsRow(),
+                            playCount = row[plays],
+                            watchDurationSec = row[watchedSec] ?: 0L,
+                        ),
+                    )
+                }
+        }
+    }
+
     /** Titles as the UI lists them: episodes under their show, in season and episode order. */
     private fun displayTitleSortExpressions(): List<Expression<*>> {
         val isEpisodeOfShow = (PlaybackHistoryTable.mediaType eq "episode") and PlaybackHistoryTable.grandparentTitle.isNotNull()
@@ -930,5 +1037,45 @@ class ExposedPlaybackHistoryRepository(
         stmt[PlaybackHistoryTable.location] = record.player.location
         stmt[PlaybackHistoryTable.startedAtMs] = record.startedAtMs
         stmt[PlaybackHistoryTable.stoppedAtMs] = record.stoppedAtMs
+    }
+}
+
+/** A [ClientStatsRow] for a group of plays, whose watch time is the group's and not on the row. */
+private fun ResultRow.toGroupedClientStatsRow(): ClientStatsRow =
+    ClientStatsRow(
+        watchedDurationSec = 0,
+        streamDecision = this[PlaybackHistoryTable.streamDecision],
+        videoDecision = this[PlaybackHistoryTable.videoDecision],
+        audioDecision = this[PlaybackHistoryTable.audioDecision],
+        subtitleDecision = this[PlaybackHistoryTable.subtitleDecision],
+        videoCodec = this[PlaybackHistoryTable.videoCodec],
+        audioCodec = this[PlaybackHistoryTable.audioCodec],
+        transcodeVideoCodec = this[PlaybackHistoryTable.transcodeVideoCodec],
+        transcodeAudioCodec = this[PlaybackHistoryTable.transcodeAudioCodec],
+        container = this[PlaybackHistoryTable.container],
+        transcodeContainer = this[PlaybackHistoryTable.transcodeContainer],
+        playerProduct = this[PlaybackHistoryTable.playerProduct],
+        playerName = this[PlaybackHistoryTable.playerName],
+        playerPlatform = this[PlaybackHistoryTable.playerPlatform],
+    )
+
+/**
+ * `floor(epochMillis / bucketMs)` in SQL, the same on SQLite and PostgreSQL. Integer division alone rounds towards
+ * zero, which puts plays before 1970 in the wrong bucket, so the remainder is first made non-negative.
+ */
+private class UtcBucketIndex(
+    private val epochMillis: Expression<Long>,
+    private val bucketMs: Long,
+) : ExpressionWithColumnType<Long>() {
+    override val columnType: IColumnType<Long> = LongColumnType()
+
+    override fun toQueryBuilder(queryBuilder: QueryBuilder) {
+        queryBuilder {
+            +"(("
+            +epochMillis
+            +" - ((("
+            +epochMillis
+            +" % $bucketMs) + $bucketMs) % $bucketMs)) / $bucketMs)"
+        }
     }
 }

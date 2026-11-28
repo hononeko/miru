@@ -96,4 +96,5 @@ class PostgresRepositoryIntegrationTest :
 
         include(repositoryContractSpec { requireHandle() })
         include(statsCacheContractSpec { requireHandle() })
+        include(analyticsPushdownParitySpec { requireHandle() })
     })

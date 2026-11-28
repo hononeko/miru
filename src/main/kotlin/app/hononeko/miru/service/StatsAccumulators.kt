@@ -10,6 +10,7 @@ import app.hononeko.miru.http.TopMediaStatDto
 import app.hononeko.miru.http.WrappedMonthStatDto
 import app.hononeko.miru.http.buildThumbUrl
 import app.hononeko.miru.library.LibraryNormalizer
+import app.hononeko.miru.persistence.model.ClientStatsGroup
 import app.hononeko.miru.persistence.model.ClientStatsRow
 import app.hononeko.miru.persistence.model.OverviewStatsRow
 import app.hononeko.miru.persistence.model.PlaybackHistoryStatsRow
@@ -71,6 +72,14 @@ internal class CountDuration(
 ) {
     fun add(durationSec: Long) {
         playCount++
+        watchDurationSec += durationSec
+    }
+
+    fun add(
+        plays: Long,
+        durationSec: Long,
+    ) {
+        playCount += plays
         watchDurationSec += durationSec
     }
 }
@@ -531,31 +540,34 @@ internal class ClientStatsAccumulator {
     private val audioCodecs = HashMap<String, CountDuration>()
     private val transcodeReasons = HashMap<String, CountDuration>()
 
-    fun record(row: ClientStatsRow) {
-        val duration = row.watchedDurationSec.toLong()
-        totalPlays++
+    /** Counts [ClientStatsGroup.playCount] plays that all read alike, as if each had been recorded on its own. */
+    fun record(group: ClientStatsGroup) {
+        val row = group.client
+        val plays = group.playCount
+        val duration = group.watchDurationSec
+        totalPlays += plays
         totalWatchDurationSec += duration
 
         val playerKey =
             (row.playerProduct?.takeIf { it.isNotBlank() } ?: row.playerName?.takeIf { it.isNotBlank() } ?: "Unknown")
                 .ifBlank { "Unknown" }
-        players.getOrPut(playerKey) { CountDuration() }.add(duration)
+        players.getOrPut(playerKey) { CountDuration() }.add(plays, duration)
 
         val platformKey = (row.playerPlatform?.takeIf { it.isNotBlank() } ?: "Unknown").ifBlank { "Unknown" }
-        platforms.getOrPut(platformKey) { CountDuration() }.add(duration)
+        platforms.getOrPut(platformKey) { CountDuration() }.add(plays, duration)
 
         val videoCodecKey = LibraryNormalizer.normalizeCodec(row.videoCodec).ifBlank { "Unknown" }
-        videoCodecs.getOrPut(videoCodecKey) { CountDuration() }.add(duration)
+        videoCodecs.getOrPut(videoCodecKey) { CountDuration() }.add(plays, duration)
 
         val audioCodecKey = LibraryNormalizer.normalizeCodec(row.audioCodec).ifBlank { "Unknown" }
-        audioCodecs.getOrPut(audioCodecKey) { CountDuration() }.add(duration)
+        audioCodecs.getOrPut(audioCodecKey) { CountDuration() }.add(plays, duration)
 
         val reasons = describeConversions(row)
         if (reasons.isNotEmpty()) {
-            nonDirectTotalPlays++
+            nonDirectTotalPlays += plays
             nonDirectTotalDuration += duration
             for (reason in reasons) {
-                transcodeReasons.getOrPut(reason) { CountDuration() }.add(duration)
+                transcodeReasons.getOrPut(reason) { CountDuration() }.add(plays, duration)
             }
         }
     }

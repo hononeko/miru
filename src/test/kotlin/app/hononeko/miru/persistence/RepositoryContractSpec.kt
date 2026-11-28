@@ -31,6 +31,8 @@ import app.hononeko.miru.persistence.model.MediaServerRecord
 import app.hononeko.miru.persistence.model.PlaybackHistoryRecord
 import app.hononeko.miru.persistence.model.PlayerRecord
 import app.hononeko.miru.persistence.model.ResolvedLibraryAccess
+import app.hononeko.miru.persistence.model.StaleMediaItemRecord
+import app.hononeko.miru.persistence.model.StaleMediaReportRecord
 import app.hononeko.miru.persistence.model.StaleMediaSort
 import app.hononeko.miru.persistence.model.StreamTechRecord
 import app.hononeko.miru.persistence.model.StreamTerminationAuditRecord
@@ -150,6 +152,8 @@ fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
         libraryGrandparentTests { ctx }
         mediaPlayTests { ctx }
         staleMediaTests { ctx }
+        staleMediaOrderingTests { ctx }
+        queryIndexTests { ctx }
         cascadeTests { ctx }
         disconnectAndRemoveCascadeTests { ctx }
         authAccountTests { ctx }
@@ -820,6 +824,58 @@ private fun FunSpecRootScope.playbackHistorySortTieTests(ctxProvider: () -> Cont
                         .map { it.id } shouldContainExactly listOf("t-c", "t-b", "t-a")
                 }
             }
+        }
+
+        test("lists plays that stopped at the same time by id when sorted by when they stopped, and pages through them") {
+            val ctx = ctxProvider()
+            ctx.servers.upsert(sampleServer(id = "srv-1")).shouldBeRight()
+            ctx.users.upsert(sampleUser(id = "u-1", serverId = "srv-1", externalUserId = "1", username = "alice")).shouldBeRight()
+            // Written out of id order, so no tie can fall back to the order the rows were written in
+            listOf(
+                Triple("p-e", 50_000L, 900),
+                Triple("p-b", 40_000L, 600),
+                Triple("p-d", 50_000L, 300),
+                Triple("p-a", 40_000L, 600),
+                Triple("p-c", 30_000L, 600),
+            ).forEach { (id, stoppedAtMs, watchedDurationSec) ->
+                ctx.history
+                    .insert(
+                        contractMediaPlay(
+                            id = id,
+                            userId = "u-1",
+                            ratingKey = "m-1",
+                            mediaType = "movie",
+                            title = "Rewatched",
+                            startedAtMs = 25_000L,
+                            stoppedAtMs = stoppedAtMs,
+                            watchedDurationSec = watchedDurationSec,
+                            completionPercent = 100.0,
+                            decision = "direct_play",
+                        ),
+                    ).shouldBeRight()
+            }
+
+            suspend fun ids(
+                sortBy: HistorySortField,
+                sortDir: HistorySortDirection,
+                limit: Int = 50,
+                offset: Int = 0,
+            ): List<String> =
+                ctx.history
+                    .query(HistoryFilter(sortBy = sortBy, sortDir = sortDir, limit = limit, offset = offset))
+                    .shouldBeRight()
+                    .items
+                    .map { it.id }
+
+            ids(HistorySortField.STOPPED_AT, HistorySortDirection.DESC) shouldContainExactly listOf("p-d", "p-e", "p-a", "p-b", "p-c")
+            ids(HistorySortField.STOPPED_AT, HistorySortDirection.ASC) shouldContainExactly listOf("p-c", "p-a", "p-b", "p-d", "p-e")
+            ids(HistorySortField.STOPPED_AT, HistorySortDirection.DESC, limit = 2, offset = 1) shouldContainExactly listOf("p-e", "p-a")
+            ids(HistorySortField.STOPPED_AT, HistorySortDirection.ASC, limit = 2, offset = 2) shouldContainExactly listOf("p-b", "p-d")
+            // Other sorts still list their ties newest first, then by id
+            ids(HistorySortField.WATCHED_DURATION, HistorySortDirection.DESC) shouldContainExactly
+                listOf("p-e", "p-a", "p-b", "p-c", "p-d")
+            ids(HistorySortField.WATCHED_DURATION, HistorySortDirection.ASC) shouldContainExactly
+                listOf("p-d", "p-a", "p-b", "p-c", "p-e")
         }
     }
 }
@@ -1604,6 +1660,197 @@ private suspend fun seedStaleTestHistory(
                 stoppedAtMs = nowMs - 200L * dayMs,
             ),
         ).shouldBeRight()
+}
+
+private fun FunSpecRootScope.staleMediaOrderingTests(ctxProvider: () -> ContractContext) {
+    context("LibraryRepository stale media ordering") {
+        test("keeps the totals, sort orders, tie-breaks and pages of the stale media report") {
+            val ctx = ctxProvider()
+            ctx.servers.upsert(sampleServer(id = "srv-1")).shouldBeRight()
+            ctx.servers.upsert(sampleServer(id = "srv-2")).shouldBeRight()
+            ctx.users.upsert(sampleUser(id = "u-1", serverId = "srv-1", externalUserId = "1")).shouldBeRight()
+            ctx.users.upsert(sampleUser(id = "u-2", serverId = "srv-2", externalUserId = "2")).shouldBeRight()
+            val dayMs = 86_400_000L
+            val nowMs = 1_000L * dayMs
+            val cutoffMs = nowMs - 180L * dayMs
+            val items = buildStaleOrderingItems(nowMs, dayMs)
+            ctx.library.upsertMediaItems(items).shouldBeRight() shouldBe items.size
+            seedStaleOrderingHistory(ctx, nowMs, dayMs)
+
+            suspend fun report(
+                sort: StaleMediaSort,
+                limit: Int = 100,
+                unwatchedCutoffMs: Long? = cutoffMs,
+                neverPlayedOnly: Boolean = false,
+            ): StaleMediaReportRecord =
+                ctx.library
+                    .findStaleMedia("srv-1", "sec-stale", unwatchedCutoffMs, neverPlayedOnly, sort, limit)
+                    .shouldBeRight()
+
+            // Ties on size or age fall back to when items were added, then to the rating key
+            val expectedOrders =
+                mapOf(
+                    StaleMediaSort.SIZE_DESC to "a b c h i f n j k m l d e",
+                    StaleMediaSort.SIZE_ASC to "d e l k m j n f h i a b c",
+                    StaleMediaSort.AGE_DESC to "n d e i a b c f k m l h j",
+                    StaleMediaSort.AGE_ASC to "j h l k m f c a b i n d e",
+                ).mapValues { (_, keys) -> keys.split(" ").map { "st-$it" } }
+            for ((sort, keys) in expectedOrders) {
+                for (limit in listOf(100, 13, 4, 1)) {
+                    val page = report(sort, limit)
+                    page.items.map { it.item.ratingKey } shouldContainExactly keys.take(limit)
+                    page.totalStaleCount shouldBe 13
+                    page.neverPlayedCount shouldBe 8
+                    page.totalReclaimableBytes shouldBe 61_000_000_000L
+                }
+            }
+
+            // Every column of each item, with the count and the last of its plays on srv-1 alone
+            val playsOnServer =
+                mapOf(
+                    "st-f" to (2L to nowMs - 260L * dayMs),
+                    "st-h" to (3L to nowMs - 190L * dayMs),
+                    "st-j" to (1L to cutoffMs),
+                    "st-k" to (1L to nowMs - 200L * dayMs),
+                    "st-m" to (1L to nowMs - 200L * dayMs),
+                )
+            val itemsByKey = items.filter { it.serverId == "srv-1" }.associateBy { it.ratingKey }
+            report(StaleMediaSort.SIZE_DESC).items shouldContainExactly
+                expectedOrders.getValue(StaleMediaSort.SIZE_DESC).map { key ->
+                    StaleMediaItemRecord(
+                        item = itemsByKey.getValue(key),
+                        playCount = playsOnServer[key]?.first ?: 0L,
+                        lastPlayedAtMs = playsOnServer[key]?.second,
+                    )
+                }
+
+            report(StaleMediaSort.AGE_DESC, limit = 0) shouldBe
+                StaleMediaReportRecord(
+                    items = emptyList(),
+                    totalStaleCount = 13,
+                    totalReclaimableBytes = 61_000_000_000L,
+                    neverPlayedCount = 8,
+                )
+
+            val neverPlayed = report(StaleMediaSort.SIZE_DESC, unwatchedCutoffMs = null, neverPlayedOnly = true)
+            neverPlayed.items.map { it.item.ratingKey } shouldContainExactly
+                listOf("st-a", "st-b", "st-c", "st-i", "st-n", "st-l", "st-d", "st-e")
+            neverPlayed.totalStaleCount shouldBe 8
+            neverPlayed.neverPlayedCount shouldBe 8
+            neverPlayed.totalReclaimableBytes shouldBe 42_000_000_000L
+
+            val unplayed = report(StaleMediaSort.AGE_DESC, limit = 3, unwatchedCutoffMs = null)
+            unplayed.items.map { it.item.ratingKey } shouldContainExactly listOf("st-n", "st-d", "st-e")
+            unplayed.totalStaleCount shouldBe 8
+            unplayed.neverPlayedCount shouldBe 8
+            unplayed.totalReclaimableBytes shouldBe 42_000_000_000L
+
+            ctx.library.findStaleMedia("srv-1", "sec-empty", cutoffMs).shouldBeRight() shouldBe
+                StaleMediaReportRecord(items = emptyList(), totalStaleCount = 0, totalReclaimableBytes = 0L, neverPlayedCount = 0)
+        }
+    }
+}
+
+private fun buildStaleOrderingItems(
+    nowMs: Long,
+    dayMs: Long,
+): List<MediaItemCacheRecord> {
+    fun item(
+        ratingKey: String,
+        gigabytes: Long?,
+        addedDaysAgo: Long,
+        serverId: String = "srv-1",
+        sectionKey: String = "sec-stale",
+    ) = MediaItemCacheRecord(
+        serverId = serverId,
+        ratingKey = ratingKey,
+        sectionKey = sectionKey,
+        mediaType = "movie",
+        title = "Movie $ratingKey",
+        year = 2000 + (addedDaysAgo % 20).toInt(),
+        thumbPath = "/library/metadata/$ratingKey/thumb",
+        durationMs = 5_400_000L + addedDaysAgo,
+        tech =
+            MediaItemTechRecord(
+                fileSizeBytes = gigabytes?.let { it * 1_000_000_000L },
+                videoResolution = "1080p",
+                videoCodec = "h264",
+                audioCodec = "aac",
+            ),
+        addedAtMs = nowMs - addedDaysAgo * dayMs,
+        updatedAtMs = nowMs,
+    )
+
+    // Out of rating key order, so no tie can fall back to the order the rows were written in
+    return listOf(
+        item("st-m", 2, 250),
+        item("st-b", 10, 400),
+        item("st-e", 0, 500),
+        item("st-a", 10, 400),
+        item("st-k", 2, 250),
+        item("st-d", null, 500),
+        item("st-n", 4, 500),
+        item("st-c", 10, 300),
+        item("st-i", 7, 450),
+        item("st-h", 7, 700).copy(mediaType = "episode", parentTitle = "Season 1", grandparentTitle = "Show H"),
+        item("st-f", 5, 350),
+        item("st-l", 1, 200),
+        item("st-j", 3, 365),
+        item("st-g", 5, 600),
+        item("st-other", 50, 900, sectionKey = "sec-other"),
+        item("st-a", 50, 900, serverId = "srv-2"),
+        item("st-x", 50, 900, serverId = "srv-2"),
+    )
+}
+
+private suspend fun seedStaleOrderingHistory(
+    ctx: ContractContext,
+    nowMs: Long,
+    dayMs: Long,
+) {
+    val plays =
+        listOf(
+            Triple("srv-1", "st-f", 300L),
+            Triple("srv-1", "st-f", 260L),
+            Triple("srv-1", "st-g", 100L),
+            Triple("srv-1", "st-h", 650L),
+            Triple("srv-1", "st-h", 400L),
+            Triple("srv-1", "st-h", 190L),
+            Triple("srv-1", "st-j", 180L),
+            Triple("srv-1", "st-k", 200L),
+            Triple("srv-1", "st-m", 200L),
+            // Recent plays of the same rating keys on another server leave the srv-1 items stale
+            Triple("srv-2", "st-h", 10L),
+            Triple("srv-2", "st-i", 5L),
+        )
+    plays.forEachIndexed { index, (serverId, ratingKey, daysAgo) ->
+        val stoppedAtMs = nowMs - daysAgo * dayMs
+        ctx.history
+            .insert(
+                sampleHistory(
+                    id = "h-stale-order-$index",
+                    serverId = serverId,
+                    userId = if (serverId == "srv-1") "u-1" else "u-2",
+                    ratingKey = ratingKey,
+                    startedAtMs = stoppedAtMs - 3_600_000L,
+                    stoppedAtMs = stoppedAtMs,
+                ),
+            ).shouldBeRight()
+    }
+}
+
+private fun FunSpecRootScope.queryIndexTests(ctxProvider: () -> ContractContext) {
+    context("Query indexes") {
+        test("indexes plays by when they stopped and by server and rating key, and library items by rating key") {
+            val handle = ctxProvider().handle
+            indexColumns(handle, "idx_playback_history_stopped_at") shouldContainExactly
+                listOf("stopped_at_ms DESC", "id ASC")
+            indexColumns(handle, "idx_playback_history_server_rating_stopped") shouldContainExactly
+                listOf("server_id ASC", "rating_key ASC", "stopped_at_ms DESC")
+            indexColumns(handle, "idx_media_items_cache_rating_key") shouldContainExactly
+                listOf("rating_key ASC", "server_id ASC", "section_key ASC")
+        }
+    }
 }
 
 private fun FunSpecRootScope.cascadeTests(ctxProvider: () -> ContractContext) {

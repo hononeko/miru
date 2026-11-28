@@ -378,9 +378,15 @@ class ExposedPlaybackHistoryRepository(
                     val matching = PlaybackHistoryTable.selectAll().where { condition }
                     sortExpressions
                         .fold(matching) { query, expression -> query.orderBy(expression to sortOrder) }
-                        // Plays that tie, e.g. rewatches or 100% completions, are listed newest first
-                        .orderBy(PlaybackHistoryTable.stoppedAtMs to SortOrder.DESC)
-                        .orderBy(PlaybackHistoryTable.id to SortOrder.ASC)
+                        // Plays that tie, e.g. rewatches or 100% completions, are listed newest first. Repeating the
+                        // stopped_at_ms key would keep SQLite from reading the default page in index order.
+                        .let { sorted ->
+                            if (filter.sortBy == HistorySortField.STOPPED_AT) {
+                                sorted
+                            } else {
+                                sorted.orderBy(PlaybackHistoryTable.stoppedAtMs to SortOrder.DESC)
+                            }
+                        }.orderBy(PlaybackHistoryTable.id to SortOrder.ASC)
                         .limit(safeLimit)
                         .offset(safeOffset.toLong())
                         .map { it.toPlaybackHistoryRecord() }

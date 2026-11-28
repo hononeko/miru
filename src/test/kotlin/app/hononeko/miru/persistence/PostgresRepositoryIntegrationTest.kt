@@ -79,5 +79,20 @@ class PostgresRepositoryIntegrationTest :
             )
         }
 
+        test("V16 and V17 index the plays and library items an existing database already has") {
+            val databaseName = "miru_query_indexes"
+            DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { conn ->
+                conn.createStatement().use { it.executeUpdate("CREATE DATABASE $databaseName") }
+            }
+            assertQueryIndexesBuildOverExistingRows(
+                DatabaseConfig.Postgres(
+                    url = container.jdbcUrl.replace("/${container.databaseName}", "/$databaseName"),
+                    user = container.username,
+                    password = container.password,
+                    maxPoolSize = 2,
+                ),
+            )
+        }
+
         include(repositoryContractSpec { requireHandle() })
     })

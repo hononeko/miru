@@ -19,6 +19,8 @@ import io.kotest.assertions.arrow.core.shouldBeRight
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.string.shouldContain
+import io.kotest.matchers.string.shouldNotContain
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -85,6 +87,50 @@ class SqliteRepositoryTest :
             } finally {
                 dir.toFile().deleteRecursively()
             }
+        }
+
+        test("V16 and V17 index the plays and library items an existing database already has") {
+            val dir = Files.createTempDirectory("miru-sqlite-query-indexes-")
+            try {
+                assertQueryIndexesBuildOverExistingRows(DatabaseConfig.Sqlite(dir.resolve("miru.db").toString()))
+            } finally {
+                dir.toFile().deleteRecursively()
+            }
+        }
+
+        test("plans unscoped stats, library access checks and stale media plays on the query indexes") {
+            val db = requireHandle()
+
+            fun plan(sql: String): String =
+                db.dataSource.connection.use { conn ->
+                    conn.createStatement().use { stmt ->
+                        stmt.executeQuery("EXPLAIN QUERY PLAN $sql").use { rs ->
+                            buildList { while (rs.next()) add(rs.getString("detail")) }.joinToString("\n")
+                        }
+                    }
+                }
+
+            // The shape of the default history page: read in order from the index, with no sort
+            val historyPage = plan("SELECT * FROM playback_history WHERE 1 ORDER BY stopped_at_ms DESC, id ASC LIMIT 50 OFFSET 50")
+            historyPage shouldContain "USING INDEX idx_playback_history_stopped_at"
+            historyPage shouldNotContain "TEMP B-TREE"
+            // The shapes of the unscoped overview, heatmap and client stats reads
+            plan(
+                "SELECT user_id, title FROM playback_history WHERE stopped_at_ms >= 1 ORDER BY stopped_at_ms ASC, id ASC",
+            ) shouldContain "USING INDEX idx_playback_history_stopped_at"
+            plan(
+                "SELECT stopped_at_ms, watched_duration_sec FROM playback_history WHERE stopped_at_ms >= 1 AND stopped_at_ms <= 2",
+            ) shouldContain "USING INDEX idx_playback_history_stopped_at"
+            plan("SELECT server_id, section_key FROM media_items_cache WHERE rating_key = 'rk-1'") shouldContain
+                "USING COVERING INDEX idx_media_items_cache_rating_key"
+            // The plays that the stale media report aggregates per item, read in rating key order from the index alone
+            val stalePlays =
+                plan(
+                    "SELECT rating_key, COUNT(*) AS play_count, MAX(stopped_at_ms) AS last_played_at_ms " +
+                        "FROM playback_history WHERE server_id = 'srv-1' GROUP BY rating_key",
+                )
+            stalePlays shouldContain "USING COVERING INDEX idx_playback_history_server_rating_stopped"
+            stalePlays shouldNotContain "TEMP B-TREE"
         }
 
         test("findSectionKeysByRatingKey unions cache, playback history, and active sessions") {

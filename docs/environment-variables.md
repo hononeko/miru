@@ -75,6 +75,15 @@ Miru can monitor a Jellyfin server alongside Plex or standalone. Set `JELLYFIN_U
 | `RESUME_MERGE_WINDOW_SECONDS` | `120` | When a user resumes the same item on the same player within this many seconds of stopping, Miru extends the earlier history entry instead of adding a new one. `0` turns merging off. |
 | `WATCHED_THRESHOLD_PERCENT` | `85` | Progress, in percent, at which a play counts as watched. From 1 to 100. Also the default for Tautulli imports. |
 
+## Stats cache
+
+Miru keeps the results of stats requests (overview, user, heatmap, clients and wrapped) in memory. It drops them all as soon as it records, merges or imports a play, removes a server, or changes a viewer's name, account links or account profile, and it never gives one viewer a result computed for what another may see.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `STATS_CACHE_MAX_MB` | `16` | Memory, in MiB, for cached stats results, estimated from their size. From 0 to 1024; `0` turns the cache off. A single result larger than a quarter of this is not cached. |
+| `STATS_CACHE_TTL_SECONDS` | `300` | The longest, in seconds, that a cached stats result is kept, from 1 to 86400. It bounds how far rolling ranges such as the last 7 days lag behind the clock, and how soon changes made outside the running server show, such as the `import` command run against its database. |
+
 ## Tautulli API
 
 | Variable | Default | Description |

@@ -57,6 +57,7 @@ import app.hononeko.miru.metrics.MiruMetricsService
 import app.hononeko.miru.persistence.DatabaseFactory
 import app.hononeko.miru.persistence.DatabaseHandle
 import app.hononeko.miru.persistence.DatabaseReadinessCheck
+import app.hononeko.miru.persistence.repository.AuthAccountRepository
 import app.hononeko.miru.persistence.repository.AuthSessionRepository
 import app.hononeko.miru.persistence.repository.ExposedActiveSessionRepository
 import app.hononeko.miru.persistence.repository.ExposedApiKeyRepository
@@ -71,6 +72,9 @@ import app.hononeko.miru.persistence.repository.ExposedUserPreferencesRepository
 import app.hononeko.miru.persistence.repository.ExposedUserRepository
 import app.hononeko.miru.persistence.repository.ExposedWebhookDeliveryRepository
 import app.hononeko.miru.persistence.repository.ExposedWebhookTargetRepository
+import app.hononeko.miru.persistence.repository.MediaServerRepository
+import app.hononeko.miru.persistence.repository.PlaybackHistoryRepository
+import app.hononeko.miru.persistence.repository.UserRepository
 import app.hononeko.miru.service.HistoryAndStatsService
 import app.hononeko.miru.service.LibraryQueryService
 import app.hononeko.miru.service.LibrarySyncTrigger
@@ -78,11 +82,14 @@ import app.hononeko.miru.service.MediaDetailsService
 import app.hononeko.miru.service.MediaSectionAccessChecker
 import app.hononeko.miru.service.MediaServerManagementService
 import app.hononeko.miru.service.PlexUserSyncService
+import app.hononeko.miru.service.StatsCacheListener
+import app.hononeko.miru.service.StatsResultCache
 import app.hononeko.miru.service.StreamControlService
 import app.hononeko.miru.service.StreamGuardrailRunner
 import app.hononeko.miru.service.StreamsAndUsersService
 import app.hononeko.miru.service.TautulliCompatService
 import app.hononeko.miru.service.WebhookService
+import app.hononeko.miru.service.invalidatingStats
 import app.hononeko.miru.session.SessionEvent
 import app.hononeko.miru.webhook.WebhookDispatcher
 import app.hononeko.miru.webhook.WebhookEventEvaluator
@@ -138,6 +145,7 @@ private val DEFAULT_SSE_KEEPALIVE_INTERVAL = 15.seconds
 private const val COMPRESSION_MIN_SIZE_BYTES = 1024L
 private const val METRICS_SERVER_STOP_GRACE_MS = 500L
 private const val METRICS_SERVER_STOP_TIMEOUT_MS = 2_000L
+private const val MILLIS_PER_SECOND = 1_000L
 
 val MiruJson: Json =
     Json {
@@ -181,10 +189,11 @@ private fun runServer() {
     val appVersion = resolveAppVersion()
     val appConfig = loadStartupConfig()
     val databaseHandle = initDatabase(appConfig)
-    val mediaServerRepository = ExposedMediaServerRepository(databaseHandle)
-    val userRepository = ExposedUserRepository(databaseHandle)
-    val playbackHistoryRepository = ExposedPlaybackHistoryRepository(databaseHandle)
-    val accountRepository = ExposedAuthAccountRepository(databaseHandle)
+    val statsCache = createStatsResultCache(appConfig)
+    val mediaServerRepository = ExposedMediaServerRepository(databaseHandle).invalidatingStats(statsCache)
+    val userRepository = ExposedUserRepository(databaseHandle).invalidatingStats(statsCache)
+    val playbackHistoryRepository = ExposedPlaybackHistoryRepository(databaseHandle).invalidatingStats(statsCache)
+    val accountRepository = ExposedAuthAccountRepository(databaseHandle).invalidatingStats(statsCache)
     val sessionRepository = ExposedAuthSessionRepository(databaseHandle)
     val emailLinker = EmailMediaUserLinker(accountRepository, userRepository, appConfig.auth)
     val authService = initAuthService(appConfig, databaseHandle, accountRepository, sessionRepository, userRepository, emailLinker)
@@ -196,6 +205,7 @@ private fun runServer() {
             userRepository = userRepository,
             mediaServerRepository = mediaServerRepository,
             authAccountRepository = accountRepository,
+            statsCache = statsCache,
         )
     val tautulliImporterService =
         createTautulliImporterService(mediaServerRepository, userRepository, playbackHistoryRepository, appConfig)
@@ -228,6 +238,7 @@ private fun runServer() {
             mediaServerRegistry = wiring.mediaServerRegistry,
             librarySyncEvents = mergedLibrarySyncEvents,
         )
+    metricsRuntime?.service?.let { statsCache.listener = it.statsCacheListener() }
     val mediaServerManagementService =
         createMediaServerManagementService(
             appConfig = appConfig,
@@ -301,16 +312,16 @@ internal fun createCoreServiceWiring(
     appConfig: AppConfig,
     appVersion: String,
     databaseHandle: DatabaseHandle,
-    mediaServerRepository: ExposedMediaServerRepository,
-    userRepository: ExposedUserRepository,
-    playbackHistoryRepository: ExposedPlaybackHistoryRepository,
+    mediaServerRepository: MediaServerRepository,
+    userRepository: UserRepository,
+    playbackHistoryRepository: PlaybackHistoryRepository,
     sessionRepository: ExposedAuthSessionRepository,
     emailLinker: EmailMediaUserLinker,
-    accountRepository: ExposedAuthAccountRepository? = null,
+    accountRepository: AuthAccountRepository? = null,
     onExpiredSessionsCleaned: (Long) -> Unit = {},
 ): CoreServiceWiring {
     val (plexRuntimeManager, jellyfinRuntimeManager, mediaServerRegistry) =
-        createMediaServerRuntimes(appConfig, databaseHandle, mediaServerRepository)
+        createMediaServerRuntimes(appConfig, databaseHandle, mediaServerRepository, userRepository, playbackHistoryRepository)
     val libraryRepository = ExposedLibraryRepository(databaseHandle)
     val sectionAccessChecker =
         MediaSectionAccessChecker(
@@ -420,7 +431,7 @@ internal fun createCoreServiceWiring(
 private fun createMediaServerManagementService(
     appConfig: AppConfig,
     wiring: CoreServiceWiring,
-    mediaServerRepository: ExposedMediaServerRepository,
+    mediaServerRepository: MediaServerRepository,
     metricsRuntime: MetricsRuntime?,
     authService: AuthService,
 ): MediaServerManagementService =
@@ -442,7 +453,9 @@ private fun createMediaServerManagementService(
 private fun createMediaServerRuntimes(
     appConfig: AppConfig,
     databaseHandle: DatabaseHandle,
-    mediaServerRepository: ExposedMediaServerRepository,
+    mediaServerRepository: MediaServerRepository,
+    userRepository: UserRepository,
+    playbackHistoryRepository: PlaybackHistoryRepository,
 ): Triple<PlexRuntimeManager, JellyfinRuntimeManager, MediaServerRegistry> {
     val plexRuntimeManager =
         PlexRuntimeManager(
@@ -450,6 +463,8 @@ private fun createMediaServerRuntimes(
             databaseHandle = databaseHandle,
             sessionConfig = appConfig.session,
             mediaServerRepository = mediaServerRepository,
+            userRepository = userRepository,
+            playbackHistoryRepository = playbackHistoryRepository,
         )
     val jellyfinRuntimeManager =
         JellyfinRuntimeManager(
@@ -458,6 +473,8 @@ private fun createMediaServerRuntimes(
             sessionConfig = appConfig.session,
             mediaServerRepository = mediaServerRepository,
             encryptionKey = appConfig.plex.encryptionKey,
+            userRepository = userRepository,
+            playbackHistoryRepository = playbackHistoryRepository,
         )
     val mediaServerRegistry =
         MediaServerRegistry(
@@ -471,11 +488,11 @@ private fun createMediaServerRuntimes(
 @Suppress("LongParameterList")
 private fun createMediaDetailsService(
     plexRuntimeManager: PlexRuntimeManager,
-    playbackHistoryRepository: ExposedPlaybackHistoryRepository,
+    playbackHistoryRepository: PlaybackHistoryRepository,
     libraryRepository: ExposedLibraryRepository,
     sectionAccessChecker: MediaSectionAccessChecker,
     mediaServerRegistry: MediaServerRegistry,
-    mediaServerRepository: ExposedMediaServerRepository,
+    mediaServerRepository: MediaServerRepository,
 ): MediaDetailsService =
     MediaDetailsService(
         mediaServerAdapter = plexRuntimeManager.adapter,
@@ -491,7 +508,7 @@ private fun createPlexOAuthService(
     appConfig: AppConfig,
     plexOAuthHttpClient: LazyCloseableHttpClient,
     appVersion: String,
-    mediaServerRepository: ExposedMediaServerRepository,
+    mediaServerRepository: MediaServerRepository,
     plexRuntimeManager: PlexRuntimeManager,
 ): PlexOAuthService =
     PlexOAuthService(
@@ -514,7 +531,7 @@ private fun createWebhookServices(
     databaseHandle: DatabaseHandle,
     mediaServerRegistry: MediaServerRegistry,
     streamControlService: StreamControlService,
-    userRepository: ExposedUserRepository,
+    userRepository: UserRepository,
     appConfig: AppConfig,
     appVersion: String,
 ): WebhookServicesBundle {
@@ -570,11 +587,11 @@ private fun createWebhookServices(
 @Suppress("LongParameterList")
 internal fun createArtworkProxyService(
     plexRuntimeManager: PlexRuntimeManager,
-    userRepository: ExposedUserRepository,
+    userRepository: UserRepository,
     libraryRepository: ExposedLibraryRepository,
     sectionAccessChecker: MediaSectionAccessChecker,
     mediaServerRegistry: MediaServerRegistry? = null,
-    authAccountRepository: ExposedAuthAccountRepository? = null,
+    authAccountRepository: AuthAccountRepository? = null,
 ): ArtworkProxyService =
     ArtworkProxyService(
         adapter = plexRuntimeManager.adapter,
@@ -588,10 +605,19 @@ internal fun createArtworkProxyService(
         authAccountRepository = authAccountRepository,
     )
 
+private fun MiruMetricsService.statsCacheListener(): StatsCacheListener =
+    StatsCacheListener { endpoint, hit -> recordStatsCacheLookup(endpoint.label, hit) }
+
+private fun createStatsResultCache(appConfig: AppConfig): StatsResultCache =
+    StatsResultCache(
+        maxBytes = StatsResultCache.megabytes(appConfig.statsCache.maxMegabytes),
+        ttlMs = appConfig.statsCache.ttlSeconds * MILLIS_PER_SECOND,
+    )
+
 private fun createTautulliImporterService(
-    mediaServerRepository: ExposedMediaServerRepository,
-    userRepository: ExposedUserRepository,
-    playbackHistoryRepository: ExposedPlaybackHistoryRepository,
+    mediaServerRepository: MediaServerRepository,
+    userRepository: UserRepository,
+    playbackHistoryRepository: PlaybackHistoryRepository,
     appConfig: AppConfig,
 ): TautulliImporterService =
     TautulliImporterService(
@@ -605,11 +631,11 @@ private fun createTautulliImporterService(
 @Suppress("LongParameterList")
 private fun createStreamsAndUsersService(
     activeSessionRepository: ExposedActiveSessionRepository,
-    userRepository: ExposedUserRepository,
-    playbackHistoryRepository: ExposedPlaybackHistoryRepository,
-    mediaServerRepository: ExposedMediaServerRepository,
+    userRepository: UserRepository,
+    playbackHistoryRepository: PlaybackHistoryRepository,
+    mediaServerRepository: MediaServerRepository,
     mediaServerRegistry: MediaServerRegistry,
-    authAccountRepository: ExposedAuthAccountRepository? = null,
+    authAccountRepository: AuthAccountRepository? = null,
 ): StreamsAndUsersService =
     StreamsAndUsersService(
         activeSessionRepository = activeSessionRepository,
@@ -624,7 +650,7 @@ private fun createStreamsAndUsersService(
 private fun createStreamControlService(
     plexRuntimeManager: PlexRuntimeManager,
     activeSessionRepository: ExposedActiveSessionRepository,
-    userRepository: ExposedUserRepository,
+    userRepository: UserRepository,
     databaseHandle: DatabaseHandle,
     appConfig: AppConfig,
     mediaServerRegistry: MediaServerRegistry,
@@ -1108,9 +1134,9 @@ private fun initDatabase(appConfig: AppConfig): DatabaseHandle =
 /** Gives accounts SSO links by email the profile of their user on the first-connected server. */
 private fun attachAccountProfileAutoImporter(
     authService: AuthService,
-    accountRepository: ExposedAuthAccountRepository,
-    userRepository: ExposedUserRepository,
-    mediaServerRepository: ExposedMediaServerRepository,
+    accountRepository: AuthAccountRepository,
+    userRepository: UserRepository,
+    mediaServerRepository: MediaServerRepository,
     emailLinker: EmailMediaUserLinker,
     wiring: CoreServiceWiring,
 ) {
@@ -1127,9 +1153,9 @@ private fun attachAccountProfileAutoImporter(
 private fun initAuthService(
     appConfig: AppConfig,
     databaseHandle: DatabaseHandle,
-    accountRepository: ExposedAuthAccountRepository,
+    accountRepository: AuthAccountRepository,
     sessionRepository: ExposedAuthSessionRepository,
-    userRepository: ExposedUserRepository,
+    userRepository: UserRepository,
     emailLinker: EmailMediaUserLinker,
 ): AuthService {
     val authService =
@@ -1156,7 +1182,7 @@ private fun initAuthService(
 private fun initOidcServices(
     appConfig: AppConfig,
     authService: AuthService,
-    accountRepository: ExposedAuthAccountRepository,
+    accountRepository: AuthAccountRepository,
     emailLinker: EmailMediaUserLinker,
 ): Pair<OidcClient?, OidcAuthService?> {
     if (!appConfig.auth.oidcEnabled) return null to null

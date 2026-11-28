@@ -24,6 +24,7 @@ import app.hononeko.miru.persistence.repository.MediaServerRepository
 import app.hononeko.miru.persistence.repository.PlaybackHistoryRepository
 import app.hononeko.miru.persistence.repository.UserRepository
 import arrow.core.Either
+import arrow.core.raise.Raise
 import arrow.core.raise.either
 import arrow.core.raise.ensure
 import java.time.Instant
@@ -94,6 +95,7 @@ class HistoryAndStatsService(
     private val clock: () -> Long = System::currentTimeMillis,
     private val mediaServerRepository: MediaServerRepository? = null,
     private val authAccountRepository: AuthAccountRepository? = null,
+    private val statsCache: StatsResultCache? = null,
 ) {
     suspend fun queryHistory(
         principal: MiruPrincipal,
@@ -178,7 +180,7 @@ class HistoryAndStatsService(
             record.toHistoryDetailResponse(user = user, server = server)
         }
 
-    suspend fun getOverviewStats(
+    private suspend fun computeOverviewStats(
         principal: MiruPrincipal,
         rangeRaw: String?,
         metricRaw: String? = null,
@@ -231,7 +233,7 @@ class HistoryAndStatsService(
             )
         }
 
-    suspend fun getUserStats(
+    private suspend fun computeUserStats(
         principal: MiruPrincipal,
         userId: String,
         rangeRaw: String?,
@@ -306,7 +308,7 @@ class HistoryAndStatsService(
             )
         }
 
-    suspend fun getHeatmapStats(
+    private suspend fun computeHeatmapStats(
         principal: MiruPrincipal,
         rangeRaw: String?,
         userId: String? = null,
@@ -396,7 +398,7 @@ class HistoryAndStatsService(
             )
         }
 
-    suspend fun getClientStats(
+    private suspend fun computeClientStats(
         principal: MiruPrincipal,
         rangeRaw: String?,
         userId: String? = null,
@@ -429,7 +431,7 @@ class HistoryAndStatsService(
             )
         }
 
-    suspend fun getWrappedStats(
+    private suspend fun computeWrappedStats(
         principal: MiruPrincipal,
         yearRaw: String?,
         userId: String? = null,
@@ -519,6 +521,156 @@ class HistoryAndStatsService(
                 playsByMonth = playsByMonth,
             )
         }
+
+    suspend fun getOverviewStats(
+        principal: MiruPrincipal,
+        rangeRaw: String?,
+        metricRaw: String? = null,
+        serverId: String? = null,
+    ): Either<MiruError, OverviewStatsResponse> =
+        cachedStats(compute = { computeOverviewStats(principal, rangeRaw, metricRaw, serverId) }) { generation ->
+            val range = parseRange(rangeRaw).bind()
+            StatsCacheKey(
+                generation = generation,
+                endpoint = StatsCacheEndpoint.Overview,
+                serverId = normalizeOptionalId(serverId),
+                scopedUserIds = principal.scopedMediaUserIds(),
+                viewerId = null,
+                period = range.label,
+                metric = parseMetric(metricRaw).bind(),
+                utcDay = rollingWindowDay(range),
+            )
+        }
+
+    suspend fun getUserStats(
+        principal: MiruPrincipal,
+        userId: String,
+        rangeRaw: String?,
+        metricRaw: String? = null,
+        serverId: String? = null,
+    ): Either<MiruError, UserStatsResponse> =
+        cachedStats(compute = { computeUserStats(principal, userId, rangeRaw, metricRaw, serverId) }) { generation ->
+            val viewerId = userId.trim().takeIf { it.isNotEmpty() } ?: raise(MiruError.ValidationError("Invalid user id"))
+            val normalizedServerId = normalizeOptionalId(serverId)
+            val range = parseRange(rangeRaw).bind()
+            StatsCacheKey(
+                generation = generation,
+                endpoint = StatsCacheEndpoint.User,
+                serverId = normalizedServerId,
+                scopedUserIds = resolveViewerScope(principal, viewerId, normalizedServerId).bind(),
+                viewerId = viewerId,
+                period = range.label,
+                metric = parseMetric(metricRaw).bind(),
+                utcDay = rollingWindowDay(range),
+            )
+        }
+
+    suspend fun getHeatmapStats(
+        principal: MiruPrincipal,
+        rangeRaw: String?,
+        userId: String? = null,
+        metricRaw: String? = null,
+        serverId: String? = null,
+    ): Either<MiruError, HeatmapStatsResponse> =
+        cachedStats(compute = { computeHeatmapStats(principal, rangeRaw, userId, metricRaw, serverId) }) { generation ->
+            StatsCacheKey(
+                generation = generation,
+                endpoint = StatsCacheEndpoint.Heatmap,
+                serverId = normalizeOptionalId(serverId),
+                scopedUserIds = resolveScopedStatsUserIds(principal, userId).bind(),
+                viewerId = null,
+                period = parseHeatmapRange(rangeRaw).bind().first,
+                metric = parseMetric(metricRaw).bind(),
+                // The grid is whole UTC days up to today
+                utcDay = utcEpochDay(clock()),
+            )
+        }
+
+    suspend fun getClientStats(
+        principal: MiruPrincipal,
+        rangeRaw: String?,
+        userId: String? = null,
+        metricRaw: String? = null,
+        serverId: String? = null,
+    ): Either<MiruError, ClientStatsResponse> =
+        cachedStats(compute = { computeClientStats(principal, rangeRaw, userId, metricRaw, serverId) }) { generation ->
+            val range = parseRange(rangeRaw, defaultRange = "30d").bind()
+            StatsCacheKey(
+                generation = generation,
+                endpoint = StatsCacheEndpoint.Clients,
+                serverId = normalizeOptionalId(serverId),
+                scopedUserIds = resolveScopedStatsUserIds(principal, userId).bind(),
+                viewerId = null,
+                period = range.label,
+                metric = parseMetric(metricRaw).bind(),
+                utcDay = rollingWindowDay(range),
+            )
+        }
+
+    suspend fun getWrappedStats(
+        principal: MiruPrincipal,
+        yearRaw: String?,
+        userId: String? = null,
+        metricRaw: String? = null,
+        serverId: String? = null,
+    ): Either<MiruError, WrappedStatsResponse> =
+        cachedStats(compute = { computeWrappedStats(principal, yearRaw, userId, metricRaw, serverId) }) { generation ->
+            val year =
+                yearRaw?.trim()?.toIntOrNull()?.takeIf { it in MIN_WRAPPED_YEAR..MAX_WRAPPED_YEAR }
+                    ?: raise(MiruError.ValidationError("Invalid wrapped year"))
+            val normalizedServerId = normalizeOptionalId(serverId)
+            val viewerId = userId?.trim()?.takeIf { it.isNotEmpty() }
+            StatsCacheKey(
+                generation = generation,
+                endpoint = StatsCacheEndpoint.Wrapped,
+                serverId = normalizedServerId,
+                scopedUserIds =
+                    if (viewerId != null) {
+                        resolveViewerScope(principal, viewerId, normalizedServerId).bind()
+                    } else {
+                        principal.scopedMediaUserIds()
+                    },
+                viewerId = viewerId,
+                period = year.toString(),
+                metric = parseMetric(metricRaw).bind(),
+                utcDay = null,
+            )
+        }
+
+    /**
+     * Serves a stats payload from [statsCache] when there is one. [resolveKey] runs on every call, hit or miss,
+     * so the caller's access checks still apply and the key holds the scope they resolve to. Any failure there
+     * falls through to [compute], which reports it, and errors are never cached.
+     */
+    private suspend fun <T : Any> cachedStats(
+        compute: suspend () -> Either<MiruError, T>,
+        resolveKey: suspend Raise<MiruError>.(generation: Long) -> StatsCacheKey<T>,
+    ): Either<MiruError, T> {
+        val cache = statsCache?.takeIf { it.enabled } ?: return compute()
+        // Read before any lookup, so a payload built from rows a later write changes is filed under a stale key
+        val generation = cache.currentGeneration()
+        val key = either { resolveKey(generation) }.getOrNull() ?: return compute()
+        return cache.getOrCompute(key, nowMs = clock(), compute = compute)
+    }
+
+    private suspend fun resolveViewerScope(
+        principal: MiruPrincipal,
+        viewerId: String,
+        serverId: String?,
+    ): Either<MiruError, Set<String>> =
+        either {
+            ViewerIdentityResolver.requireTargetViewerAccess(principal, viewerId).bind()
+            ViewerIdentityResolver
+                .resolveViewer(
+                    userRepository = userRepository,
+                    authAccountRepository = authAccountRepository,
+                    targetId = viewerId,
+                    serverId = serverId,
+                ).bind()
+                .targetMediaUserIds
+        }
+
+    private fun rollingWindowDay(range: StatsRange): Long? = range.fromMs?.let { utcEpochDay(clock()) }
 
     private suspend fun loadServersById(): Map<String, MediaServerRecord> =
         mediaServerRepository

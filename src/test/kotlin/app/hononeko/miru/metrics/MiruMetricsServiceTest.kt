@@ -534,6 +534,24 @@ class MiruMetricsServiceTest :
             }
         }
 
+        test("counts stats cache hits and misses per endpoint") {
+            val service = MiruMetricsService()
+            try {
+                service.recordStatsCacheLookup("overview", hit = false)
+                service.recordStatsCacheLookup("overview", hit = true)
+                service.recordStatsCacheLookup("overview", hit = true)
+                service.recordStatsCacheLookup("heatmap", hit = false)
+
+                val out = service.scrape()
+                out shouldContain """miru_stats_cache_hits_total{endpoint="overview"} 2.0"""
+                out shouldContain """miru_stats_cache_misses_total{endpoint="overview"} 1.0"""
+                out shouldContain """miru_stats_cache_misses_total{endpoint="heatmap"} 1.0"""
+                out shouldNotContain """miru_stats_cache_hits_total{endpoint="heatmap"}"""
+            } finally {
+                service.close()
+            }
+        }
+
         test("Grafana dashboard JSON matches Helm chart copy and references only metrics exposed by MiruMetricsService") {
             val dashboardFile = File("docs/grafana/miru-dashboard.json")
             val chartDashboardFile = File("charts/miru/files/miru-dashboard.json")
@@ -556,6 +574,8 @@ class MiruMetricsServiceTest :
                     MiruMetricsService.METRIC_PLAYS_COMPLETED_TOTAL,
                     MiruMetricsService.METRIC_WEBSOCKET_CONNECTED,
                     MiruMetricsService.METRIC_WEBSOCKET_RECONNECTS_TOTAL,
+                    MiruMetricsService.METRIC_STATS_CACHE_HITS_TOTAL,
+                    MiruMetricsService.METRIC_STATS_CACHE_MISSES_TOTAL,
                 )
             val referencedMiruMetrics =
                 Regex("""\bmiru_[a-z0-9_]+\b""")

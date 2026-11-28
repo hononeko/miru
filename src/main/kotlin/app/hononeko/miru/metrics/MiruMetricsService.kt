@@ -298,6 +298,24 @@ class MiruMetricsService(
         }
     }
 
+    /** Counts a stats cache lookup for [endpoint], one of a fixed set of stats endpoints. */
+    fun recordStatsCacheLookup(
+        endpoint: String,
+        hit: Boolean,
+    ) {
+        val builder =
+            if (hit) {
+                Counter
+                    .builder(METRIC_STATS_CACHE_HITS_TOTAL)
+                    .description("Stats requests served without scanning playback history, including ones that joined a running scan")
+            } else {
+                Counter
+                    .builder(METRIC_STATS_CACHE_MISSES_TOTAL)
+                    .description("Stats requests that scanned playback history because no cached result was available")
+            }
+        builder.tag(TAG_ENDPOINT, endpoint).register(registry).increment()
+    }
+
     private suspend fun updateActiveSessionGaugesLocked() {
         if (trackedSessions.isEmpty()) {
             activeStreamsGauge.register(emptyList(), true)
@@ -457,6 +475,8 @@ class MiruMetricsService(
         const val METRIC_PLAYS_COMPLETED_TOTAL = "miru_plays_completed_total"
         const val METRIC_WEBSOCKET_CONNECTED = "miru_websocket_connected"
         const val METRIC_WEBSOCKET_RECONNECTS_TOTAL = "miru_websocket_reconnects_total"
+        const val METRIC_STATS_CACHE_HITS_TOTAL = "miru_stats_cache_hits_total"
+        const val METRIC_STATS_CACHE_MISSES_TOTAL = "miru_stats_cache_misses_total"
 
         const val TAG_SERVER = "server"
         const val TAG_DECISION = "decision"
@@ -464,6 +484,7 @@ class MiruMetricsService(
         const val TAG_MEDIA_TYPE = "media_type"
         const val TAG_HW_TRANSCODE = "hw_transcode"
         const val TAG_LIBRARY = "library"
+        const val TAG_ENDPOINT = "endpoint"
 
         private const val DEFAULT_SERVER_LABEL = "plex"
         private const val UNKNOWN_VALUE = "unknown"

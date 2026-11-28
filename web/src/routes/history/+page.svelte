@@ -18,6 +18,7 @@
 	import { latestRequest } from '$lib/latestRequest';
 	import {
 		cn,
+		formatCalendarDate,
 		formatDurationSec,
 		formatMediaTitle,
 		formatShortDateTime,
@@ -62,6 +63,9 @@
 	let userId = $state('');
 	let mediaType = $state<MediaFilter>('');
 	let decision = $state<DecisionFilter>('');
+	// Plays stopped within these inclusive ISO-8601 bounds, e.g. one heatmap hour linked from the dashboard
+	let fromIso = $state<string | null>(null);
+	let toIso = $state<string | null>(null);
 	let sortBy = $state<SortField>('stopped_at');
 	let sortDir = $state<SortDirection>('desc');
 
@@ -101,7 +105,47 @@
 		userId = '';
 		mediaType = '';
 		decision = '';
+		fromIso = null;
+		toIso = null;
 		pageNum = 1;
+	}
+
+	function clearTimeWindow() {
+		fromIso = null;
+		toIso = null;
+		pageNum = 1;
+	}
+
+	function isoParam(name: string): string | null {
+		const raw = page.url.searchParams.get(name)?.trim();
+		return raw && !Number.isNaN(Date.parse(raw)) ? raw : null;
+	}
+
+	function formatUtcInstant(iso: string): string {
+		const at = new Date(iso);
+		const time = at.toISOString().slice(11, 16);
+		return `${formatCalendarDate(at.toISOString().slice(0, 10), preferencesStore.prefs.dateFormat)} ${time} UTC`;
+	}
+
+	/** One UTC hour reads as a date and hour slot; any other window as its two ends. */
+	function formatTimeWindow(from: string | null, to: string | null): string {
+		if (from && to) {
+			const start = new Date(from);
+			const end = new Date(to);
+			const isOneHour =
+				start.getUTCMinutes() === 0 &&
+				start.getUTCSeconds() === 0 &&
+				start.getUTCMilliseconds() === 0 &&
+				end.getTime() - start.getTime() === 3_600_000 - 1;
+			if (isOneHour) {
+				const h = String(start.getUTCHours()).padStart(2, '0');
+				const date = formatCalendarDate(start.toISOString().slice(0, 10), preferencesStore.prefs.dateFormat);
+				return `${date} · ${h}:00–${h}:59 UTC`;
+			}
+			return `${formatUtcInstant(from)} – ${formatUtcInstant(to)}`;
+		}
+		if (from) return `since ${formatUtcInstant(from)}`;
+		return to ? `until ${formatUtcInstant(to)}` : '';
 	}
 
 	async function loadUsers(serverId: string | null = selectedServerId) {
@@ -144,6 +188,8 @@
 							userId: authStore.isAdmin ? userId || undefined : undefined,
 							mediaType: mediaType || undefined,
 							decision: decision || undefined,
+							from: fromIso || undefined,
+							to: toIso || undefined,
 							sortBy,
 							sortDir,
 							page: pageNum,
@@ -200,7 +246,19 @@
 
 	let lastUrlQ = $state<string | null>(null);
 	let lastUrlServerId = $state<string | null>(null);
+	let lastUrlWindow = $state<string | null>(null);
 	$effect(() => {
+		const paramFrom = isoParam('from');
+		const paramTo = isoParam('to');
+		const windowKey = `${paramFrom ?? ''}/${paramTo ?? ''}`;
+		if (windowKey !== lastUrlWindow) {
+			lastUrlWindow = windowKey;
+			if (paramFrom || paramTo) {
+				fromIso = paramFrom;
+				toIso = paramTo;
+				pageNum = 1;
+			}
+		}
 		const paramQ = page.url.searchParams.get('q')?.trim() ?? '';
 		if (paramQ !== lastUrlQ) {
 			lastUrlQ = paramQ;
@@ -236,6 +294,8 @@
 		void userId;
 		void mediaType;
 		void decision;
+		void fromIso;
+		void toIso;
 		void sortBy;
 		void sortDir;
 		void pageNum;
@@ -245,7 +305,7 @@
 
 	// The text as typed, so that Reset is there before the search is applied and for blank searches too
 	const hasActiveFilters = $derived(
-		Boolean(searchInput || q || selectedServerId || userId || mediaType || decision)
+		Boolean(searchInput || q || selectedServerId || userId || mediaType || decision || fromIso || toIso)
 	);
 </script>
 
@@ -383,6 +443,26 @@
 			</div>
 		</div>
 	</div>
+
+	{#if fromIso || toIso}
+		<div class="flex flex-wrap items-center gap-2">
+			<span
+				class="inline-flex items-center gap-1.5 rounded-full border border-cyan/60 bg-cyan-soft py-1 pl-3 pr-1 text-xs text-cyan-hi"
+				data-testid="history-time-window"
+			>
+				<span class="font-medium">Stopped</span>
+				<span class="font-mono tabular-nums">{formatTimeWindow(fromIso, toIso)}</span>
+				<button
+					type="button"
+					onclick={clearTimeWindow}
+					aria-label="Remove the time filter"
+					class="inline-flex h-5 w-5 cursor-pointer items-center justify-center rounded-full hover:bg-cyan/20"
+				>
+					<X class="h-3 w-3" />
+				</button>
+			</span>
+		</div>
+	{/if}
 
 	{#if error}
 		<div class="rounded-xl border border-danger/50 bg-danger-soft px-4 py-3 text-xs text-danger">

@@ -1,6 +1,8 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { HeatmapCellDto, HeatmapRange, HeatmapStatsResponse } from '$api/types';
+import { api } from '$api/client';
+import type { HeatmapCellDto, HeatmapRange, HeatmapStatsResponse, HistoryItemDto } from '$api/types';
+import { formatDurationSec } from '$lib/utils';
 import ViewingHeatmap from './ViewingHeatmap.svelte';
 
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -165,5 +167,148 @@ describe('ViewingHeatmap', () => {
 		await fireEvent.mouseEnter(cellAt(4, 21));
 		await fireEvent.keyDown(cellAt(1, 5), { key: 'ArrowRight' });
 		expect(readout()).toContain('Mon 2026-11-23 · 06:00–06:59 UTC');
+	});
+});
+
+function historyItem(id: string, overrides: Partial<HistoryItemDto>): HistoryItemDto {
+	return {
+		id,
+		serverId: 'srv-plex',
+		userId: `u-${id}`,
+		ratingKey: `rk-${id}`,
+		mediaType: 'movie',
+		title: `Title ${id}`,
+		durationMs: 3_600_000,
+		viewOffsetMs: 1_800_000,
+		watchedDurationSec: 1_800,
+		pausedDurationSec: 0,
+		completionPercent: 50,
+		isWatched: false,
+		streamDecision: 'direct_play',
+		hwTranscode: false,
+		startedAtMs: Date.UTC(2026, 10, 20, 20, 30),
+		stoppedAtMs: Date.UTC(2026, 10, 20, 21, 10),
+		...overrides
+	} as HistoryItemDto;
+}
+
+const historyPage = (items: HistoryItemDto[], totalCount: number) =>
+	({
+		data: { items, page: 1, pageSize: 5, totalCount, totalPages: Math.ceil(totalCount / 5) },
+		response: new Response(null, { status: 200 })
+	}) as never;
+
+const peakCell = () => screen.getByRole('button', { name: /21:00–21:59 UTC: 8 plays/ });
+const emptyCell = () => screen.getAllByRole('button', { name: /00:00–00:59 UTC: 0 plays/ })[0];
+const popover = () => screen.queryByTestId('heatmap-cell-popover');
+
+describe('ViewingHeatmap cell popover', () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+		cleanup();
+	});
+
+	it('lists the plays that stopped in a clicked cell, linking to all of them in History', async () => {
+		const getSpy = vi.spyOn(api, 'GET').mockResolvedValue(
+			historyPage(
+				[
+					historyItem('ep', {
+						mediaType: 'episode',
+						title: 'Woe’s Hollow',
+						grandparentTitle: 'Severance',
+						parentIndex: 2,
+						mediaIndex: 4,
+						displayName: 'Elena',
+						username: 'elena',
+						watchedDurationSec: 2_880
+					}),
+					historyItem('film', { title: 'Dune: Part Two', year: 2024, username: 'omar', watchedDurationSec: 3_960 })
+				],
+				8
+			)
+		);
+		renderHeatmap('7d', { serverId: 'srv-plex' });
+
+		await fireEvent.click(peakCell());
+
+		const from = '2026-11-20T21:00:00.000Z';
+		const to = '2026-11-20T21:59:59.999Z';
+		expect(getSpy).toHaveBeenCalledWith('/api/v1/history', {
+			params: { query: { from, to, serverId: 'srv-plex', page: 1, pageSize: 5 } }
+		});
+		const content = await screen.findByTestId('heatmap-cell-popover');
+		expect(peakCell().getAttribute('aria-expanded')).toBe('true');
+		await waitFor(() => expect(within(content).getByText('Severance')).toBeTruthy());
+		expect(within(content).getByText('S02 · E04 — Woe’s Hollow')).toBeTruthy();
+		expect(within(content).getByText('Elena')).toBeTruthy();
+		expect(within(content).getByText(formatDurationSec(2_880))).toBeTruthy();
+		// Without a display name the viewer's username shows
+		expect(within(content).getByText('omar')).toBeTruthy();
+		expect(within(content).getByText('+6 more')).toBeTruthy();
+		expect(within(content).getByText(/8 plays/)).toBeTruthy();
+
+		const link = within(content).getByRole('link', { name: /View all in History/ });
+		expect(link.getAttribute('href')).toBe(`/history?${new URLSearchParams({ from, to, serverId: 'srv-plex' })}`);
+		expect(link.getAttribute('target')).toBeNull();
+
+		// Clicking the open cell again closes it
+		await fireEvent.click(peakCell());
+		await waitFor(() => expect(popover()).toBeNull());
+		expect(peakCell().getAttribute('aria-expanded')).toBe('false');
+	});
+
+	it('shows an empty hour without a request and reports a failed load', async () => {
+		const getSpy = vi.spyOn(api, 'GET').mockResolvedValue({
+			error: { title: 'Server Error', status: 500 },
+			response: new Response(null, { status: 500 })
+		} as never);
+		renderHeatmap('7d');
+
+		await fireEvent.click(emptyCell());
+		const content = await screen.findByTestId('heatmap-cell-popover');
+		expect(within(content).getByText('No plays stopped in this hour.')).toBeTruthy();
+		expect(within(content).queryByRole('link')).toBeNull();
+		expect(getSpy).not.toHaveBeenCalled();
+
+		await fireEvent.click(peakCell());
+		await waitFor(() =>
+			expect(within(screen.getByTestId('heatmap-cell-popover')).getByRole('alert').textContent).toContain(
+				'Could not load the plays in this hour.'
+			)
+		);
+		// No server filter on the dashboard means none on the request
+		expect(getSpy.mock.calls[0][1]).toEqual({
+			params: { query: expect.objectContaining({ serverId: undefined }) }
+		});
+	});
+
+	it('closes on Escape and gives the focus back to the cell', async () => {
+		vi.spyOn(api, 'GET').mockResolvedValue(historyPage([historyItem('film', {})], 8));
+		renderHeatmap('7d');
+
+		const cell = peakCell();
+		cell.focus();
+		await fireEvent.click(cell);
+		await screen.findByTestId('heatmap-cell-popover');
+
+		await fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+		await waitFor(() => expect(popover()).toBeNull());
+		expect(document.activeElement).toBe(cell);
+	});
+
+	it('ignores the slower answer for a cell that is no longer open', async () => {
+		let answerFirst: (value: unknown) => void = () => {};
+		vi.spyOn(api, 'GET').mockImplementationOnce(
+			(() => new Promise((resolve) => (answerFirst = resolve))) as never
+		);
+		renderHeatmap('7d');
+
+		await fireEvent.click(peakCell());
+		await fireEvent.click(emptyCell());
+		answerFirst(historyPage([historyItem('late', { title: 'Late answer' })], 8));
+
+		const content = await screen.findByTestId('heatmap-cell-popover');
+		await waitFor(() => expect(within(content).getByText('No plays stopped in this hour.')).toBeTruthy());
+		expect(within(content).queryByText('Late answer')).toBeNull();
 	});
 });

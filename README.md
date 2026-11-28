@@ -2,7 +2,7 @@
 
 Lightweight, security-hardened media server telemetry, live stream monitor, playback history tracker, and library analytics engine for Plex.
 
-Built with **Kotlin 2.4 / JDK 25**, **Ktor 3**, **Arrow-kt**, and dual **SQLite / PostgreSQL** persistence — bundling a decoupled SvelteKit 2 + Svelte 5 PWA and OpenAPI 3.1 API into a **68.5 MiB** shell-less Distroless container.
+Built with **Kotlin 2.4 / JDK 25**, **Ktor 3**, **Arrow-kt**, and dual **SQLite / PostgreSQL** persistence — bundling a decoupled SvelteKit 2 + Svelte 5 PWA and OpenAPI 3.1 API into a **73.5 MiB** shell-less Distroless container.
 
 ## Screenshots
 
@@ -23,17 +23,17 @@ Benchmarked side-by-side against **Tautulli v2.19.1** on a shared **10,000-play*
 
 | Metric | Miru (SQLite) | Miru (PostgreSQL 17) | Tautulli (SQLite) |
 | :--- | :---: | :---: | :---: |
-| **Live UI update latency** *(start/pause/stop)* | **`526–530 ms`** *(WS + SSE)* | — | `9.5 s` *(10 s poll)* |
-| **30s live traffic** *(3 active streams)* | **`0 reqs / 8.7 KiB`** | — | `3 reqs / 64.7 KiB` |
-| **Cold-load transfer** *(browser, uncached)* | **`334.5 KiB`** *(Brotli `.br`)* | — | `504.2 KiB` *(gzip)* |
-| **History p.1 (`c=10`, p50 / p99)** | `29.9 / 67.5 ms` (`302 req/s`) | **`11.5 / 30.3 ms`** (`757 req/s`) | `247.9 / 395.0 ms` (`41 req/s`) |
-| **30d stats (`c=10`, p50)** | `133.0 ms` (`72 req/s`) | **`19.7 ms`** (`484 req/s`) | `853.7 ms` (`12 req/s`) |
-| **All-time stats (`c=10`, p50)** | `367.2 ms` (`26 req/s`) | **`101.2 ms`** (`99 req/s`) | `1,712.9 ms` (`6 req/s`) |
-| **Cached artwork (`c=10`, p50)** | **`2.87 ms`** (`3,197 req/s`) | — | `10.8 ms` (`900 req/s`) |
-| **Cold start / 10k Tautulli import** | **`1.15 s`** / **`773 ms`** | **`1.22 s`** / **`1.92 s`** | `1.49 s` / — |
-| **Image size (`amd64`, compressed / unpacked)** | **`68.5 MiB` / `176.8 MiB`** | **`68.5 MiB` / `176.8 MiB`** *(+ PG)* | `72.8 MiB` / `296.1 MiB` |
+| **Live UI update latency** *(start/pause/stop)* | **`526–532 ms`** *(WS + SSE)* | — | `9.5 s` *(10 s poll)* |
+| **30s live traffic** *(3 active streams)* | **`1 SSE connection / 9.3 KiB`** | — | `3 reqs / 64.7 KiB` |
+| **Cold-load transfer** *(browser, uncached)* | **`337.0 KiB`** *(Brotli `.br`)* | — | `504.2 KiB` *(gzip)* |
+| **History p.1 (`c=10`, p50 / p99)** | `4.4 / 11.2 ms` (`2,057 req/s`) | **`3.7 / 12.5 ms`** (`2,354 req/s`) | `40.6 / 1,092.3 ms` (`173 req/s`) |
+| **30d stats (`c=10`, p50)** *(cached)* | `2.8 ms` (`3,253 req/s`) | **`2.7 ms`** (`3,390 req/s`) | `350.2 ms` (`27 req/s`) |
+| **All-time stats (`c=10`, p50)** *(cached)* | **`23.2 ms`** (`419 req/s`) | `24.4 ms` (`405 req/s`) | `1,032.0 ms` (`9 req/s`) |
+| **Cached artwork (`c=10`, p50)** | **`0.81 ms`** (`9,632 req/s`) | — | `6.39 ms` (`1,550 req/s`) |
+| **Cold start / 10k Tautulli import** | **`1.02 s`** / **`808 ms`** | `1.09 s` / `1.96 s` | `1.27 s` / — |
+| **Image size (`amd64`, compressed / unpacked)** | `73.5 MiB` / **`187.4 MiB`** | `73.5 MiB` / **`187.4 MiB`** *(+ PG)* | **`72.8 MiB`** / `296.1 MiB` |
 
-Miru delivers **18× faster live UI updates** with **7.4× less live traffic**, **34% smaller cold-load wire transfer**, **17×–42× higher concurrent query throughput** on PostgreSQL (with API gzip active), **3.6× higher concurrent cached artwork throughput**, **23% faster cold startup**, and a **40% smaller unpacked Distroless image** (while Tautulli keeps a smaller idle RAM footprint at `82 MiB` vs Miru's `164–185 MiB` working set under load). See [`docs/benchmarks.md`](docs/benchmarks.md) for full methodology and trade-offs.
+Miru delivers **18× faster live UI updates** with **6.9× less live traffic**, a **33% smaller cold-load wire transfer**, **14×–126× higher concurrent query throughput** on PostgreSQL (with API gzip active, and stats served from Miru's in-memory stats cache), **6.2× higher concurrent cached artwork throughput**, **20% faster cold startup**, and a **37% smaller unpacked Distroless image**. Tautulli keeps a smaller RAM footprint (`82 MiB` vs Miru's `171–198 MiB` JVM working set). See [`docs/benchmarks.md`](docs/benchmarks.md) for full methodology and trade-offs.
 
 ## Security
 

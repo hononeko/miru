@@ -332,23 +332,24 @@ class HistoryAndStatsService(
             var totalPlays = 0L
             var totalWatchDurationSec = 0L
 
-            playbackHistoryRepository
-                .forEachHeatmapSample(
-                    serverId = normalizedServerId,
-                    userIds = scopedUserIds,
-                    fromMs = fromMs,
-                    toMs = toMs,
-                ) { stoppedAtMs, watchedDurationSec ->
-                    val dayOffset = utcEpochDay(stoppedAtMs) - firstDay
-                    if (dayOffset !in 0L until days) return@forEachHeatmapSample
-                    val dayIdx = dayOffset.toInt()
-                    val hourIdx = utcHourOfDay(stoppedAtMs)
-                    val duration = watchedDurationSec.toLong()
-                    playMatrix[dayIdx][hourIdx] += 1L
-                    durationMatrix[dayIdx][hourIdx] += duration
-                    totalPlays += 1L
-                    totalWatchDurationSec += duration
-                }.bind()
+            val hourlyBuckets =
+                playbackHistoryRepository
+                    .aggregatePlaysByUtcHour(
+                        serverId = normalizedServerId,
+                        userIds = scopedUserIds,
+                        fromMs = fromMs,
+                        toMs = toMs,
+                    ).bind()
+            for (bucket in hourlyBuckets) {
+                val dayOffset = Math.floorDiv(bucket.utcHour, HOURS_IN_DAY.toLong()) - firstDay
+                if (dayOffset !in 0L until days) continue
+                val dayIdx = dayOffset.toInt()
+                val hourIdx = Math.floorMod(bucket.utcHour, HOURS_IN_DAY.toLong()).toInt()
+                playMatrix[dayIdx][hourIdx] += bucket.playCount
+                durationMatrix[dayIdx][hourIdx] += bucket.watchDurationSec
+                totalPlays += bucket.playCount
+                totalWatchDurationSec += bucket.watchDurationSec
+            }
 
             val cells = ArrayList<HeatmapCellDto>(days * HOURS_IN_DAY)
             var maxCellPlays = 0L
@@ -413,8 +414,8 @@ class HistoryAndStatsService(
             val acc = ClientStatsAccumulator()
 
             playbackHistoryRepository
-                .forEachClientStatsRow(serverId = normalizedServerId, userIds = scopedUserIds, fromMs = range.fromMs) { row ->
-                    acc.record(row)
+                .forEachClientStatsGroup(serverId = normalizedServerId, userIds = scopedUserIds, fromMs = range.fromMs) { group ->
+                    acc.record(group)
                 }.bind()
 
             ClientStatsResponse(

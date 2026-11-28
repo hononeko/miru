@@ -577,6 +577,37 @@ class AppConfigLoaderTest :
             zeroPort.fieldErrors.keys shouldBe setOf("METRICS_PORT")
         }
 
+        test("loads and validates STATS_CACHE_* settings from env and HOCON") {
+            val defaults = AppConfigLoader.load(env = baseSqliteEnv()).shouldBeRight()
+            defaults.statsCache shouldBe StatsCacheConfig(maxMegabytes = 16, ttlSeconds = 300)
+
+            val fromEnv =
+                AppConfigLoader
+                    .load(env = baseSqliteEnv(mapOf("STATS_CACHE_MAX_MB" to "0", "STATS_CACHE_TTL_SECONDS" to "60")))
+                    .shouldBeRight()
+            fromEnv.statsCache shouldBe StatsCacheConfig(maxMegabytes = 0, ttlSeconds = 60)
+
+            val fromHocon =
+                AppConfigLoader
+                    .load(
+                        env = mapOf("AUTH_SESSION_SECRET" to validSecret),
+                        hocon = MapApplicationConfig("miru.statsCache.maxMb" to "64", "miru.statsCache.ttlSeconds" to "900"),
+                    ).shouldBeRight()
+            fromHocon.statsCache shouldBe StatsCacheConfig(maxMegabytes = 64, ttlSeconds = 900)
+
+            val invalid =
+                AppConfigLoader
+                    .load(env = baseSqliteEnv(mapOf("STATS_CACHE_MAX_MB" to "-1", "STATS_CACHE_TTL_SECONDS" to "0")))
+                    .shouldBeLeft()
+            invalid.fieldErrors.keys shouldBe setOf("STATS_CACHE_MAX_MB", "STATS_CACHE_TTL_SECONDS")
+
+            val tooLarge =
+                AppConfigLoader
+                    .load(env = baseSqliteEnv(mapOf("STATS_CACHE_MAX_MB" to "4096", "STATS_CACHE_TTL_SECONDS" to "soon")))
+                    .shouldBeLeft()
+            tooLarge.fieldErrors.keys shouldBe setOf("STATS_CACHE_MAX_MB", "STATS_CACHE_TTL_SECONDS")
+        }
+
         test("loads, validates, and redacts Jellyfin configuration from env and HOCON") {
             val env =
                 baseSqliteEnv(

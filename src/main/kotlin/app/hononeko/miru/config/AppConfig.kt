@@ -203,6 +203,18 @@ data class MetricsConfig(
     }
 }
 
+data class StatsCacheConfig(
+    val maxMegabytes: Int = DEFAULT_MAX_MEGABYTES,
+    val ttlSeconds: Int = DEFAULT_TTL_SECONDS,
+) {
+    companion object {
+        const val DEFAULT_MAX_MEGABYTES = 16
+        const val MAX_MEGABYTES = 1_024
+        const val DEFAULT_TTL_SECONDS = 300
+        const val MAX_TTL_SECONDS = 86_400
+    }
+}
+
 data class AppConfig(
     val server: ServerConfig,
     val database: DatabaseConfig,
@@ -213,6 +225,7 @@ data class AppConfig(
     val tautulliCompat: TautulliCompatConfig = TautulliCompatConfig(),
     val metrics: MetricsConfig = MetricsConfig(),
     val jellyfin: JellyfinConfig = JellyfinConfig(),
+    val statsCache: StatsCacheConfig = StatsCacheConfig(),
 )
 
 data class DatabaseAndSessionConfig(
@@ -220,6 +233,7 @@ data class DatabaseAndSessionConfig(
     val session: SessionConfig,
 )
 
+@Suppress("TooManyFunctions")
 object AppConfigLoader {
     private const val MIN_SESSION_SECRET_LENGTH = 32
     private const val MIN_POLL_INTERVAL_SECONDS = 5
@@ -243,6 +257,7 @@ object AppConfigLoader {
             val guardrails = parseGuardrailsConfig(get, errors)
             val tautulliCompat = parseTautulliCompatConfig(get, errors)
             val metrics = parseMetricsConfig(get, errors)
+            val statsCache = parseStatsCacheConfig(get, errors)
 
             ensure(errors.isEmpty()) {
                 MiruError.ValidationError(
@@ -261,6 +276,7 @@ object AppConfigLoader {
                 tautulliCompat = tautulliCompat,
                 metrics = metrics,
                 jellyfin = jellyfin,
+                statsCache = statsCache,
             )
         }
 
@@ -520,6 +536,32 @@ object AppConfigLoader {
             enabled = enabled ?: false,
             host = host,
             port = port ?: MetricsConfig.DEFAULT_PORT,
+        )
+    }
+
+    private fun parseStatsCacheConfig(
+        get: (String, String, String?) -> String?,
+        errors: MutableMap<String, String>,
+    ): StatsCacheConfig {
+        val maxRaw =
+            get("STATS_CACHE_MAX_MB", "miru.statsCache.maxMb", null)
+                ?: StatsCacheConfig.DEFAULT_MAX_MEGABYTES.toString()
+        val maxMegabytes = maxRaw.toIntOrNull()
+        if (maxMegabytes == null || maxMegabytes !in 0..StatsCacheConfig.MAX_MEGABYTES) {
+            errors["STATS_CACHE_MAX_MB"] = "must be an integer between 0 and ${StatsCacheConfig.MAX_MEGABYTES}"
+        }
+
+        val ttlRaw =
+            get("STATS_CACHE_TTL_SECONDS", "miru.statsCache.ttlSeconds", null)
+                ?: StatsCacheConfig.DEFAULT_TTL_SECONDS.toString()
+        val ttlSeconds = ttlRaw.toIntOrNull()
+        if (ttlSeconds == null || ttlSeconds !in 1..StatsCacheConfig.MAX_TTL_SECONDS) {
+            errors["STATS_CACHE_TTL_SECONDS"] = "must be an integer between 1 and ${StatsCacheConfig.MAX_TTL_SECONDS}"
+        }
+
+        return StatsCacheConfig(
+            maxMegabytes = maxMegabytes ?: StatsCacheConfig.DEFAULT_MAX_MEGABYTES,
+            ttlSeconds = ttlSeconds ?: StatsCacheConfig.DEFAULT_TTL_SECONDS,
         )
     }
 

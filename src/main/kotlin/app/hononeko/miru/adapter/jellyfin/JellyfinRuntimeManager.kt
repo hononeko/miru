@@ -17,6 +17,8 @@ import app.hononeko.miru.persistence.repository.ExposedMediaServerRepository
 import app.hononeko.miru.persistence.repository.ExposedPlaybackHistoryRepository
 import app.hononeko.miru.persistence.repository.ExposedUserRepository
 import app.hononeko.miru.persistence.repository.MediaServerRepository
+import app.hononeko.miru.persistence.repository.PlaybackHistoryRepository
+import app.hononeko.miru.persistence.repository.UserRepository
 import app.hononeko.miru.session.ActiveSessionsSink
 import app.hononeko.miru.session.SessionReconciler
 import app.hononeko.miru.session.SessionStateEngine
@@ -67,6 +69,9 @@ class JellyfinRuntimeManager(
     private val encryptionKey: String? = null,
     private val clock: () -> Long = System::currentTimeMillis,
     private val idGenerator: () -> String = { UUID.randomUUID().toString() },
+    // Injected so the caller can wrap them, for example to invalidate cached stats when a play is recorded
+    userRepository: UserRepository = ExposedUserRepository(databaseHandle),
+    playbackHistoryRepository: PlaybackHistoryRepository = ExposedPlaybackHistoryRepository(databaseHandle),
 ) : RealtimeLifecycle,
     ManagedMediaServerRuntime {
     private data class ActivePipeline(
@@ -142,9 +147,9 @@ class JellyfinRuntimeManager(
     override val sessionEngine: SessionStateEngine =
         SessionStateEngine(
             serverIdProvider = serverIdProvider,
-            userRepository = ExposedUserRepository(databaseHandle),
+            userRepository = userRepository,
             activeSessionRepository = ExposedActiveSessionRepository(databaseHandle),
-            playbackHistoryRepository = ExposedPlaybackHistoryRepository(databaseHandle),
+            playbackHistoryRepository = playbackHistoryRepository,
             config = sessionConfig,
             clock = clock,
             idGenerator = idGenerator,

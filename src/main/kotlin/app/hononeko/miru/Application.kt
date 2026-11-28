@@ -57,8 +57,11 @@ import app.hononeko.miru.metrics.MiruMetricsService
 import app.hononeko.miru.persistence.DatabaseFactory
 import app.hononeko.miru.persistence.DatabaseHandle
 import app.hononeko.miru.persistence.DatabaseReadinessCheck
+import app.hononeko.miru.persistence.repository.ActiveSessionRepository
 import app.hononeko.miru.persistence.repository.AuthAccountRepository
 import app.hononeko.miru.persistence.repository.AuthSessionRepository
+import app.hononeko.miru.persistence.repository.CachingMediaServerRepository
+import app.hononeko.miru.persistence.repository.CachingWebhookTargetRepository
 import app.hononeko.miru.persistence.repository.ExposedActiveSessionRepository
 import app.hononeko.miru.persistence.repository.ExposedApiKeyRepository
 import app.hononeko.miru.persistence.repository.ExposedAuthAccountRepository
@@ -89,6 +92,7 @@ import app.hononeko.miru.service.StreamGuardrailRunner
 import app.hononeko.miru.service.StreamsAndUsersService
 import app.hononeko.miru.service.TautulliCompatService
 import app.hononeko.miru.service.WebhookService
+import app.hononeko.miru.session.LiveActiveSessionRepository
 import app.hononeko.miru.service.invalidatingStats
 import app.hononeko.miru.session.SessionEvent
 import app.hononeko.miru.webhook.WebhookDispatcher
@@ -190,7 +194,7 @@ private fun runServer() {
     val appConfig = loadStartupConfig()
     val databaseHandle = initDatabase(appConfig)
     val statsCache = createStatsResultCache(appConfig)
-    val mediaServerRepository = ExposedMediaServerRepository(databaseHandle).invalidatingStats(statsCache)
+    val mediaServerRepository = CachingMediaServerRepository(ExposedMediaServerRepository(databaseHandle).invalidatingStats(statsCache))
     val userRepository = ExposedUserRepository(databaseHandle).invalidatingStats(statsCache)
     val playbackHistoryRepository = ExposedPlaybackHistoryRepository(databaseHandle).invalidatingStats(statsCache)
     val accountRepository = ExposedAuthAccountRepository(databaseHandle).invalidatingStats(statsCache)
@@ -354,7 +358,11 @@ internal fun createCoreServiceWiring(
     val activeSessionRepository = ExposedActiveSessionRepository(databaseHandle)
     val streamsAndUsersService =
         createStreamsAndUsersService(
-            activeSessionRepository,
+            LiveActiveSessionRepository(
+                delegate = activeSessionRepository,
+                engines = mediaServerRegistry.runtimes.map { it.sessionEngine },
+                mediaServerRepository = mediaServerRepository,
+            ),
             userRepository,
             playbackHistoryRepository,
             mediaServerRepository,
@@ -536,7 +544,7 @@ private fun createWebhookServices(
     appVersion: String,
 ): WebhookServicesBundle {
     val httpClient = LazyCloseableHttpClient { createWebhookHttpClient() }
-    val targetRepository = ExposedWebhookTargetRepository(databaseHandle)
+    val targetRepository = CachingWebhookTargetRepository(ExposedWebhookTargetRepository(databaseHandle))
     val deliveryRepository = ExposedWebhookDeliveryRepository(databaseHandle)
     val evaluator = WebhookEventEvaluator()
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("outbound-webhooks"))
@@ -630,7 +638,7 @@ private fun createTautulliImporterService(
 
 @Suppress("LongParameterList")
 private fun createStreamsAndUsersService(
-    activeSessionRepository: ExposedActiveSessionRepository,
+    activeSessionRepository: ActiveSessionRepository,
     userRepository: UserRepository,
     playbackHistoryRepository: PlaybackHistoryRepository,
     mediaServerRepository: MediaServerRepository,

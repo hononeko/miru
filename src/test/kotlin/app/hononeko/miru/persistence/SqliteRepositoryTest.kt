@@ -240,6 +240,7 @@ class SqliteRepositoryTest :
         }
 
         include(repositoryContractSpec { requireHandle() })
+        include(referenceSnapshotContractSpec { requireHandle() })
         include(statsCacheContractSpec { requireHandle() })
         include(analyticsPushdownParitySpec { requireHandle() })
     })

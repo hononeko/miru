@@ -65,6 +65,7 @@ class StreamsAndUsersService(
             if (!principal.isAdmin() && principal.linkedMediaUserIds.isEmpty()) {
                 return@either ActiveStreamsResponse(streams = emptyList(), totalCount = 0, serverName = serverName)
             }
+            // The application wires a LiveActiveSessionRepository here, so this reads the session engines' memory.
             val sessions =
                 activeSessionRepository
                     .findAll()
@@ -78,14 +79,13 @@ class StreamsAndUsersService(
                 return@either ActiveStreamsResponse(streams = emptyList(), totalCount = 0, serverName = serverName)
             }
 
-            val usersById = userRepository.findAll().bind().associateBy { it.id }
+            // Only the streaming users (and their linked siblings, which the resolver loads), never the whole table.
             val identitiesByUserId =
                 ViewerIdentityResolver
                     .resolveMediaUserIdentities(
                         userRepository = userRepository,
                         authAccountRepository = authAccountRepository,
                         mediaUserIds = sessions.map { it.userId },
-                        preloadedUsersById = usersById,
                     ).bind()
             val liveTechByKey = liveTechnicalProvider()
             val streams =

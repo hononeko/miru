@@ -178,6 +178,21 @@ data class UserPlaybackSummary(
     val totalWatchDurationSec: Long,
 )
 
+/**
+ * The plays of a user that share one combination of stored values, as recorded and before any labelling, so
+ * callers can group them the way they need without loading the plays themselves.
+ */
+data class UserPlaybackBreakdownRow(
+    /** The player product, or the player name when the product is unknown. */
+    val clientName: String?,
+    val playerPlatform: String?,
+    val streamDecision: String,
+    val hwTranscode: Boolean,
+    val librarySectionKey: String?,
+    val playCount: Long,
+    val watchDurationSec: Long,
+)
+
 data class MediaPlaySummary(
     val totalPlays: Long,
     val uniqueUsers: Int,

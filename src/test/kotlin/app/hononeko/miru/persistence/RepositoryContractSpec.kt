@@ -40,6 +40,7 @@ import app.hononeko.miru.persistence.model.TerminationAuditAction
 import app.hononeko.miru.persistence.model.TerminationAuditFilter
 import app.hononeko.miru.persistence.model.TerminationAuditSource
 import app.hononeko.miru.persistence.model.UserLibraryAccessRecord
+import app.hononeko.miru.persistence.model.UserPlaybackBreakdownRow
 import app.hononeko.miru.persistence.model.UserPlaybackSummary
 import app.hononeko.miru.persistence.model.UserPreferencesRecord
 import app.hononeko.miru.persistence.model.UserRecord
@@ -162,6 +163,7 @@ fun repositoryContractSpec(handleProvider: () -> DatabaseHandle): TestFactory =
         authAccountLinkModeTests { ctx }
         authAccountProfileTests { ctx }
         unifiedViewerProfileTests { ctx }
+        userDetailParityTests { ctx.handle }
         authSessionTests { ctx }
         authSessionContextTests { ctx }
         apiKeyTests { ctx }
@@ -645,7 +647,29 @@ private fun FunSpecRootScope.playbackHistorySummaryTests(ctxProvider: () -> Cont
             filteredSummaries.keys shouldContainExactly listOf("u-2")
             filteredSummaries["u-2"] shouldBe UserPlaybackSummary(userId = "u-2", totalPlays = 1L, totalWatchDurationSec = 150L)
 
-            ctx.history.listByUser("u-1").shouldBeRight().map { it.id } shouldContainExactly listOf("hist-2", "hist-1")
+            ctx.history.listRecentByUsers(setOf("u-1")).shouldBeRight().map { it.id } shouldContainExactly listOf("hist-2", "hist-1")
+            ctx.history
+                .listRecentByUsers(setOf("u-1", "u-2"), limit = 2)
+                .shouldBeRight()
+                .map { it.id } shouldContainExactly listOf("hist-3", "hist-2")
+            ctx.history.listRecentByUsers(setOf("u-1", "u-2"), serverId = "srv-other").shouldBeRight() shouldHaveSize 0
+            ctx.history.listRecentByUsers(setOf("u-1", "u-2"), limit = 0).shouldBeRight() shouldHaveSize 0
+            ctx.history.listRecentByUsers(emptySet()).shouldBeRight() shouldHaveSize 0
+            // The client falls back to the player name when no product was recorded
+            ctx.history.summarizeUserPlaybackBreakdown(setOf("u-1", "u-2", "u-missing")).shouldBeRight() shouldContainExactly
+                listOf(
+                    UserPlaybackBreakdownRow(
+                        clientName = "Web",
+                        playerPlatform = null,
+                        streamDecision = "direct_play",
+                        hwTranscode = false,
+                        librarySectionKey = "sec-1",
+                        playCount = 3L,
+                        watchDurationSec = 550L,
+                    ),
+                )
+            ctx.history.summarizeUserPlaybackBreakdown(setOf("u-1"), serverId = "srv-other").shouldBeRight().shouldBeEmpty()
+            ctx.history.summarizeUserPlaybackBreakdown(emptySet()).shouldBeRight().shouldBeEmpty()
             ctx.history.listRecentByUser("u-1", limit = 1).shouldBeRight().map { it.id } shouldContainExactly listOf("hist-2")
             ctx.history.listRecentByUser("u-1", limit = 0).shouldBeRight() shouldHaveSize 0
         }

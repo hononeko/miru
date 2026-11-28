@@ -17,6 +17,7 @@ import app.hononeko.miru.persistence.model.MediaPlaySummary
 import app.hononeko.miru.persistence.model.OverviewStatsRow
 import app.hononeko.miru.persistence.model.PlaybackHistoryRecord
 import app.hononeko.miru.persistence.model.PlaybackHistoryStatsRow
+import app.hononeko.miru.persistence.model.UserPlaybackBreakdownRow
 import app.hononeko.miru.persistence.model.UserPlaybackSummary
 import app.hononeko.miru.persistence.table.AuthAccountMediaUsersTable
 import app.hononeko.miru.persistence.table.MediaItemsCacheTable
@@ -108,25 +109,18 @@ interface PlaybackHistoryRepository {
         limit: Int = 10,
     ): Either<MiruError.PersistenceError, List<PlaybackHistoryRecord>>
 
-    suspend fun listByUser(userId: String): Either<MiruError.PersistenceError, List<PlaybackHistoryRecord>>
-
-    suspend fun listByUsers(
+    /** The latest [limit] plays of any of [userIds], newest first, with ties in the order [query] lists them. */
+    suspend fun listRecentByUsers(
         userIds: Set<String>,
         serverId: String? = null,
-    ): Either<MiruError.PersistenceError, List<PlaybackHistoryRecord>> =
-        when {
-            userIds.isEmpty() -> Either.Right(emptyList())
-            userIds.size == 1 && serverId == null -> listByUser(userIds.first())
-            else ->
-                query(
-                    HistoryFilter(
-                        serverId = serverId,
-                        userIds = userIds,
-                        limit = Int.MAX_VALUE,
-                        offset = 0,
-                    ),
-                ).map { it.items }
-        }
+        limit: Int = 10,
+    ): Either<MiruError.PersistenceError, List<PlaybackHistoryRecord>>
+
+    /** Play counts and watch time of [userIds], one row per combination of the values a user's plays break down by. */
+    suspend fun summarizeUserPlaybackBreakdown(
+        userIds: Set<String>,
+        serverId: String? = null,
+    ): Either<MiruError.PersistenceError, List<UserPlaybackBreakdownRow>>
 
     suspend fun listForStats(
         serverId: String? = null,
@@ -932,35 +926,86 @@ class ExposedPlaybackHistoryRepository(
             }
         }
 
-    override suspend fun listByUser(userId: String): Either<MiruError.PersistenceError, List<PlaybackHistoryRecord>> =
-        readDatabase.exposedReadQuery("playback_history_list_by_user") {
-            PlaybackHistoryTable
-                .selectAll()
-                .where { PlaybackHistoryTable.userId eq userId }
-                .orderBy(PlaybackHistoryTable.stoppedAtMs to SortOrder.DESC, PlaybackHistoryTable.id to SortOrder.ASC)
-                .map { it.toPlaybackHistoryRecord() }
-        }
-
-    override suspend fun listByUsers(
+    override suspend fun listRecentByUsers(
         userIds: Set<String>,
         serverId: String?,
+        limit: Int,
     ): Either<MiruError.PersistenceError, List<PlaybackHistoryRecord>> {
-        if (userIds.isEmpty()) return Either.Right(emptyList())
-        return readDatabase.exposedReadQuery("playback_history_list_by_users") {
-            val baseCondition: Op<Boolean> = PlaybackHistoryTable.userId inList userIds
+        val safeLimit = limit.coerceAtLeast(0)
+        if (userIds.isEmpty() || safeLimit == 0) return Either.Right(emptyList())
+        return readDatabase.exposedReadQuery("playback_history_list_recent_by_users") {
             val condition =
-                if (serverId != null) {
-                    baseCondition and (PlaybackHistoryTable.serverId eq serverId)
+                if (userIds.size == 1) {
+                    (PlaybackHistoryTable.userId eq userIds.single()).onServer(serverId)
                 } else {
-                    baseCondition
+                    // An IN list cannot be read in idx_playback_history_user_stopped order, so the database would sort
+                    // every play of every profile. The overall latest plays are among each profile's own latest ones.
+                    val candidateIds =
+                        userIds.flatMap { userId ->
+                            PlaybackHistoryTable
+                                .select(PlaybackHistoryTable.id)
+                                .where { (PlaybackHistoryTable.userId eq userId).onServer(serverId) }
+                                .orderBy(PlaybackHistoryTable.stoppedAtMs to SortOrder.DESC, PlaybackHistoryTable.id to SortOrder.ASC)
+                                .limit(safeLimit)
+                                .map { it[PlaybackHistoryTable.id] }
+                        }
+                    if (candidateIds.isEmpty()) return@exposedReadQuery emptyList()
+                    PlaybackHistoryTable.id inList candidateIds
                 }
+            // Ordered by the database, not merged here, so ties fall in its collation as they always have
             PlaybackHistoryTable
                 .selectAll()
                 .where { condition }
                 .orderBy(PlaybackHistoryTable.stoppedAtMs to SortOrder.DESC, PlaybackHistoryTable.id to SortOrder.ASC)
+                .limit(safeLimit)
                 .map { it.toPlaybackHistoryRecord() }
         }
     }
+
+    override suspend fun summarizeUserPlaybackBreakdown(
+        userIds: Set<String>,
+        serverId: String?,
+    ): Either<MiruError.PersistenceError, List<UserPlaybackBreakdownRow>> {
+        if (userIds.isEmpty()) return Either.Right(emptyList())
+        return readDatabase.exposedReadQuery("playback_history_summarize_user_breakdown") {
+            val clientNameExpr = Coalesce(PlaybackHistoryTable.playerProduct, PlaybackHistoryTable.playerName)
+            val playCountExpr = PlaybackHistoryTable.id.count()
+            val watchDurationExpr = PlaybackHistoryTable.watchedDurationSec.castTo(LongColumnType()).sum()
+            val condition = (PlaybackHistoryTable.userId inList userIds).onServer(serverId)
+            // Grouped by the stored values only: the caller folds blanks, Unknown, and decision casing, because SQL's
+            // LOWER() and TRIM() do not match Kotlin's lowercase() and isBlank() on every engine
+            PlaybackHistoryTable
+                .select(
+                    clientNameExpr,
+                    PlaybackHistoryTable.playerPlatform,
+                    PlaybackHistoryTable.streamDecision,
+                    PlaybackHistoryTable.hwTranscode,
+                    PlaybackHistoryTable.librarySectionKey,
+                    playCountExpr,
+                    watchDurationExpr,
+                ).where { condition }
+                .groupBy(
+                    clientNameExpr,
+                    PlaybackHistoryTable.playerPlatform,
+                    PlaybackHistoryTable.streamDecision,
+                    PlaybackHistoryTable.hwTranscode,
+                    PlaybackHistoryTable.librarySectionKey,
+                ).map { row ->
+                    UserPlaybackBreakdownRow(
+                        clientName = row[clientNameExpr],
+                        playerPlatform = row[PlaybackHistoryTable.playerPlatform],
+                        streamDecision = row[PlaybackHistoryTable.streamDecision],
+                        hwTranscode = row[PlaybackHistoryTable.hwTranscode],
+                        librarySectionKey = row[PlaybackHistoryTable.librarySectionKey],
+                        playCount = row[playCountExpr],
+                        watchDurationSec = row[watchDurationExpr] ?: 0L,
+                    )
+                }
+        }
+    }
+
+    private fun Op<Boolean>.onServer(serverId: String?): Op<Boolean> =
+        if (serverId != null) this and (PlaybackHistoryTable.serverId eq serverId) else this
 
     private fun buildFilterCondition(filter: HistoryFilter): Op<Boolean> {
         val predicates = mutableListOf<Op<Boolean>>()

@@ -22,6 +22,7 @@ import app.hononeko.miru.persistence.model.ActiveSessionKey
 import app.hononeko.miru.persistence.model.ActiveSessionRecord
 import app.hononeko.miru.persistence.model.MediaServerRecord
 import app.hononeko.miru.persistence.model.PlaybackHistoryRecord
+import app.hononeko.miru.persistence.model.UserPlaybackBreakdownRow
 import app.hononeko.miru.persistence.repository.ActiveSessionRepository
 import app.hononeko.miru.persistence.repository.AuthAccountRepository
 import app.hononeko.miru.persistence.repository.MediaServerRepository
@@ -323,12 +324,16 @@ class StreamsAndUsersService(
                     )
                 }
 
-            val history =
+            val breakdown =
                 playbackHistoryRepository
-                    .listByUsers(resolved.targetMediaUserIds, serverId = normalizedServerId)
+                    .summarizeUserPlaybackBreakdown(resolved.targetMediaUserIds, serverId = normalizedServerId)
                     .bind()
-            val totalPlays = history.size.toLong()
-            val totalWatchDurationSec = history.sumOf { it.watchedDurationSec.toLong() }
+            val recentPlays =
+                playbackHistoryRepository
+                    .listRecentByUsers(resolved.targetMediaUserIds, serverId = normalizedServerId, limit = RECENT_PLAYS_LIMIT)
+                    .bind()
+            val totalPlays = breakdown.sumOf { it.playCount }
+            val totalWatchDurationSec = breakdown.sumOf { it.watchDurationSec }
 
             UserDetailResponse(
                 user =
@@ -346,11 +351,11 @@ class StreamsAndUsersService(
                 activeStreams = activeStreams,
                 totalPlays = totalPlays,
                 totalWatchDurationSec = totalWatchDurationSec,
-                recentPlays = history.take(RECENT_PLAYS_LIMIT).map { it.toRecentPlayDto(serversById[it.serverId]) },
-                topClients = aggregateUsage(history) { it.player.playerProduct ?: it.player.playerName ?: UNKNOWN_LABEL },
-                topPlatforms = aggregateUsage(history) { it.player.playerPlatform ?: UNKNOWN_LABEL },
-                decisionBreakdown = computeDecisionBreakdown(history),
-                libraryBreakdown = computeLibraryBreakdown(history),
+                recentPlays = recentPlays.map { it.toRecentPlayDto(serversById[it.serverId]) },
+                topClients = aggregateUsage(breakdown) { it.clientName ?: UNKNOWN_LABEL },
+                topPlatforms = aggregateUsage(breakdown) { it.playerPlatform ?: UNKNOWN_LABEL },
+                decisionBreakdown = computeDecisionBreakdown(breakdown, totalPlays),
+                libraryBreakdown = computeLibraryBreakdown(breakdown, totalPlays),
             )
         }
 
@@ -395,16 +400,16 @@ class StreamsAndUsersService(
         )
 
     private fun aggregateUsage(
-        history: List<PlaybackHistoryRecord>,
-        keySelector: (PlaybackHistoryRecord) -> String,
+        breakdown: List<UserPlaybackBreakdownRow>,
+        keySelector: (UserPlaybackBreakdownRow) -> String,
     ): List<UserUsageStatDto> =
-        history
+        breakdown
             .groupBy { keySelector(it).ifBlank { UNKNOWN_LABEL } }
-            .map { (name, records) ->
+            .map { (name, rows) ->
                 UserUsageStatDto(
                     name = name,
-                    playCount = records.size.toLong(),
-                    watchDurationSec = records.sumOf { it.watchedDurationSec.toLong() },
+                    playCount = rows.sumOf { it.playCount },
+                    watchDurationSec = rows.sumOf { it.watchDurationSec },
                 )
             }.sortedWith(
                 compareByDescending<UserUsageStatDto> { it.playCount }
@@ -412,20 +417,22 @@ class StreamsAndUsersService(
                     .thenBy { it.name },
             ).take(TOP_STATS_LIMIT)
 
-    private fun computeDecisionBreakdown(history: List<PlaybackHistoryRecord>): DecisionBreakdownDto {
+    private fun computeDecisionBreakdown(
+        breakdown: List<UserPlaybackBreakdownRow>,
+        total: Long,
+    ): DecisionBreakdownDto {
         var directPlay = 0L
         var directStream = 0L
         var transcode = 0L
         var hwTranscode = 0L
-        for (record in history) {
-            when (record.streamTech.streamDecision.lowercase()) {
-                "direct_play" -> directPlay += 1L
-                "direct_stream" -> directStream += 1L
-                "transcode" -> transcode += 1L
+        for (row in breakdown) {
+            when (row.streamDecision.lowercase()) {
+                "direct_play" -> directPlay += row.playCount
+                "direct_stream" -> directStream += row.playCount
+                "transcode" -> transcode += row.playCount
             }
-            if (record.streamTech.hwTranscode) hwTranscode += 1L
+            if (row.hwTranscode) hwTranscode += row.playCount
         }
-        val total = history.size.toLong()
         return DecisionBreakdownDto(
             directPlay = directPlay,
             directStream = directStream,
@@ -439,15 +446,19 @@ class StreamsAndUsersService(
         )
     }
 
-    private fun computeLibraryBreakdown(history: List<PlaybackHistoryRecord>): List<LibraryBreakdownDto> =
-        history
-            .groupBy { record -> record.media.librarySectionKey?.takeIf { it.isNotBlank() } }
-            .map { (sectionKey, records) ->
+    private fun computeLibraryBreakdown(
+        breakdown: List<UserPlaybackBreakdownRow>,
+        total: Long,
+    ): List<LibraryBreakdownDto> =
+        breakdown
+            .groupBy { row -> row.librarySectionKey?.takeIf { it.isNotBlank() } }
+            .map { (sectionKey, rows) ->
+                val playCount = rows.sumOf { it.playCount }
                 LibraryBreakdownDto(
                     librarySectionKey = sectionKey,
-                    playCount = records.size.toLong(),
-                    watchDurationSec = records.sumOf { it.watchedDurationSec.toLong() },
-                    percent = computeStatsPercent(records.size.toLong(), history.size.toLong()),
+                    playCount = playCount,
+                    watchDurationSec = rows.sumOf { it.watchDurationSec },
+                    percent = computeStatsPercent(playCount, total),
                 )
             }.sortedWith(
                 compareByDescending<LibraryBreakdownDto> { it.playCount }
